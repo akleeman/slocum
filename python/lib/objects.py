@@ -5,7 +5,13 @@ from collections import namedtuple
 from lib import iterlib
 
 LatLon = namedtuple('LatLon', 'lat lon')
-Wind = namedtuple('Wind', 'u v knots dir')
+
+class Wind():
+    def __init__(self, u, v):
+        self.u = u
+        self.v = v
+        self.knots = np.sqrt(np.power(u, 2.) + np.power(v, 2.))
+        self.dir = np.arctan(u/v)
 
 class LatLon():
 
@@ -20,6 +26,7 @@ class LatLon():
         return LatLon(np.rad2deg(self.lat), np.rad2deg(self.lon))
 
     def __add__(self, other):
+        import pdb; pdb.set_trace()
         return LatLon(self.lat + other.lat, self.lon + other.lon)
 
     def __sub__(self, other):
@@ -70,3 +77,14 @@ class DataField():
         for i, x in enumerate(nhbrs):
             ret = np.dot(ret, [nhbr[1], 1.-nhbr[1]])
         return ret
+
+def test():
+    testfile = os.path.join(os.path.dirname(__file__), '../data/analysis_20091201_v11l30flk.nc')
+    nc = NetCDFFile(filename=testfile, mode='r')
+    dims = [nc.variables['lat'], nc.variables['lon']]
+    uwnd = objects.DataField(ncdflib.wind_variable(nc.variables['uwnd'])[0], dims)
+    # test interpolation
+    val1 = uwnd(-73.625, 184.125)
+    val2 = uwnd(-73.375, 184.125)
+    val3 = uwnd(-73.5, 184.125)
+    assert val3 == 0.5 * (val2 + val1)

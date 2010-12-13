@@ -4,7 +4,7 @@ from lib import objects
 
 earth_radius = 3440.07 # in nautical miles
 
-def bearing(a, b):
+def rhumbline_bearing(a, b):
     """
     Gives you the bearing of a rhumbline between two points a and b
     """
