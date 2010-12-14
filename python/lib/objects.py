@@ -5,16 +5,20 @@ from collections import namedtuple
 from lib import iterlib
 
 LatLon = namedtuple('LatLon', 'lat lon')
+Course = namedtuple('Course', 'loc speed bearing')
+Leg = namedtuple('Leg', 'course time wind distance')
 
 class Wind():
-    def __init__(self, u, v):
+    def __init__(self, u=None, v=None, speed=None, dir=None):
         self.u = u
         self.v = v
-        self.knots = np.sqrt(np.power(u, 2.) + np.power(v, 2.))
-        self.dir = np.arctan(u/v)
+        self.speed = np.sqrt(np.power(u, 2.) + np.power(v, 2.))
+        # we need to use negative signs when computing the direction since
+        # we actually want to know where the wind is coming from not where
+        # the wind is headed
+        self.dir = np.arctan2(-u, -v)
 
 class LatLon():
-
     def __init__(self, lat, lon):
         self.lat = np.mod(lat + 90, 180) - 90
         self.lon = np.mod(lon, 360)
@@ -76,6 +80,10 @@ class DataField():
         ret = ret.T
         for i, x in enumerate(nhbrs):
             ret = np.dot(ret, [nhbr[1], 1.-nhbr[1]])
+            if ret.ndim == 2:
+                # for some reason np.dot doesn't always reduce the dimension
+                # so we need to do it manually from time to time
+                ret = ret[..., 0]
         return ret
 
 def test():

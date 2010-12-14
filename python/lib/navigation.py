@@ -4,6 +4,22 @@ from lib import objects
 
 earth_radius = 3440.07 # in nautical miles
 
+def apparent_wind(course, true_wind):
+    """
+    Given a course (speed and bearing) and a true wind this returns the
+    apparent wind as seen from the boat
+    """
+    boat_u = course.speed * np.sin(course.bearing)
+    boat_v = course.speed * np.cos(course.bearing)
+
+    # the wind relative to the due north
+    relative_wind = objects.Wind(true_wind.u - boat_u, true_wind.v - boat_v)
+    # the direction is simply the difference in angles
+    dir = relative_wind.dir - course.bearing
+    # its easiest to decompose back into u and v apparent directions
+    return objects.Wind(u=-relative_wind.speed * np.sin(dir),
+                        v=-relative_wind.speed * np.cos(dir))
+
 def rhumbline_bearing(a, b):
     """
     Gives you the bearing of a rhumbline between two points a and b
@@ -25,10 +41,11 @@ def rhumbline_distance(a, b):
     stretched_lat = np.log(np.tan(b.lat/2.+np.pi/4.)/np.tan(a.lat/2.+np.pi/4.))
     delta_lat = (b.lat - a.lat)
     delta_lon = (b.lon - a.lon)
-    if delta_lat:
+    if delta_lat == 0.0:
         q = np.cos(b.lat)
     else:
         q = delta_lat / stretched_lat
+
     return np.sqrt(np.power(delta_lat, 2.) + np.power(q*delta_lon, 2.)) * earth_radius
 
 def rhumbline_path(a, bearing):
@@ -65,7 +82,11 @@ def test():
     print "start: ", start.lat, start.lon
     print "end  : ", end.lat, end.lon
     print "rhumb(distance): ", approx.lat, approx.lon
-    import pdb; pdb.set_trace()
+
+    wind = object.Wind(u=0, v=1)
+
+
+    apparent_wind
 
 if __name__ == "__main__":
     import sys
