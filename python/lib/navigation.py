@@ -68,26 +68,3 @@ def rhumbline_path(a, bearing):
         return objects.LatLon(np.rad2deg(latb), np.rad2deg(a.lon + delta_lon))
 
     return f
-
-def test():
-    from lib import objects
-
-    start = objects.LatLon(18.5, -155) # hawaii
-    end = objects.LatLon(-16.5, -175) # fiji
-    bear = bearing(start, end)
-    distance = rhumbline_distance(start, end)
-    rhumb = rhumbline_path(start, bear)
-    approx = rhumb(distance)
-
-    print "start: ", start.lat, start.lon
-    print "end  : ", end.lat, end.lon
-    print "rhumb(distance): ", approx.lat, approx.lon
-
-    wind = object.Wind(u=0, v=1)
-
-
-    apparent_wind
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(test())

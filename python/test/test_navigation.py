@@ -23,7 +23,7 @@ class TestNavigation(unittest.TestCase):
         print "start: ", start.lat, start.lon
         print "end  : ", end.lat, end.lon
         print "rhumb(distance): ", approx.lat, approx.lon
-
+        self.fail()
 
 if __name__ == '__main__':
     unittest.main()
