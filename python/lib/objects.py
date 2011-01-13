@@ -3,13 +3,11 @@ import coards
 import datetime
 import cStringIO
 
-from collections import namedtuple
+from lib import pupynere, collections
 
-from lib import pupynere
-
-LatLon = namedtuple('LatLon', 'lat lon')
-Course = namedtuple('Course', 'loc speed bearing heading')
-Leg = namedtuple('Leg', 'course time wind distance etc')
+LatLon = collections.namedtuple('LatLon', 'lat lon')
+Course = collections.namedtuple('Course', 'loc speed bearing heading')
+Leg = collections.namedtuple('Leg', 'course time wind distance rel_wind_dir etc')
 
 _speed = {'m/s':1.94384449,
           'm s-1':1.94384449,
@@ -28,7 +26,7 @@ def from_udunits(units, x):
         now = datetime.datetime.strptime(units, 'hour since %Y-%m-%dT%H:%M:%SZ')
         return now + datetime.timedelta(seconds=int(3600*x))
 
-class Wind():
+class Wind(object):
     def __init__(self, u=None, v=None, speed=None, dir=None):
         self.u = u
         self.v = v
@@ -58,7 +56,7 @@ class Wind():
         else:
             self.readable = '-'
 
-class LatLon():
+class LatLon(object):
     def __init__(self, lat, lon):
         self.lat = np.mod(lat + 90, 180) - 90
         self.lon = np.mod(lon, 360)
@@ -225,7 +223,7 @@ def normalize_variable(var):
 
     return var
 
-class DataField():
+class DataField(object):
     def __init__(self, data_obj, var, dims=None, units=None):
         var = data_obj.variables[var]
         if not dims:

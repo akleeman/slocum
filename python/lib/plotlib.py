@@ -3,6 +3,7 @@ import coards
 import matplotlib.pyplot as plt
 
 from mpl_toolkits.basemap import Basemap
+from matplotlib.pylab import meshgrid
 
 from lib import objects
 
@@ -39,12 +40,16 @@ def plot_passages(passages, etc_var=None):
         days = [coards.to_udunits(x, units) for x in times]
         ax2.plot(np.array(days), np.array([x.distance for x in passage]))
         ax3.plot(days, [x.wind.speed for x in passage])
-        rel_wind = [np.abs(x.course.heading - x.wind.dir) for x in passage]
-        ax4.plot(days, [x if x < np.pi else 2*np.pi - x for x in rel_wind])
-        if etc_var:
-            ax5.plot(days, [x.etc[etc_var] if etc_var in x.etc else np.nan for x in passage])
+        def rel(x):
+            if x < np.pi:
+                return x
+            else:
+                return 2*np.pi - x
+        rel_wind = [rel(np.abs(x.course.heading - x.wind.dir)) for x in passage]
+        ax4.plot(days, rel_wind)
+#        if etc_var:
+            #ax5.plot(days, [x.etc[etc_var] if etc_var in x.etc else np.nan for x in passage])
 
-    import pdb; pdb.set_trace()
     plt.show()
 
 def plot_passage(passage):
@@ -71,13 +76,31 @@ def plot_passage(passage):
 #    plt.title("Storm winds")
     plt.show()
 
-def plot_route(passage):
+def plot_route(passage, proj='lcc'):
     passage = list(passage)
     start = passage[0].course.loc
     end = passage[-1].course.loc
     print "took: ", passage[-1].time - passage[0].time
     mid = objects.LatLon(0.5*(start.lat + end.lat), 0.5*(start.lon + end.lon))
-    m = Basemap(projection='ortho',lon_0=mid.lon,lat_0=mid.lat,resolution='l')
+
+    llcrnrlon=min(start.lon, end.lon)-5
+    llcrnrlat=min(start.lat, end.lat)-5
+    urcrnrlon=max(start.lon, end.lon)+5
+    urcrnrlat=max(start.lat, end.lat)+5
+
+    m = Basemap(projection=proj,
+                lon_0=mid.lon,
+                lat_0=mid.lat,
+                llcrnrlon=llcrnrlon,
+                llcrnrlat=llcrnrlat,
+                urcrnrlon=urcrnrlon,
+                urcrnrlat=urcrnrlat,
+                rsphere=(6378137.00,6356752.3142),
+                area_thresh=1000.,
+                width=np.abs(start.lon - end.lon),
+                height=np.abs(start.lat - end.lat),
+                resolution='l')
+
     lons = [x.course.loc.lon for x in passage]
     lats = [x.course.loc.lat for x in passage]
     x,y = m(lons,lats)
@@ -87,6 +110,39 @@ def plot_route(passage):
     m.scatter(x,y,10,edgecolors='none',zorder=10)
     # map with continents drawn and filled.
     make_pretty(m)
+
+def plot_field(field, proj='lcc'):
+
+    field = field['uwnd']
+    lats, lons = field.dims
+
+    start = objects.LatLon(min(lats), min(lons))
+    end = objects.LatLon(max(lats), max(lons))
+    mid = objects.LatLon(0.5*(start.lat + end.lat), 0.5*(start.lon + end.lon))
+
+    llcrnrlon=min(start.lon, end.lon)-5
+    llcrnrlat=min(start.lat, end.lat)-5
+    urcrnrlon=max(start.lon, end.lon)+5
+    urcrnrlat=max(start.lat, end.lat)+5
+
+    m = Basemap(projection=proj,
+                lon_0=mid.lon,
+                lat_0=mid.lat,
+                llcrnrlon=llcrnrlon,
+                llcrnrlat=llcrnrlat,
+                urcrnrlon=urcrnrlon,
+                urcrnrlat=urcrnrlat,
+                rsphere=(6378137.00, 6356752.3142),
+                area_thresh=1000.,
+                width=np.abs(start.lon - end.lon),
+                height=np.abs(start.lat - end.lat),
+                resolution='l')
+
+    x, y = m(*meshgrid(lons,lats))
+    m.contour(x, y, field.data)
+    # map with continents drawn and filled.
+    make_pretty(m)
+    plt.show()
 
 def plot_circle(opts, args):
     """
