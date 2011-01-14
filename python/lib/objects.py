@@ -156,7 +156,7 @@ class DataObject(pupynere.netcdf_file):
             self._dims[self._dims.index(var)] = name
             for v in self.variables.values():
                 if var in v.dimensions:
-                    ind = v.dimensions.index(var)
+                    ind = list(v.dimensions).index(var)
                     dims = list(v.dimensions)
                     dims[ind] = name
                     v.dimensions = tuple(dims)
@@ -240,7 +240,8 @@ class DataField(object):
             self.data = self.data.take(inds, axis=i)
 
         assert self.data.ndim == 2 # we only support two dimensions for now
-        if any(x != y.shape[0] for x, y in zip(self.data.shape, self.dims)):
+        if np.any([x != y.shape[0] for x, y in zip(self.data.shape, self.dims)]):
+            import pdb; pdb.set_trace()
             raise ValueError("dim lengths and array shape must agree")
 
     def __call__(self, *points):

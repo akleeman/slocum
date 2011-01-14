@@ -156,7 +156,7 @@ def plot_circle(opts, args):
     radius = 3000000
     resol = np.pi/200
     circle_points = [(center[0] + radius * np.cos(x), center[1] + radius * np.sin(x)) for x in np.arange(0, 2*np.pi, step = resol)]
-    lat_lons = map(lambda x: ortho(*x, inverse=True), circle_points)
+    #lat_lons = map(lambda x: ortho(*x, inverse=True), circle_points)
     circlex = [x[0] for x in circle_points]
     circley = [x[1] for x in circle_points]
     ortho.scatter(circlex, circley, 10, edgecolors='none',zorder=10)

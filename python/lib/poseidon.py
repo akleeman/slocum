@@ -1,5 +1,3 @@
-from __future__ import with_statement
-
 import os
 import re
 import uuid
@@ -16,8 +14,8 @@ from lib import objects, pupynere, iterlib
 
 _data_dir = os.path.join(os.path.dirname(__file__), '../../data/')
 _sources = {'ccmp_daily':'ccmp/mean_wind_%Y%m%d_v11l30flk.nc',
-            'gefs': 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_%Y%m%d_0600.grib2',
-            'nww3': 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/fmrc/NCEP/WW3/Global/files/WW3_Global_20110103_1800.grib2/dataset.html',
+            'gefs': 'http://motherlode.ucar.edu/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_%Y%m%d_0600.grib2',
+            'nww3': 'http://motherlode.ucar.edu/thredds/ncss/grid/fmrc/NCEP/WW3/Global/files/WW3_Global_%Y%m%d_0600.grib2/dataset.html',
 }
 _ibtracs = 'ibtracs/Allstorms.ibtracs_wmo.v03r02.nc'
 _storms = 'historical_storms.nc'
@@ -93,13 +91,14 @@ def historical_weather(start_date, data_dir=None, source='ccmp_daily'):
 
     return [list(historical_year(year)) for year in range(2000, 2009)]
 
-class NCDFSubsetFetcher():
+class NCDFSubsetFetcher(object):
     """
     An abstract class that allows
 
     requires attributes:
     vars -- {ncdf_name:slocum_name}
-    url -- a format string which gives a url to the data file
+    url -- all or part of the root url
+    format -- a format string appended to the url pointing to the file
     source -- a shortname describing the source
     timevar -- the variable which represents the time dimension
     """
@@ -117,12 +116,11 @@ class NCDFSubsetFetcher():
                 'south':'%.2f' % np.floor(ll.lat),
                 'east':'%.2f' % np.ceil(ur.lon),
                 }
-        subs = {
-            'source':datetime.datetime.now().strftime(self.url),
-            'args':'&'.join(['%s=%s' % (k, v) for k, v in sorted(args.items())]),
-            }
+        subs = {'url':self.url.rstrip('/'),
+                'format':datetime.datetime.now().strftime(self.format),
+                'args':'&'.join(['%s=%s' % (k, v) for k, v in sorted(args.items())])}
 
-        url = "%(source)s?%(args)s" % subs
+        url = "%(url)s/%(format)s?%(args)s" % subs
 
         logging.info(url)
         logging.error("FORECASTS ARE PEGGED TO THE 0600 FORECAST")
@@ -133,8 +131,9 @@ class NCDFSubsetFetcher():
         encoded_path = os.path.join(_data_dir, self.source, encoded_name)
         if not os.path.exists(encoded_path):
             urlf = urllib2.urlopen(url)
-            with open(encoded_path, 'wb') as f:
-                f.write(urlf.read())
+            f = open(encoded_path, 'wb')
+            f.write(urlf.read())
+            f.close()
 
         obj = objects.DataObject(encoded_path, 'r')
         units = obj.variables[self.timevar].units.replace('hour ', 'hours ')
@@ -156,7 +155,8 @@ class GEFS(NCDFSubsetFetcher):
     """
     vars = {'U-component_of_wind_height_above_ground':'uwnd',
             'V-component_of_wind_height_above_ground':'vwnd'}
-    url = 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_%Y%m%d_0600.grib2'
+    url = 'http://motherlode.ucar.edu/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/'
+    format = 'GEFS_Global_1p0deg_Ensemble_%Y%m%d_0600.grib2'
     source = 'gefs'
     timevar = 'time1'
 
@@ -184,7 +184,8 @@ class NWW3(NCDFSubsetFetcher):
     vars = {'Significant_height_of_combined_wind_waves_and_swell':'combined_swell_height',
             'Primary_wave_direction':'primary_wave_direction',
             'Direction_of_wind_waves':'direction_of_wind_waves'}
-    url = 'http://motherlode.ucar.edu:8080/thredds/ncss/grid/fmrc/NCEP/WW3/Global/runs/NCEP-WW3-Global_RUN_%Y-%m-%dT06:00:00Z'
+    url = 'http://motherlode.ucar.edu/thredds/ncss/grid/fmrc/NCEP/WW3/Global/runs/'
+    format = 'NCEP-WW3-Global_RUN_%Y-%m-%dT06:00:00Z'
     source = 'nww3'
     timevar = 'time'
 

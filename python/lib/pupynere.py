@@ -362,7 +362,7 @@ class netcdf_file(object):
                 data = None
             else:
                 if self.use_mmap:
-                    mm = mmap(self.fp.fileno(), begin_+vsize, access=ACCESS_READ)
+                    mm = mmap(self.fp.fileno(), int(begin_+vsize), access=ACCESS_READ)
                     data = ndarray.__new__(ndarray, shape, dtype=dtype_,
                             buffer=mm, offset=begin_, order=0)
                 else:
@@ -405,7 +405,7 @@ class netcdf_file(object):
 
         for i in range(dims):
             dimid = self._unpack_int()
-            dimname = self._dims[dimid]
+            dimname = self._dims[int(dimid)]
             dimensions.append(dimname)
             dim = self.dimensions[dimname]
             shape.append(dim)

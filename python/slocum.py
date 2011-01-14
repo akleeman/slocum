@@ -208,6 +208,37 @@ def optimal_passage(start, end, start_date, wx_fields, resol=50):
 
     return safe_routes[np.argmin(idealness)][0]
 
+def summarize_passages(passages):
+
+    assert len(passages)
+    times = [l.time for l in passages[0]]
+    by_time = [dict((l.time, l) for l in p) for p in passages]
+
+    legs = []
+    fmt = "%(time)10s %(lat)5.2f %(lon)5.2f"
+    for t in times:
+        course = by_time[0][t].course
+        try:
+            states = [p[t] for p in by_time]
+            
+            fields = {'wind':[s.wind.speed for s in states],
+                      'distance':[s.distance for s in states]}
+
+            for k,v in states[0].etc.items():
+                fields[k] = [s.etc[k] for s in states]
+                
+            def fmt_field(x):
+                return "[%2.0f %2.0f %2.0f]" % (np.min(x), np.mean(x), np.max(x))
+            
+            subs = {'time':t.strftime('%Y-%m-%d : %H-%M'),
+                    'lat':course.loc.lat,
+                    'lon':course.loc.lon}
+            leg = "%s -- %s" % (fmt % subs, '  '.join(["%s:%s" % (k, fmt_field(v)) for k,v in fields.items()]))
+            legs.append(leg)
+        except:
+            pass
+    return legs
+            
 def summarize_passage(passage):
     ret = {}
     passage = list(passage)
@@ -252,7 +283,14 @@ def handle_forecasts(opts, args):
     else:
         waypoints = [opts.start, opts.end]
     passages = simulate_passages(waypoints, opts.start_date, forecasts)
-    plotlib.plot_passages(passages, 'combined_swell_height')
+    if opts.plot:
+        plotlib.plot_passages(passages, 'combined_swell_height')
+    else:
+        legs = summarize_passages(passages)
+        for i, pt in enumerate(waypoints):
+            print "waypoint %2d: %5.2f %5.2f" % (i, pt.lat, pt.lon)
+        for l in legs:
+            print l
     return 0
 
 def main():
