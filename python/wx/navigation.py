@@ -1,6 +1,6 @@
 import numpy as np
 
-from lib import objects
+from wx.lib import objects
 
 earth_radius = 3440.07 # in nautical miles
 
@@ -49,6 +49,10 @@ def rhumbline_distance(a, b):
     return np.sqrt(np.power(delta_lat, 2.) + np.power(q*delta_lon, 2.)) * earth_radius
 
 def rhumbline_path(a, bearing):
+    """
+    returns a function that takes a distances and returns your lat long after
+    traveling that distance along the rhumbline given by 'bearing'
+    """
     # first we convert to mercator coordinates
     a = a.as_rad()
     phia = np.log(np.tan(a.lat/2.+np.pi/4.))

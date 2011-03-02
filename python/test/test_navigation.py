@@ -1,7 +1,7 @@
 import numpy as np
 import unittest
 
-from lib import objects, navigation
+from wx.lib import objects, navigation
 
 class TestNavigation(unittest.TestCase):
 

@@ -1,13 +1,13 @@
-# This file came from http://code.activestate.com/recipes/500261-named-tuples/
-# namedtuple is part of python2.6, but we've included it here for compatibility
-# with python2.5.  -kleeman
-
 from operator import itemgetter as _itemgetter
 from keyword import iskeyword as _iskeyword
+from UserDict import DictMixin
 import sys as _sys
 
+
 def namedtuple(typename, field_names, verbose=False, rename=False):
-    """Returns a new subclass of tuple with named fields.
+    """A drop-in replacement for collections.namedtuple in Python 2.6
+
+    Source: http://code.activestate.com/recipes/500261-named-tuples/
 
     >>> Point = namedtuple('Point', 'x y')
     >>> Point.__doc__                   # docstring for the new class
@@ -27,7 +27,6 @@ def namedtuple(typename, field_names, verbose=False, rename=False):
     Point(x=11, y=22)
     >>> p._replace(x=100)               # _replace() is like str.replace() but targets named fields
     Point(x=100, y=22)
-
     """
 
     # Parse and validate the field names.  Validation serves two purposes,
@@ -115,12 +114,192 @@ def namedtuple(typename, field_names, verbose=False, rename=False):
 
     return result
 
-# This way we use the named tuple from the python dist if its available
+
+class OrderedDict(dict, DictMixin):
+    """A drop-in replacement for collections.OrderedDict in Python 2.7
+
+    Source: http://code.activestate.com/recipes/576693/
+    """
+
+    def __init__(self, *args, **kwds):
+        if len(args) > 1:
+            raise TypeError('expected at most 1 arguments, got %d' % len(args))
+        try:
+            self.__end
+        except AttributeError:
+            self.clear()
+        self.update(*args, **kwds)
+
+    def clear(self):
+        self.__end = end = []
+        end += [None, end, end]         # sentinel node for doubly linked list
+        self.__map = {}                 # key --> [key, prev, next]
+        dict.clear(self)
+
+    def __setitem__(self, key, value):
+        if key not in self:
+            end = self.__end
+            curr = end[1]
+            curr[2] = end[1] = self.__map[key] = [key, curr, end]
+        dict.__setitem__(self, key, value)
+
+    def __delitem__(self, key):
+        dict.__delitem__(self, key)
+        key, prev, next = self.__map.pop(key)
+        prev[2] = next
+        next[1] = prev
+
+    def __iter__(self):
+        end = self.__end
+        curr = end[2]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[2]
+
+    def __reversed__(self):
+        end = self.__end
+        curr = end[1]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[1]
+
+    def popitem(self, last=True):
+        if not self:
+            raise KeyError('dictionary is empty')
+        if last:
+            key = reversed(self).next()
+        else:
+            key = iter(self).next()
+        value = self.pop(key)
+        return key, value
+
+    def __reduce__(self):
+        items = [[k, self[k]] for k in self]
+        tmp = self.__map, self.__end
+        del self.__map, self.__end
+        inst_dict = vars(self).copy()
+        self.__map, self.__end = tmp
+        if inst_dict:
+            return (self.__class__, (items,), inst_dict)
+        return self.__class__, (items,)
+
+    def keys(self):
+        return list(self)
+
+    setdefault = DictMixin.setdefault
+    update = DictMixin.update
+    pop = DictMixin.pop
+    values = DictMixin.values
+    items = DictMixin.items
+    iterkeys = DictMixin.iterkeys
+    itervalues = DictMixin.itervalues
+    iteritems = DictMixin.iteritems
+
+    def __repr__(self):
+        if not self:
+            return '%s()' % (self.__class__.__name__,)
+        return '%s(%r)' % (self.__class__.__name__, self.items())
+
+    def copy(self):
+        return self.__class__(self)
+
+    @classmethod
+    def fromkeys(cls, iterable, value=None):
+        d = cls()
+        for key in iterable:
+            d[key] = value
+        return d
+
+    def __eq__(self, other):
+        if isinstance(other, OrderedDict):
+            return len(self)==len(other) and self.items() == other.items()
+        return dict.__eq__(self, other)
+
+    def __ne__(self, other):
+        return not self == other
+
+
+class SafeOrderedDict(OrderedDict):
+    """A subclass of OrderedDict that prohibits overwriting an entry
+    once it has been added.
+    """
+
+    def __init__(self, *args, **kwds):
+        if len(args) > 1:
+            raise TypeError('expected at most 1 arguments, got %d' % len(args))
+        try:
+            self.__end
+        except AttributeError:
+            self.__end = end = []
+            end += [None, end, end]         # sentinel node for doubly linked list
+            self.__map = {}                 # key --> [key, prev, next]
+            dict.clear(self)
+        self.update(*args, **kwds)
+
+    # Necessary to support pickling
+    def __reduce__(self):
+        items = [[k, self[k]] for k in self]
+        tmp = self.__map, self.__end
+        del self.__map, self.__end
+        inst_dict = vars(self).copy()
+        self.__map, self.__end = tmp
+        if inst_dict:
+            return (self.__class__, (items,), inst_dict)
+        return self.__class__, (items,)
+
+    def __setitem__(self, key, value):
+        if key in self:
+            raise ValueError, (
+                    "'%s' already exists and can not be overwritten" % (key))
+        if key not in self:
+            end = self.__end
+            curr = end[1]
+            curr[2] = end[1] = self.__map[key] = [key, curr, end]
+        dict.__setitem__(self, key, value)
+
+    def __delitem__(self, key):
+        raise NotImplementedError, ("%s does not allow entries to be deleted" %
+                (type(self).__name__))
+
+    def __iter__(self):
+        end = self.__end
+        curr = end[2]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[2]
+
+    def __reversed__(self):
+        end = self.__end
+        curr = end[1]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[1]
+
+    def pop(self, *args, **kwargs):
+        raise NotImplementedError, ("%s does not allow destructive access" %
+                (type(self).__name__))
+
+    def popitem(self, *args, **kwargs):
+        raise NotImplementedError, ("%s does not allow destructive iteration " %
+                (type(self).__name__))
+
+    def __eq__(self, other):
+        if isinstance(other, SafeOrderedDict):
+            return len(self)==len(other) and self.items() == other.items()
+        return dict.__eq__(self, other)
+
+
+# This way we use collections.namedtuple if available
 try:
     from collections import namedtuple
 except ImportError:
     pass
 
+# This way we use collections.OrderedDict if available
+try:
+    from collections import OrderedDict
+except ImportError:
+    pass
 
 if __name__ == '__main__':
     # verify that instances can be pickled

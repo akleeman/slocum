@@ -12,9 +12,9 @@ import operator
 import datetime
 import itertools
 
-from lib import objects, pupynere, iterlib
+from wx.lib import objects, pupynere, iterlib
 
-_data_dir = os.path.join(os.path.dirname(__file__), '../../data/')
+_data_dir = os.path.join(os.path.dirname(__file__), '../../../data/')
 _sources = {'ccmp_daily':'ccmp/mean_wind_%Y%m%d_v11l30flk.nc',
             'gefs': 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_%Y%m%d_0600.grib2',
             'nww3': 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/fmrc/NCEP/WW3/Global/files/WW3_Global_20110103_1800.grib2/dataset.html',
@@ -22,12 +22,7 @@ _sources = {'ccmp_daily':'ccmp/mean_wind_%Y%m%d_v11l30flk.nc',
 _ibtracs = 'ibtracs/Allstorms.ibtracs_wmo.v03r02.nc'
 _storms = 'historical_storms.nc'
 
-def forecast_weather(start_date, ur, ll):
-    """
-    Yields an iterator of forecast weather as a list each element of which is
-    a dictionary mapping from {time:{variable:data_field}} to be used
-    during passage simulation.
-    """
+def ensure_corners(ur, ll):
     ur = ur.copy()
     ll = ll.copy()
     if ur.lon < ll.lon:
@@ -42,20 +37,24 @@ def forecast_weather(start_date, ur, ll):
     ur.lon += 1
     ll.lat -= 1
     ll.lon -= 1
+    return ur, ll
 
-    nww3 = NWW3(ur=ur, ll=ll)
-    nww3_fcst = dict(list(nww3.iterator(start_date))[0])
+def forecast_weather(start_date, ur, ll):
+    """
+    Yields an iterator of forecast weather as a list each element of which is
+    a dictionary mapping from {time:{variable:data_field}} to be used
+    during passage simulation.
+    """
+    ur, ll = ensure_corners(ur, ll)
 
     gefs = GEFS(ur=ur, ll=ll)
-    gefs_fcsts = gefs.iterator(start_date)
+    # iterate over each ensemble member
+    gefs_fcsts = gefs.iterator()
 
-    # combine the two forecasts
+    nww3 = NWW3(ur=ur, ll=ll)
+    nww3_fcst = nww3.iterator()[0]
     for fcst in gefs_fcsts:
-        fcst = dict(list(fcst))
-        for time, variables in fcst.items():
-            if time in nww3_fcst:
-                variables.update(nww3_fcst[time])
-        yield fcst
+        yield (fcst, nww3_fcst)
 
 def historical_weather(start_date, data_dir=None, source='ccmp_daily'):
     if not data_dir:
@@ -107,10 +106,17 @@ class NCDFSubsetFetcher():
         self.ur = ur
         self.ll = ll
 
-    def fetch(self, ur, ll):
+    def fetch(self, ur=None, ll=None):
         """
         Finds the latest forecast on a netcdf subset server
         """
+        if ur is None:
+            ur = self.ur
+        if ll is None:
+            ll = self.ll
+
+        ur, ll = ensure_corners(ur, ll)
+
         args = {'var':','.join(self.vars.keys()),
                 'north':'%.2f' % np.ceil(ur.lat),
                 'west':'%.2f' % np.floor(ll.lon),
@@ -137,6 +143,66 @@ class NCDFSubsetFetcher():
                 f.write(urlf.read())
 
         obj = objects.DataObject(encoded_path, 'r')
+
+        # the time units are often a bit out of whack.  This nudges them into
+        # coards conventions
+        units = obj.variables[self.timevar].units.replace('hour ', 'hours ')
+        units = re.sub('([0-9])T([0-9])','\\1 \\2', units)
+        units = re.sub('Z$','', units)
+        obj.variables[self.timevar].units = units
+
+        # normalize any of the variables that may have non-standard units
+        for k, v in obj.variables.iteritems():
+            obj.variables[k] = objects.normalize_variable(v)
+
+        # rename some of the dims to match our standards
+        variable_map = {self.timevar:'time'}
+        variable_map.update(self.vars)
+        for var, name in variable_map.items():
+            obj.rename(var, name)
+
+        return obj
+
+    def fetch_opendap(self, ur=None, ll=None):
+        """
+        Finds the latest forecast on a netcdf subset server
+        """
+        if ur is None:
+            ur = self.ur
+        if ll is None:
+            ll = self.ll
+
+        args = {'var':','.join(self.vars.keys()),
+                'north':'%.2f' % np.ceil(ur.lat),
+                'west':'%.2f' % np.floor(ll.lon),
+                'south':'%.2f' % np.floor(ll.lat),
+                'east':'%.2f' % np.ceil(ur.lon),
+                }
+
+        from pydap.client import open_url
+        import pydap.lib
+        pydap.lib.CACHE = "/tmp/pydap-cache/"
+
+        dataset = open_url(self.opendap)
+
+        lat = dataset['lat'][:]
+        lon = dataset['lon'][:]
+        uwnd = dataset['ugrd10m']
+        vwnd = dataset['vgrd10m']
+
+        slicer = [slice(None, None, None)] * len(uwnd.dimensions)
+
+        lat_low = np.min(np.where(lat < ll.lat))
+        lat_high = np.max(np.where(lat < ur.lat))
+        slicer[list(uwnd.dimensions).index('lat')] = slice(lat_low, lat_high, 1)
+
+        #blah = open_url('http://nomads.ncep.noaa.gov/pub/data/nccf/com/wave/prod/wave.20110124/gep04.glo_60m.t00z.grib2')
+        blah = open_url('%s?ugrd10m[0:1:20][0:1:64][80:1:90][200:1:210]' % self.opendap)
+
+        import pdb; pdb.set_trace()
+        tmp = uwnd[slicer]
+
+        obj = objects.DataObject(encoded_path, 'r')
         units = obj.variables[self.timevar].units.replace('hour ', 'hours ')
         units = re.sub('([0-9])T([0-9])','\\1 \\2', units)
         units = re.sub('Z$','', units)
@@ -157,23 +223,28 @@ class GEFS(NCDFSubsetFetcher):
     vars = {'U-component_of_wind_height_above_ground':'uwnd',
             'V-component_of_wind_height_above_ground':'vwnd'}
     url = 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_%Y%m%d_0600.grib2'
+    opendap = 'http://nomads.ncep.noaa.gov:9090/dods/gens_bc/gens20110128/gep_all_00z'
     source = 'gefs'
     timevar = 'time1'
 
-    def iterator(self, start_date):
+    def iterator(self):
         """
         returns a list of generators which generate tuples (time, {var:data_field})
         """
-        obj = self.fetch(self.ur, self.ll)
+        obj = self.fetch()
         vars = self.vars.values()
         fcsts = list(obj.iterator(dim='height_above_ground1'))
         assert len(fcsts) == 1
-        def nciter(obj):
-            for t, obj in obj.iterator('time'):
-                t = coards.from_udunits(np.asscalar(t.data), t.units)
-                if t >= start_date:
-                    yield t, dict((k, objects.DataField(obj, k)) for k in vars)
-        return [nciter(x[1]) for x in fcsts[0][1].iterator('ens')]
+        obj = fcsts[0][1]
+
+        # remove the ens_strlen dimension and restructure the ens dimension
+        # so that it takes on integer values not string names
+        obj.dimensions.pop('ens_strlen')
+        obj.variables.pop('ens')
+        ens = obj.createVariable('ens', 'i', ('ens',))
+        ens.data[:] = np.arange(obj.dimensions['ens'])
+
+        return [y for x, y in obj.iterator('ens')]
 
 class NWW3(NCDFSubsetFetcher):
     """
@@ -182,21 +253,17 @@ class NWW3(NCDFSubsetFetcher):
     http://polar.ncep.noaa.gov/waves/index2.shtml
     """
     vars = {'Significant_height_of_combined_wind_waves_and_swell':'combined_swell_height',
+            'U-component_of_wind':'uwnd',
+            'V-component_of_wind':'vwnd',
             'Primary_wave_direction':'primary_wave_direction',
             'Direction_of_wind_waves':'direction_of_wind_waves'}
     url = 'http://motherlode.ucar.edu:8080/thredds/ncss/grid/fmrc/NCEP/WW3/Global/runs/NCEP-WW3-Global_RUN_%Y-%m-%dT06:00:00Z'
     source = 'nww3'
     timevar = 'time'
 
-    def iterator(self, start_date):
+    def iterator(self):
         """
         returns a list of generators which generate tuples (time, {var:data_field})
         """
-        obj = self.fetch(self.ur, self.ll)
-        vars = self.vars.values()
-        def nciter(obj):
-            for t, obj in obj.iterator('time'):
-                t = coards.from_udunits(np.asscalar(t.data), t.units)
-                if t >= start_date:
-                    yield t, dict((k, objects.DataField(obj, k)) for k in vars)
-        return [nciter(obj)]
+        obj = self.fetch()
+        return [obj]

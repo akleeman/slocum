@@ -54,13 +54,15 @@ TODO:
 import sys
 import pytz
 import numpy as np
+import coards
 import logging
 import datetime
 
 from optparse import OptionParser
 from matplotlib import pyplot as plt
 
-from lib import objects, navigation, plotlib, fetch, poseidon, iterlib
+from wx import poseidon
+from wx.lib import objects, navigation, plotlib, fetch, iterlib, emaillib
 
 MAX_BOAT_SPEED = 6
 MAX_POINTING = 0.3490658503988659 # 30/180*pi
@@ -91,7 +93,7 @@ def boat_speed(wind, bearing):
 def hours(timedelta):
     return float(timedelta.days * 24 + timedelta.seconds / SECONDS_IN_HOUR)
 
-def simulate_passage(waypoints, start_date, wx_fields):
+def simulate_passage(waypoints, start_date, forecasts):
     """
     Simulates a passage following waypoints having started on a given date.
 
@@ -101,32 +103,26 @@ def simulate_passage(waypoints, start_date, wx_fields):
     wxfunc - a function with signature f(time, lat, lon) that must return a
         pupynere-like object containing at least uwnd, vwnd
     """
-    wx_fields = dict(wx_fields)
     waypoints = list(waypoints)
     here = waypoints.pop(0)
 
-    times = wx_fields.keys()
-    #tds = [max(now - x, x - now) for x in times]
-    start_ind = 0 #tds.index(min(tds))
-    end_date = max(times)
+    fcst = forecasts[1]
+    fcsts = fcst.iterator(dim='time')
+    def next_time():
+        t, y = fcsts.next()
+        assert t.data.size == 1
+        return coards.from_udunits(t.data[0], t.units), y
 
-    time_iter = iter(sorted(wx_fields.keys()))
-    now = time_iter.next()
-    fcst_time = now
-    soon = time_iter.next()
+    now, wx = next_time()
+    soon, next_wx = next_time()
     dt = soon - now
     try:
         for destination in waypoints:
             while not here == destination:
                 # interpolate the weather in wx_fields at the current lat lon
-                wx = iterlib.realize(wx_fields[fcst_time], dict)
-
-                #plotlib.plot_field(wx_fields[fcst_time])
-
-                wx = iterlib.value_map(lambda x: x(here.lat, here.lon), wx)
-                uwnd = wx.pop('uwnd')
-                vwnd = wx.pop('vwnd')
-
+                local_wx = wx.interpolate(lat=here.lat, lon=here.lon)
+                uwnd = np.asscalar(local_wx['uwnd'].data)
+                vwnd = np.asscalar(local_wx['vwnd'].data)
                 # determine the bearing (following a rhumbline) between here and the end
                 bearing = navigation.rhumbline_bearing(here, destination)
                 # get the wind and use that to compute the boat speed
@@ -148,20 +144,20 @@ def simulate_passage(waypoints, start_date, wx_fields):
                 else:
                     # and once we know how far, where does that put us in terms of lat long
                     here = navigation.rhumbline_path(here, bearing)(distance)
-                    now = soon
-                    fcst_time = now
-                    soon = time_iter.next()
+                    now, wx = soon, next_wx
+                    soon, next_wx = next_time()
                 dt = soon - now
-#                logging.debug('wind: %4s (%4.1f) @ %6.1f knots \t %6.1f miles in %4.1f hours @ %6.1f knots'
-#                             % (wind.readable, wind.dir, wind.speed, distance, hours(dt), speed))
+                logging.debug('wind: %4s (%4.1f) @ %6.1f knots \t %6.1f miles in %4.1f hours @ %6.1f knots'
+                             % (wind.readable, wind.dir, wind.speed, distance, hours(dt), speed))
+
                 yield objects.Leg(course, now, wind, distance, rel_wind, wx)
     except StopIteration:
         logging.error("Ran out of data!")
 
-def simulate_passages(waypoints, start_date, wx_fields):
-    def passage(field):
-        return list(simulate_passage(waypoints, start_date=start_date, wx_fields=field))
-    return [passage(field) for field in wx_fields]
+def simulate_passages(waypoints, start_date, forecasts):
+    def passage(fcsts):
+        return list(simulate_passage(waypoints, start_date=start_date, forecasts=fcsts))
+    return [passage(field) for field in forecasts]
 
 def historical_passages(waypoints, start_date, first_year=None, last_year=None):
     if not first_year:
@@ -176,26 +172,28 @@ def historical_passages(waypoints, start_date, first_year=None, last_year=None):
         date = datetime.datetime(year, start_mon, start_day)
         yield simulate_passage(waypoints, date)
 
-def optimal_passage(start, end, start_date, wx_fields, resol=50):
+def optimal_passage(start, end, start_date, forecasts, resol=5):
     # get the corners
     c1 = objects.LatLon(start.lat, end.lon)
     c2 = objects.LatLon(end.lat, start.lon)
-    wx_fields = list(wx_fields)
-
-    def route(x):
-        "Returns the passage summaries for a route through x"
-        passages = simulate_passages([start, x, end], start_date, wx_fields)
-        summaries = [summarize_passage(passage) for passage in passages]
-        return summaries
-
-    waypoints = [objects.LatLon(x*c1.lat + (1.-x)*c2.lat, x*c1.lon + (1.-x)*c2.lon) for x in np.arange(0., 1., step=1./resol)]
-    routes = [(x, route(x)) for x in waypoints]
+    forecasts = list(forecasts)
 
     def issafe(route):
         "returns a boolean indicating the route was a safe one"
         return np.max([x['max_wind'] for x in route]) <= MAX_WIND_SPEED
-    safe_routes = [(x, route) for (x, route) in routes if issafe(route)]
 
+    def route(x):
+        "Returns the passage summaries for a route through x"
+        passages = simulate_passages([start, x, end], start_date, forecasts)
+        summaries = [summarize_passage(passage) for passage in passages]
+        if issafe(summaries):
+            return summaries
+        else:
+            return None
+        return summaries
+
+    waypoints = [objects.LatLon(x*c1.lat + (1.-x)*c2.lat, x*c1.lon + (1.-x)*c2.lon) for x in np.arange(0., 1., step=1./resol)]
+    routes = [(x, route(x)) for x in waypoints]
     avg_times = np.mean([np.mean([x['hours'] for x in route]) for x, route in routes])
     avg_distances = np.mean([np.mean([x['distance'] for x in route]) for x, route in routes])
     def idealness(route):
@@ -204,9 +202,9 @@ def optimal_passage(start, end, start_date, wx_fields, resol=50):
         dist = np.mean([x['distance'] for x in route])
         pct_upwind = np.mean([x['pct_upwind'] for x in route])
         return (time - avg_times)/avg_times + (avg_distances/dist - 1.) + pct_upwind
-    idealness = [idealness(route) for x, route in safe_routes]
+    idealness = [idealness(route) for x, route in routes]
 
-    return safe_routes[np.argmin(idealness)][0]
+    return routes[np.argmin(idealness)][0]
 
 def summarize_passage(passage):
     ret = {}
@@ -221,10 +219,6 @@ def summarize_passage(passage):
     ret.update({'min_dist':np.min(dist), 'max_dist':np.max(wind), 'avg_dist':np.mean(wind)})
     ret['pct_upwind'] = [x.rel_wind_dir < np.pi/4 for x in passage]
     return ret
-
-def handle_plot(opts, args):
-    passage = simulate_passage([opts.start, opts.end], start_date=opts.start_date)
-    plotlib.plot_passage(list(passage))
 
 def handle_historical(opts, args):
     hist_passages = list(historical_passages([opts.start, opts.end], opts.start_date))
@@ -251,12 +245,20 @@ def handle_forecasts(opts, args):
         waypoints = [opts.start, mid, opts.end]
     else:
         waypoints = [opts.start, opts.end]
+
+    forecasts = [forecasts[0]]
+    print "HACK"
     passages = simulate_passages(waypoints, opts.start_date, forecasts)
-    plotlib.plot_passages(passages, 'combined_swell_height')
+
+    for passage in passages:
+        from lib import animatelib
+        animatelib.animate_route(passage)
+        import pdb; pdb.set_trace()
+        plotlib.plot_route(passage)
+    #plotlib.plot_passages(passages)#, 'combined_swell_height')
     return 0
 
-def main():
-
+def main(opts=None, args=None):
     p = OptionParser(usage="""%%prog [options]
     Slocum -- A tool for ocean passage planning
 
@@ -274,12 +276,18 @@ def main():
         help="the end location ie.  --end=lat,lon")
     p.add_option("", "--start-date", default=None, action="store")
     p.add_option("", "--hist", default=False, action="store_true")
-    p.add_option("", "--plot", default=False, action="store_true")
     p.add_option("", "--optimal", default=False, action="store_true")
     p.add_option("", "--forecast", default=False, action="store_true")
     p.add_option("-v", "--verbose", default=False, action="store_true")
+    p.add_option("", "--small", default=False, action="store_true")
 
-    opts, args = p.parse_args()
+    # if the first argument is "email" the arguments will actually be
+    # pulled from an MIMEText email piped through stdin
+    if len(sys.argv) > 1 and sys.argv[1] == "email":
+        email_args = emaillib.args_from_email(sys.stdin.read())
+        opts, args = p.parse_args(args=email_args)
+    else:
+        opts, args = p.parse_args()
 
     if opts.verbose:
         logging.basicConfig(level=logging.DEBUG)
@@ -307,9 +315,6 @@ def main():
 
     if opts.hist:
         return handle_historical(opts, args)
-
-    if opts.plot:
-        return handle_plot(opts, args)
 
     if opts.forecast:
         return handle_forecasts(opts, args)
