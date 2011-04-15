@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 from matplotlib.pylab import meshgrid
 
-from wx.lib import objects
+from wx.objects import objects
 
 def make_pretty(m):
     # map with continents drawn and filled.

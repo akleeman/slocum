@@ -1,4 +1,12 @@
-#import pygrib
+import os
+import numpy as np
+import coards
+import pygrib
+import itertools
+
+from datetime import datetime, timedelta
+
+from wx.objects import core, units
 
 codes = {
 0 : ("Reserved",),
@@ -130,13 +138,73 @@ codes = {
 126 : ("Wind mixing energy", "J"),
 }
 
-if __name__ == "__main__":
-    import pdb; pdb.set_trace()
-    grbs = pygrib.open('/home/kleeman/Desktop/gfs20110301234801764.grb')
-    #grbs = pygrib.open('/u/slocum/data/nww3.all.grb')
-    for g in grbs:
-        try:
-            print g, codes[g['indicatorOfParameter']], g['values'].shape
-        except:
-            pass
+_sec_per_hour = 3600
 
+def degrib(fn):
+    """
+    Takes a sequence of grib messages and converts them into a sequence of
+    data objects grouped such that each data object contains all variables that
+    share lat long grids.
+
+    It is assumed that all messages for each group of grids have the same times.
+    If this is not the case an exception is thrown
+    """
+
+    if not os.path.exists(fn):
+        raise ValueError("grib file %s does not exist" % fn)
+
+    gribs = pygrib.open(fn)
+    def get_grid(x):
+        # extracts the stringified lat long variables from a message
+        return "%s\t%s" % (x.distinctLatitudes.tostring(),
+                           x.distinctLongitudes.tostring())
+    # the actual order doesn't matter we just want to make sure they're grouped
+    gribs = sorted(gribs, key=get_grid)
+    for grid, group in itertools.groupby(gribs, key=get_grid):
+        # create a new object for each grid
+        obj = core.Data()
+        lats, lons = [np.fromstring(x) for x in grid.split('\t')]
+        obj.create_coordinate('lat', lats)
+        obj.create_coordinate('lon', lons)
+
+        var = lambda x: x.name
+        for var, var_group in itertools.groupby(group, key=var):
+            # iterate over all messages with the same variable name, turning
+            # each var into core.variable
+            def iterate():
+                # processes each message returning the date and values
+                g = var_group.next()
+                refdate = datetime.strptime(str(g.dataDate), "%Y%m%d")
+                refdate = refdate + timedelta(seconds=g.dataTime*_sec_per_hour)
+                for g in itertools.chain([g], var_group):
+                    assert g.unitOfTimeRange == 1
+                    valid_date = refdate + timedelta(seconds=g.periodOfTime*_sec_per_hour)
+                    yield valid_date, g.values
+
+            # extract all the dates so we can make the time coordinate
+            iter = list(iterate())
+            dates = [x[0] for x in iter]
+            start_date = min(dates)
+            udunits = coards.to_udunits(start_date,
+                                        'hours since %Y-%m-%d %H:%M:%S')
+            uddates = [coards.datetime_to_udunits(d, udunits) for d in dates]
+
+            # if the time coordinate exists make sure it matches
+            if 'time' in obj.variables:
+                assert np.all(uddates == obj['time'].data)
+            else:
+                obj.create_coordinate('time', uddates, record=True,
+                                      attributes={'units':udunits})
+
+            # create an empty data object and fill it
+            data = np.zeros((len(uddates), lats.size, lons.size))
+            for i, (date, x) in enumerate(iter):
+                data[i,:,:] = x
+            obj.create_variable(var, dim = ('time', 'lat', 'lon'), data=data)
+        yield units.normalize_data(obj)
+
+if __name__ == "__main__":
+    objs = [units.normalize_data(x) for x in
+            degrib('/home/kleeman/Desktop/gfs20110307070700810.grb')]
+    for obj in objs:
+        obj.to_file(open('/home/kleeman/Desktop/tmp.nc', 'w'))

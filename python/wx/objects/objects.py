@@ -6,10 +6,14 @@ import cStringIO
 
 from bisect import bisect
 
-from wx.lib import pupynere, collect, iterlib
+from wx.lib import pupynere, collections, iterlib
+from wx.objects import core
 
-Course = collect.namedtuple('Course', 'loc speed bearing heading')
-Leg = collect.namedtuple('Leg', 'course time wind distance rel_wind_dir wx')
+Course = collections.namedtuple('Course', 'loc speed bearing heading')
+Leg = collections.namedtuple('Leg', 'course time wind distance rel_wind_dir wx')
+
+Data = core.Data
+Variable = core.Variable
 
 class Wind(object):
     def __init__(self, u=None, v=None, speed=None, dir=None):
@@ -23,10 +27,10 @@ class Wind(object):
         bins = np.arange(-np.pi, np.pi, step=np.pi/4)
         names = ['S', 'SE', 'E', 'NE', 'N', 'NW', 'W', 'SW']
         ind = bisect(bins, self.dir)
-        if ind > 0 or self.dir > np.pi:
-            self.readable = names[ind - 1]
-        else:
+        if ind == 0 or self.dir > np.pi:
             self.readable = '-'
+        else:
+            self.readable = names[ind - 1]
 
 class LatLon(object):
     def __init__(self, lat, lon):
@@ -47,6 +51,69 @@ class LatLon(object):
 
     def __sub__(self, other):
         return LatLon(self.lat - other.lat, self.lon - other.lon)
+
+class DataField(object):
+    def __init__(self, data_obj, var, dims=None, units=None):
+        var = data_obj.variables[var]
+        if not dims:
+            dims = var.dimensions
+        dims = [data_obj.variables[x].data for x in dims]
+
+        self.var = normalize_variable(var)
+        self.dims = dims
+        self.data = self.var.data
+
+        for i, dim in enumerate(self.dims):
+            inds = np.argsort(dim)
+            self.dims[i] = dim[inds]
+            self.data = self.data.take(inds, axis=i)
+
+        assert self.data.ndim == 2 # we only support two dimensions for now
+        if any(x != y.shape[0] for x, y in zip(self.data.shape, self.dims)):
+            raise ValueError("dim lengths and array shape must agree")
+
+    def __call__(self, *points):
+        """
+        @returns: the function value obtained by linear interpolation
+        @rtype: number
+        @raise TypeError: if the number of arguments (C{len(points)})
+            does not match the number of variables of the function
+        @raise ValueError: if the evaluation point is outside of the
+            domain of definition and no default value is defined
+        """
+        if len(points) != len(self.dims):
+            raise TypeError('Wrong number of arguments')
+        assert self.data.ndim <= 2
+        def get_nhbrs(point, dim):
+            if not point:
+                return None
+            j = int(np.sum(dim <= point))
+            if j == 0:
+                msg = "%6.3f not in [%6.3f, %6.3f]" % (point, np.min(dim), np.max(dim))
+                raise ValueError(msg)
+            i = j - 1
+            if dim[i] == point:
+                return (i, j), 1.0
+            elif j == len(dim):
+                msg = "%6.3f not in [%6.3f, %6.3f]" % (point, np.min(dim), np.max(dim))
+                raise ValueError(msg)
+            else:
+                alpha = np.abs(point - dim[j])/np.abs(dim[i] - dim[j])
+                assert alpha <= 1
+                return (i, j), alpha
+
+        nhbrs = map(get_nhbrs, points, self.dims)
+        ret = self.data.copy()
+        for i, nhbr in enumerate(nhbrs):
+            ret = ret.take(nhbr[0], axis=i)
+        ret = ret.T
+        for i, nhbr in enumerate(nhbrs):
+            ret = np.dot(ret, [nhbr[1], 1.-nhbr[1]])
+            if ret.ndim == 2:
+                # for some reason np.dot doesn't always reduce the dimension
+                # so we need to do it manually from time to time
+                ret = ret[..., 0]
+        return ret
 
 
 #class Trajectory():

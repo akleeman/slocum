@@ -2,7 +2,7 @@ import os
 import numpy as np
 import unittest
 
-from wx.lib import objects
+from wx.objects import objects
 
 _data_dir = os.path.join(os.path.dirname(__file__), '../../data/')
 
@@ -30,9 +30,33 @@ class TestObjects(unittest.TestCase):
         self.assertAlmostEqual(latlon.as_rad().lat, np.deg2rad(40.))
         self.assertAlmostEqual(latlon.as_rad().lon, np.deg2rad(135.))
 
+    def test_interpolate(self):
+        obj = Data()
+        obj.create_coordinate('dim1', np.arange(10))
+        obj.create_coordinate('dim2', np.arange(20))
+        obj.create_variable('var1',
+                            ('dim1', 'dim2'),
+                            data=np.random.normal(size=(10, 20)))
+
+        val = obj.interpolate('var1', dim1=3.5, dim2=2.5)
+        expected = np.mean(obj['var1'].data[3:5, 2:4])
+        np.testing.assert_almost_equal(val, expected)
+
+        val = obj.interpolate('var1', dim1=3, dim2=2.5)
+        expected = np.mean(obj['var1'].data[3, 2:4])
+        np.testing.assert_almost_equal(val, expected)
+
+        val = obj.interpolate('var1', dim1=3.5, dim2=2)
+        expected = np.mean(obj['var1'].data[3:5, 2])
+        np.testing.assert_almost_equal(val, expected)
+
+        val = obj.interpolate('var1', dim1=2.2, dim2=3.9)
+        expected = np.dot(np.dot(obj['var1'].data[2:4, 3:5].T, [0.8, 0.2]), [0.1, 0.9])
+        np.testing.assert_almost_equal(val, expected)
+
     def test_data_object_reconstruction(self):
-        file = os.path.join(_data_dir, 'test/test-gefs.nc')
-        obj = objects.DataObject(file, mode='r')
+        file = open(os.path.join(_data_dir, 'test/test-gefs.nc'), 'r')
+        obj = objects.Data(file)
 
         expected = obj.variables['U-component_of_wind_height_above_ground'].data.copy()
         actual = expected.copy()
@@ -50,12 +74,12 @@ class TestObjects(unittest.TestCase):
         self.assertTrue(np.all(expected == actual))
 
     def test_ccmp_data_field(self):
-        testfile = os.path.join(_data_dir, 'test/test-ccmp.nc')
-        testobjs = objects.DataObject(testfile, 'r')
+        testfile = open(os.path.join(_data_dir, 'test/test-ccmp.nc'), 'r')
+        testobjs = objects.Data(testfile)
         testobj = list(testobjs.iterator('time'))[0][1]
 
         def uwnd(x, y):
-            ret = testobj.interpolate(lat=x, lon=y)['uwnd'].data
+            ret = testobj.interpolate(var='uwnd', lat=x, lon=y)
             assert ret.size == 1
             return np.asscalar(ret)
 
@@ -81,7 +105,7 @@ class TestObjects(unittest.TestCase):
 
     def test_gefs_data_field(self):
         testfile = os.path.join(_data_dir, 'test/test-gefs.nc')
-        testobj = objects.DataObject(testfile, 'r')
+        testobj = objects.Data(testfile)
 
         val = testobj.interpolate(lat=34., lon=212.)
         self.assertAlmostEqual(np.asscalar(val['lat'].data), 34.)
@@ -92,7 +116,6 @@ class TestObjects(unittest.TestCase):
         val = testobj.interpolate(lat=22., lon=210.)
         uwnd = val['U-component_of_wind_height_above_ground']
         self.assertAlmostEqual(uwnd.data[1, 7, 0],  -3.97, 4)
-
 
 if __name__ == '__main__':
     unittest.main()

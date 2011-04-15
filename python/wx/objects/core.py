@@ -17,8 +17,8 @@ import logging
 from os import SEEK_END
 from operator import mul, or_
 from cStringIO import StringIO
-from wb.lib import ncdflib, numpylib
-from wb.lib.collections import OrderedDict, SafeOrderedDict
+from wx.lib import ncdflib
+from wx.lib.collections import OrderedDict, SafeOrderedDict
 
 
 def _prettyprint(x, numchars):
@@ -1034,8 +1034,8 @@ class Data(object):
                 raise ValueError, ("data array shape does not match the " +
                         "length of dimension '%s'") % (d)
         # Check that data is 1-dimensional if name matches a dimension name
-        if (name in self.dimensions) and (data.ndim != 1):
-            raise ValueError, "coordinate variables must be 1-dimensional"
+#        if (name in self.dimensions) and (data.ndim != 1):
+#            raise ValueError, "coordinate variables must be 1-dimensional"
         self.variables[name] = Variable(
                 dim=dim, data=data, attributes=attributes)
         # Update self.numrecs if this new variable is the first
@@ -1044,6 +1044,7 @@ class Data(object):
                 (self.numrecs is None):
             object.__setattr__(self, 'numrecs', self.variables[name].shape[0])
         return self.variables[name]
+
 
     def add_variable(self, name, variable):
         """A convenience function for adding a variable from one object to
@@ -1197,6 +1198,47 @@ class Data(object):
                              dtype='c',
                              data = data,
                              attributes=attributes)
+
+    def squeeze(self, dimension):
+        """
+        Squeezes dimensions of length 1, removing them for an object
+        """
+        # Create a new Data instance
+        obj = self.__class__()
+        if self.dimensions[dimension] != 1:
+            raise ValueError(("Can only squeeze along dimensions with" +
+                             "length one, %s has length %d") %
+                             (dimension, self.dimensions[dimension]))
+
+        # Copy dimensions
+        for (name, length) in self.dimensions.iteritems():
+            if not name == dimension:
+                obj.create_dimension(name, length)
+        # Copy variables
+        for (name, var) in self.variables.iteritems():
+            if not name == dimension:
+                dims = list(var.dimensions)
+                data = var.data.copy()
+                if dimension in dims:
+                    shape = list(var.data.shape)
+                    index = dims.index(dimension)
+                    shape.pop(index)
+                    dims.pop(index)
+                    data = data.reshape(shape)
+                obj.create_variable(name=name,
+                        dim=tuple(dims),
+                        data=data,
+                        attributes=var.attributes.copy())
+        # Copy attributes
+        for attr in self.attributes:
+            # Attribute values are either numpy vectors or strings; the
+            # former have a copy() method, while the latter are
+            # immutable
+            if hasattr(self.attributes[attr], 'copy'):
+                obj.set_attribute(attr, self.attributes[attr].copy())
+            else:
+                obj.set_attribute(attr, self.attributes[attr])
+        return obj
 
     def view(self, ind, dim=None):
         """Return a new object whose contents are a view of a slice from the
@@ -1391,13 +1433,13 @@ class Data(object):
         **kwds : arbitrary named arguments
             kwds should be in the form: old_name='new_name'
         """
-        for name, d in self.dimensions.iteritems():
-            if name in self.variables and not name in self.coordinates:
-                raise ValueError("Renaming assumes that only coordinates " +
-                                 "have both a dimension and variable under " +
-                                 "the same name.  In this case it appears %s " +
-                                 "has a dim and var but is not a coordinate"
-                                 % name)
+#        for name, d in self.dimensions.iteritems():
+#            if name in self.variables and not name in self.coordinates:
+#                raise ValueError(("Renaming assumes that only coordinates " +
+#                                 "have both a dimension and variable under " +
+#                                 "the same name.  In this case it appears %s " +
+#                                 "has a dim and var but is not a coordinate")
+#                                 % name)
 
         new_names = dict((name, name) for name, d in self.dimensions.iteritems())
         new_names.update(dict((name, name) for name, v in self.variables.iteritems()))
@@ -1704,6 +1746,48 @@ class Data(object):
                 yield self.variables[dim].data[i], v
             else:
                 yield i, v
+
+    def interpolate(self, var, **points):
+        # ASSUMPTION, ALL COORDINATES ARE SORTED
+        if len(points) != len(self[var].dimensions):
+            msg = "interpolation requires specifying all dimensions"
+            msg = msg + " required: %s -- given:%s"
+            raise ValueError(msg % (str(self[var].dimensions), str(points.keys())))
+        # TODO remove this restriction
+        #assert self[var].data.ndim <= 2
+
+        from bisect import bisect
+        def neighbors(coord, val):
+            assert self[coord].data.ndim == 1
+            data = self[coord].data
+            j = bisect(data, val)
+            if j == 0 or j == data.size:
+                raise ValueError("value of %6.3f is outside the range of %s"
+                                 % (val, coord))
+            i = j-1
+            if data[i] == val:
+                return [i, i], 1.0
+            else:
+                alpha = np.abs(val - data[j])/np.abs(data[i] - data[j])
+                assert alpha <= 1. and alpha >= 0.
+                return [i, j], alpha
+
+        iter = [(k, points[k]) for k in self[var].dimensions]
+        nhbrs = [neighbors(k, v) for k, v in iter]
+        ret = self[var].data.copy()
+        for i, nhbr in reversed(list(enumerate(nhbrs))):
+            ret = ret.take(nhbr[0], axis=i)
+        ret = ret.T
+        for inds, alpha in nhbrs:
+            ndim = ret.ndim
+            ret = np.dot(ret, [alpha, 1.-alpha])
+            if ret.ndim == ndim:
+                raise ValueError("dot did not reduce the dimension")
+                # for some reason np.dot doesn't always reduce the dimension
+                # so we need to do it manually from time to time
+                ret = ret[..., 0]
+        return ret
+
 
 class Variable(object):
     """A class that wraps metadata around a numpy ndarray"""
@@ -2081,3 +2165,27 @@ class Variable(object):
             else:
                 obj.set_attribute(attr, self.attributes[attr])
         return obj
+
+if __name__ == "__main__":
+    obj = Data()
+    obj.create_coordinate('dim1', np.arange(10))
+    obj.create_coordinate('dim2', np.arange(20))
+    obj.create_variable('var1',
+                        ('dim1', 'dim2'),
+                        data=np.random.normal(size=(10, 20)))
+
+    val = obj.interpolate('var1', dim1=3.5, dim2=2.5)
+    expected = np.mean(obj['var1'].data[3:5, 2:4])
+    np.testing.assert_almost_equal(val, expected)
+
+    val = obj.interpolate('var1', dim1=3, dim2=2.5)
+    expected = np.mean(obj['var1'].data[3, 2:4])
+    np.testing.assert_almost_equal(val, expected)
+
+    val = obj.interpolate('var1', dim1=3.5, dim2=2)
+    expected = np.mean(obj['var1'].data[3:5, 2])
+    np.testing.assert_almost_equal(val, expected)
+
+    val = obj.interpolate('var1', dim1=2.2, dim2=3.9)
+    expected = np.dot(np.dot(obj['var1'].data[2:4, 3:5].T, [0.8, 0.2]), [0.1, 0.9])
+    np.testing.assert_almost_equal(val, expected)

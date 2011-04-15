@@ -9,9 +9,6 @@ import struct
 import unicodedata
 import numpy as np
 
-from wb.lib import datelib
-import wb.datetime.ttypes as tdatetime
-
 MAGIC         = 'CDF'
 _31BYTE       = '\x01' # version_byte = 1
 _64BYTE       = '\x02' # version_byte = 2
