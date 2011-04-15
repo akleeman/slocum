@@ -1,16 +1,17 @@
 import numpy as np
 import coards
+
 import matplotlib.pyplot as plt
 
 from mpl_toolkits.basemap import Basemap
 from matplotlib.pylab import meshgrid
 
-from lib import objects
+from wx.objects import objects
 
 def make_pretty(m):
     # map with continents drawn and filled.
     m.drawcoastlines()
-    m.fillcontinents(color='coral',lake_color='aqua')
+    m.fillcontinents(color='green',lake_color='aqua')
     m.drawcountries()
     # draw parallels and meridians.
     m.drawparallels(np.arange(-90.,120.,30.))
@@ -52,31 +53,30 @@ def plot_passages(passages, etc_var=None):
 
     plt.show()
 
+def add_wind_contours(m, wx):
+        wind_speed = np.sqrt(np.power(wx['uwnd'].data, 2.) + np.power(wx['vwnd'].data, 2.))
+        levels = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60]
+        lines = m.contour(xx, yy, speed,
+                          colors='k',
+                          zorder=7,
+                          levels=levels)
+        filled = m.contourf(xx, yy, speed,
+                            zorder=7,
+                            alpha=0.5,
+                            levels=lines.levels,
+                            cmap=plt.cm.jet,
+                            extend='both')
+        plt.colorbar(filled, drawedges=True)
+        plt.draw()
+
 def plot_passage(passage):
     passage = list(passage)
     fig = plt.figure()
     fig.subplots_adjust(hspace=0.45, wspace=0.3)
     ax = fig.add_subplot(1, 2, 1)
-    plot_route(passage)
+    m = plot_route(passage)
 
-    times = [x.time for x in passage]
-    units = min(times).strftime('days since %Y-%m-%d')
-    days = [coards.to_udunits(x, units) for x in times]
-
-    ax2 = fig.add_subplot(3, 2, 2)
-    ax2.plot(np.array(days), np.array([x.distance for x in passage]))
-    plt.title("Distance")
-
-    ax3 = fig.add_subplot(3, 2, 4, sharex=ax2)
-    ax3.plot(days, [x.wind.speed for x in passage])
-    plt.title("Wind Speed")
-
-#    ax4 = fig.add_subplot(3, 2, 6, sharex=ax2)
-#    ax4.plot(days, [x.storm_wind for x in passage])
-#    plt.title("Storm winds")
-    plt.show()
-
-def plot_route(passage, proj='lcc'):
+def plot_map(passage, proj='lcc'):
     passage = list(passage)
     start = passage[0].course.loc
     end = passage[-1].course.loc
@@ -101,15 +101,26 @@ def plot_route(passage, proj='lcc'):
                 height=np.abs(start.lat - end.lat),
                 resolution='l')
 
-    lons = [x.course.loc.lon for x in passage]
+    make_pretty(m)
+    return m
+
+def plot_route(passage, proj='lcc'):
+    m = plot_map(passage, proj=proj)
+
     lats = [x.course.loc.lat for x in passage]
-    x,y = m(lons,lats)
+    lons = [x.course.loc.lon for x in passage]
+    xvals, yvals = m(lons,lats)
+    xvals = np.array(xvals)
+    yvals = np.array(yvals)
+
     # draw colored markers.
     # use zorder=10 to make sure markers are drawn last.
     # (otherwise they are covered up when continents are filled)
-    m.scatter(x,y,10,edgecolors='none',zorder=10)
-    # map with continents drawn and filled.
-    make_pretty(m)
+    m.scatter(xvals, yvals, 10, edgecolors='none', zorder=10)
+    uwnd = np.array([x.wind.u for x in passage])
+    vwnd = np.array([x.wind.v for x in passage])
+    m.barbs(xvals, yvals, uwnd, vwnd,zorder=9)
+    return m
 
 def plot_field(field, proj='lcc'):
 

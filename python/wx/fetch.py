@@ -4,7 +4,7 @@ import itertools
 
 from ftplib import FTP
 
-from lib import pupynere, objects
+from wx.lib import pupynere, objects
 
 _nasa_ftp = 'podaac.jpl.nasa.gov'
 _level30_url = 'ocean_wind/ccmp/L3.0/data/flk/'

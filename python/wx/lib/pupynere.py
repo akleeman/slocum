@@ -123,7 +123,6 @@ class netcdf_file(object):
     def _write(self):
         self.fp.write('CDF')
         self.fp.write(array(self.version_byte, '>b').tostring())
-
         # Write headers and data.
         self._write_numrecs()
         self._write_dim_array()
@@ -477,7 +476,6 @@ class netcdf_file(object):
 
 
 class netcdf_variable(object):
-    _freeze = False
     """
     ``netcdf_variable`` objects are constructed by calling the method
     ``createVariable`` on the netcdf_file object.
@@ -506,7 +504,6 @@ class netcdf_variable(object):
         for k, v in self._attributes.items():
             if not k in ['data', 'dimensions', '_typecode', '_shape']:
                 self.__dict__[k] = v
-        self._freeze = True
 
     def __setattr__(self, attr, value):
         # Store user defined attributes in a separate dict,
