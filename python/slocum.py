@@ -54,50 +54,136 @@ TODO:
 import sys
 import pytz
 import numpy as np
+import base64
 import logging
 import datetime
 
 from optparse import OptionParser
 from matplotlib import pyplot as plt
 
-from wx import poseidon, spray
-from wx.lib import plotlib, emaillib, griblib
-from wx.objects import objects
+import wx.objects.conventions as conv
 
-def getdata(opts, args):
+from wx import poseidon, spray
+from wx.lib import plotlib, emaillib, griblib, datelib
+from wx.objects import objects, core
+
+logging.basicConfig(level=logging.DEBUG)
+
+def weather(opts, args):
     if opts.grib:
-        return list(griblib.degrib(opts.grib))
-    if opts.download:
-        return list(poseidon.forecast_weather(opts.start_date, opts.start, opts.end))
+        return griblib.degrib(opts.grib)
+    if opts.download or opts.recent:
+        ll_lat = min([x.lat for x in opts.waypoints])
+        ll_lon = min([x.lon for x in opts.waypoints])
+        ur_lat = max([x.lat for x in opts.waypoints])
+        ur_lon = max([x.lon for x in opts.waypoints])
+        return poseidon.forecast_weather(opts.start_date,
+                                         objects.LatLon(ur_lat, ur_lon),
+                                         objects.LatLon(ll_lat, ll_lon),
+                                         recent=opts.recent)
+    else:
+        raise ValueError("no data source specified (--grib or --download")
 
 def handle_simulate(opts, args):
-    data = getdata(opts, args)
-    waypoints = [opts.start, opts.end]
-    passages = list(spray.passage(waypoints, opts.start_date, data))
-    return 1
-
-def handle_forecasts(opts, args):
-    """
-    handles the simulation of passages based off forecasts
-    """
-    forecasts = list(poseidon.forecast_weather(opts.start_date, opts.start, opts.end))
-    if opts.optimal:
-        mid = optimal_passage(opts.start, opts.end, opts.start_date, forecasts)
-        waypoints = [opts.start, mid, opts.end]
+    wx = list(weather(opts, args))
+    waypoints = opts.waypoints
+    if len(wx) > 1:
+        passages = (list(spray.passage(waypoints, opts.start_date, ens, fast=opts.fast)) for ens in wx)
+        plotlib.plot_passages(list(passages))
     else:
-        waypoints = [opts.start, opts.end]
-
-    forecasts = [forecasts[0]]
-    print "HACK"
-    passages = simulate_passages(waypoints, opts.start_date, forecasts)
-
-    for passage in passages:
-        from lib import animatelib
-        animatelib.animate_route(passage)
-        import pdb; pdb.set_trace()
-        plotlib.plot_route(passage)
-    #plotlib.plot_passages(passages)#, 'combined_swell_height')
+        passage = list(spray.passage(waypoints, opts.start_date, wx, fast=opts.fast))
+        plotlib.plot_passage(passage)
     return 0
+
+def handle_when(opts, args):
+    wx = list(weather(opts, args))
+    if opts.ensemble:
+        wx = [gfs for gfs, nww3 in wx]
+    else:
+        wx = [weather(opts, args).next()[0]]
+    waypoints = opts.waypoints
+    def simulate(start_date):
+        return spray.ensemble_passage(waypoints, start_date, weather=wx, fast=False)
+
+    start_dates = [opts.start_date + datetime.timedelta(seconds=i*12*3600) for i in xrange(8)]
+    iterroutes = [(waypoints, simulate(d)) for d in start_dates]
+    optimal_passages = spray.optimal_passage(iterroutes)
+    print "best departure", min(datelib.from_udvar(optimal_passages[conv.TIME]))
+
+    passages = spray.normalize_ensemble_passages([x[1] for x in iterroutes])
+    summaries = ((sd, spray.summarize_passage(p)) for sd, (_, p) in
+                 zip(start_dates, passages.iterator(conv.ENSEMBLE)))
+    sd, summary = summaries.next()
+    keys = summary.keys()
+    print '%30s' % 'start_date', '\t'.join('%10s' % k for k in keys)
+    print '%30s' % sd, '\t'.join('%10s' % summary[k] for k in keys)
+    for sd, summary in summaries:
+        print '%30s' % sd, '\t'.join('%10s' % summary[k] for k in keys)
+    plotlib.plot_passages(passages)
+    return 0
+
+def handle_optimal_routes(opts, args):
+    wx = list(weather(opts, args))
+    if opts.ensemble:
+        wx = [gfs for gfs, nww3 in wx]
+    else:
+        wx = [weather(opts, args).next()[0]]
+
+    if opts.start is None and opts.end is None:
+        if len(opts.waypoints) == 2:
+            opts.start, opts.end = opts.waypoints
+        else:
+            raise ValueError("expected a single start,end for optimization")
+    elif opts.start is None or opts.end is None:
+        raise ValueError("expected use of either --start and --end or --waypoints")
+
+    if opts.route_file is None:
+        opts.route_file = ('%d_%d_to_%d_%d_on_%s' %
+                            (opts.start.lat, opts.start.lon, opts.end.lat, opts.end.lon,
+                             opts.start_date.strftime('%Y_%m_%d')))
+
+    opts.route_file = open(opts.route_file, 'w')
+    for wpts, passage in spray.iterroutes(opts.start, opts.end, opts.start_date, wx, resol=opts.resol):
+        wpt_value = ':'.join(['%6.3f,%6.3f' % (x.lat, x.lon) for x in wpts])
+        opts.route_file.write('%s\t%s\n' % (wpt_value, base64.b64encode(passage.dumps())))
+
+def handle_optimal(opts, args):
+    wx = list(weather(opts, args))
+    if opts.ensemble:
+        wx = [gfs for gfs, nww3 in wx]
+    else:
+        wx = [weather(opts, args).next()[0]]
+
+    if opts.start is None and opts.end is None:
+        if len(opts.waypoints) == 2:
+            opts.start, opts.end = opts.waypoints
+        else:
+            raise ValueError("expected a single start,end for optimization")
+    elif opts.start is None or opts.end is None:
+        raise ValueError("expected use of either --start and --end or --waypoints")
+
+    if opts.route_file is None:
+        iterroutes = spray.iterroutes(opts.start, opts.end, opts.start_date, wx, resol=opts.resol)
+    else:
+        opts.route_file = open(opts.route_file, 'r')
+        def decoder(x):
+            wpt_str, passage_str = x.split('\t', 1)
+            waypoints = [objects.LatLon(*map(float, x.split(','))) for x in wpt_str.split(':')]
+            passage = core.Data(ncdf=base64.b64decode(passage_str))
+            return waypoints, passage
+        iterroutes = (decoder(x) for x in opts.route_file)
+
+    passages = spray.optimal_passage(iterroutes)
+    plotlib.plot_passages(passages)
+
+def handle_email(opts, args):
+
+    obj = poseidon.gefs_subset(opts.start, opts.end)
+    from wx.lib import tinylib
+
+    string = tinylib.tiny(obj, ['uwnd', 'vwnd'])
+    new_obj = tinylib.huge(string)
+    import pdb; pdb.set_trace()
 
 def main(opts=None, args=None):
     p = OptionParser(usage="""%%prog [options]
@@ -115,24 +201,40 @@ def main(opts=None, args=None):
         help="the start location ie.  --start=lat,lon")
     p.add_option("", "--end", default=None, action="store",
         help="the end location ie.  --end=lat,lon")
+    p.add_option("", "--waypoints", default=None, action="store",
+        help="lat,lon:lat,lon:lat,lon")
     p.add_option("", "--start-date", default=None, action="store")
     p.add_option("", "--hist", default=False, action="store_true")
     p.add_option("", "--optimal", default=False, action="store_true")
-    p.add_option("", "--forecast", default=False, action="store_true")
+    p.add_option("", "--optimal-routes", default=False, action="store_true")
+    p.add_option("", "--simulate", default=False, action="store_true")
+    p.add_option("", "--when", default=False, action="store_true")
     p.add_option("-v", "--verbose", default=False, action="store_true")
     p.add_option("", "--small", default=False, action="store_true")
+    p.add_option("", "--fast", default=False, action="store_true")
     p.add_option("", "--grib", default=None, action="store",
                  help="A grib file containing forecasts")
-    p.add_option("", "--download", default=None, action="store_true",
+    p.add_option("", "--download", default=True, action="store_true",
                  help="Download forecasts from UCAR")
+    p.add_option("", "--recent", default=False, action="store_true",
+                 help="Use recent forecasts from UCAR")
+    p.add_option("", "--ensemble", default=False, action="store_true",
+                 help="Use ensemble forecasts in route optimization")
+    p.add_option("", "--resol", default=None, action="store",
+                 help="The grid size for route optimization")
+    p.add_option("", "--route-file", default=None, action="store",
+                 help="File to store iterated optimal routes in.")
 
+    core.ENSURE_VALID = False
     # if the first argument is "email" the arguments will actually be
     # pulled from an MIMEText email piped through stdin
     if len(sys.argv) > 1 and sys.argv[1] == "email":
         email_args = emaillib.args_from_email(sys.stdin.read())
         opts, args = p.parse_args(args=email_args)
+        opts.email = True
     else:
         opts, args = p.parse_args()
+        opts.email = False
 
     if opts.verbose:
         logging.basicConfig(level=logging.DEBUG)
@@ -140,27 +242,55 @@ def main(opts=None, args=None):
     if opts.fetch_ccmp:
         return fetch.fetch_ccmp()
 
-    if opts.start:
-        opts.start = objects.LatLon(*[float(x) for x in opts.start.split(',')])
+    if opts.start and opts.end:
+        start = objects.LatLon(*[float(x) for x in opts.start.split(',')])
+        end = objects.LatLon(*[float(x) for x in opts.end.split(',')])
+        opts.waypoints = [start, end]
+    elif opts.waypoints:
+        def degreeify(x):
+            if '^' in x:
+                deg, minute = map(float, x.split('^'))
+            else:
+                deg = float(x)
+                minute = 0.
+            if minute > 60:
+                raise ValueError("minutes must be less than 60")
+            return deg + minute/(60.)
+        opts.waypoints = [objects.LatLon(*map(degreeify, x.split(',')))
+                          for x in opts.waypoints.split(':')]
     else:
-        opts.start = objects.LatLon(36.625, -121.9) # sf
-
-    if opts.end:
-        opts.end = objects.LatLon(*[float(x) for x in opts.end.split(',')])
-    else:
-        opts.end = objects.LatLon(19.79, -154.76) # hawaii
+        logging.info("Using default start of san francisco: 36.625, -121.9")
+        logging.info("Using default end of hawaii: 19.79, -154.76")
+        end = objects.LatLon(19.79, -154.76) # hawaii
+        start = objects.LatLon(36.625, -121.9) # sf
+        opts.waypoints = [start, end]
 
     if opts.start_date:
-        opts.start_date = datetime.datetime.strptime(opts.start_date, '%Y-%m-%d')
+        try:
+            opts.start_date = datetime.datetime.strptime(opts.start_date, '%Y-%m-%d')
+        except:
+            opts.start_date = datetime.datetime.strptime(opts.start_date, '%Y-%m-%dT%H')
     else:
         opts.start_date = datetime.datetime.now()
 
     eastern = pytz.timezone('US/Pacific')
     opts.start_date = eastern.localize(opts.start_date)
 
-    return handle_simulate(opts, args)
-
-    p.error("slocum completed exactly what you told it to do ... nothing.")
+    if opts.simulate:
+        handle_simulate(opts, args)
+    elif opts.optimal:
+        handle_optimal(opts, args)
+    elif opts.optimal_routes:
+        handle_optimal_routes(opts, args)
+    elif opts.when:
+        handle_when(opts, args)
+    elif opts.email:
+        handle_email(opts, args)
+    else:
+        p.error("slocum completed exactly what you told it to do ... nothing.")
 
 if __name__ == "__main__":
+    #import cProfile
+    #cProfile.runctx('main()', globals(), locals(),
+    #                filename='/u/slocum/profile.prof')
     sys.exit(main())

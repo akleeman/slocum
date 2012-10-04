@@ -115,6 +115,88 @@ class DataField(object):
                 ret = ret[..., 0]
         return ret
 
+def merge(objects, dim):
+    """
+    Merges several objects by expanding along dimension 'dim'.  Ie, two objects
+    containing the same structure of data but at two separate time steps can be
+    merged resulting in a single object containing both time steps.
+
+    Parameters:
+    objects : iterable of core.Data
+        An iterator of objects to be merged.  Each object must have the same
+        variable names and each variable which does not have dim as a dimension
+        must be identical across all iterates.
+    dim :
+        The dimension along which the objects should be merged.
+
+    Example:
+
+    obj = core.Data()
+    obj.create_coordinate('time', np.arange(100), record=True)
+    obj.create_coordinate('ensemble', np.arange(1000))
+    obj.create_variable('test', ('time', 'ensemble'),
+            data=np.random.normal(size=(100,1000)))
+    merged = merge([v for k, v in obj.iterator('ensemble')],
+                       dim='ensemble')
+    print merged == obj # True
+    """
+    def dim_len(x):
+        return x.dimensions[dim] if x.dimensions[dim] is not None else 0
+
+    def slice_finder(x):
+        s = [None] * len(x.dimensions)
+        if dim in x.dimensions:
+            i = list(x.dimensions).index(dim)
+        else:
+            i = None
+        return (i, [slice(None)] * len(x.dimensions))
+
+    objects = list(objects)
+    # create the merged object by taking the correct number of slices
+    # this will allocate each ndarray upfront and in turn speed things up a bit
+    m = objects[0].take([0] * sum(map(dim_len, objects)), dim=dim)
+    # get a list of all the shared variables and a dictionary for slicing
+    to_merge = [name for name, v in m.variables.iteritems()
+                if dim in v.dimensions]
+    slices_to_merge = dict([(name, slice_finder(m[name]))
+            for name in to_merge])
+    # make sure that all fixed variables are identical
+    fixed = [name for name, v in m.variables.iteritems()
+             if dim not in v.dimensions]
+    if not all(all(m[x] == obj[x] for x in fixed) for obj in objects):
+        for x in fixed:
+            if not all(m[x] == obj[x] for obj in objects):
+                raise ValueError("variable %s is not identical across objects"
+                                 % x)
+    i = 0 # index along dim
+    for obj in objects:
+        if set(m.variables.keys()) != set(obj.variables.keys()):
+            # TODO: generalize to remove this requirement
+            raise ValueError("All objects must have the same variables")
+        # here we iterate through each variable in our current obj and
+        # populate corresponding slices of the variables in m
+        n = dim_len(obj)
+        s = slice(i, i + n)
+        for name, v in obj.variables.iteritems():
+            if name in to_merge:
+                (j, slice_list) = slices_to_merge[name]
+                slice_list[j] = s
+                try:
+                    m[name].data[slice_list] = v.data
+                    # This overwriting of attributes is ugly, but
+                    # checking attribute equality isn't great either
+                    m[name].attributes.update(v.attributes)
+                except:
+                    raise ValueError(
+                            "objects do not have consistent dimensions")
+            elif (m[name] != v) or (dim in v.dimensions):
+                raise ValueError("objects are incompatible for concatenation")
+        i += n # advance to next slice
+    for name in to_merge:
+        attr_dict = core.AttributesDict(reduce(collections.intersect_dicts,
+                                    [obj[name].attributes for obj in objects]))
+        object.__setattr__(m[name], 'attributes', attr_dict)
+    return m
 
 #class Trajectory():
 #    path = {}

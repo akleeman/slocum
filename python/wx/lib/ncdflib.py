@@ -4,7 +4,7 @@ http://www.unidata.ucar.edu/software/netcdf/docs/netcdf/Classic-Format-Spec.html
 """
 
 import coards
-import pickle
+import cPickle as pickle
 import struct
 import unicodedata
 import numpy as np
@@ -48,12 +48,16 @@ NC_WORD_LEN   = 4 # netCDF-3 has 4-byte alignment (with some exceptions)
 # (equivalently, length-1 raw "strings"). There is no support for numpy
 # arrays of multi-character strings.
 TYPEMAP = {
-        NC_BYTE: np.dtype('int8').newbyteorder('='),
-        NC_CHAR: np.dtype('c').newbyteorder('='),
-        NC_SHORT: np.dtype('int16').newbyteorder('='),
-        NC_INT: np.dtype('int32').newbyteorder('='),
-        NC_FLOAT: np.dtype('float32').newbyteorder('='),
-        NC_DOUBLE: np.dtype('float64').newbyteorder('='),
+        # we could use np.dtype's as key/values except __hash__ comparison of
+        # numpy.dtype is broken in older versions of numpy.  If you must compare
+        # and cannot upgrade, use __eq__.This bug is
+        # known to be fixed in numpy version 1.3
+        NC_BYTE: 'int8',
+        NC_CHAR: '|S1',
+        NC_SHORT: 'int16',
+        NC_INT: 'int32',
+        NC_FLOAT: 'float32',
+        NC_DOUBLE: 'float64',
         }
 for k in TYPEMAP.keys():
     TYPEMAP[TYPEMAP[k]] = k
@@ -94,21 +98,35 @@ _reserved_names = set([
         'string',
         ])
 
-def unpickle_variable(var):
-    """
-    Unpickles an array of objects stored using core.Data.create_pickled_variable
+def coerce_type(arr):
+    """Coerce a numeric data type to a type that is compatible with
+    netCDF-3
 
-    In order to store an array of objects in a netcdf file it needs to be
-    serialized using pickle and saved as a matrix of characters where each
-    row corresponds to the pickled string (via pickle.dumps).
+    netCDF-3 can not handle 64-bit integers, but on most platforms
+    Python integers are int64. To work around this discrepancy, this
+    helper function coerces int64 arrays to int32. An exception is
+    raised if this coercion is not safe.
 
-    Parameters
+    netCDF-3 can not handle booleans, but booleans can be trivially
+    (albeit wastefully) represented as bytes. To work around this
+    discrepancy, this helper function coerces bool arrays to int8.
     """
-    if var.data.ndim != 2:
-        raise pickle.UnpicklingError("var.data is not a matrix" +
-                    " and in turn is likely not a pickled 1-d array")
-    # if the data doesn't hold a pickled variable, pickle will raise an exception
-    return [pickle.loads(x.tostring().rstrip('\x00')) for x in var.data]
+    # Comparing the char attributes of numpy dtypes is inelegant, but this is
+    # the fastest test of equivalence that is invariant to endianness
+    if arr.dtype.char == 'l': # np.dtype('int64')
+        cast_arr = arr.astype(
+                np.dtype('int32').newbyteorder(arr.dtype.byteorder))
+        if not (cast_arr == arr).all():
+            raise ValueError("array contains integer values that " +
+                    "are not representable as 32-bit signed integers")
+        return cast_arr
+    elif arr.dtype.char == '?': # np.dtype('bool')
+        # bool
+        cast_arr = arr.astype(
+                np.dtype('int8').newbyteorder(arr.dtype.byteorder))
+        return cast_arr
+    else:
+        return arr
 
 def round_num_bytes(n):
     """Given positive 32-bit integer n, return the smallest int greater than or
@@ -155,7 +173,7 @@ def is_valid_name(s):
             ('/' not in s) and
             (s[-1] != ' ') and
             (_isalnumMUTF8(s[0]) or (s[0] == '_')) and
-            all(map(lambda c: _isalnumMUTF8(c) or (c in _specialchars), s))
+            all((_isalnumMUTF8(c) or c in _specialchars for c in s))
             )
 
 def unpack_string(nelems, bytestring):
@@ -166,7 +184,8 @@ def unpack_string(nelems, bytestring):
     if not isinstance(bytestring, str):
         raise TypeError, "bytestring must be a raw string"
     if (len(bytestring) != round_num_bytes(nelems)) or\
-            not all(NULL == b for b in bytestring[nelems:]):
+            not all(NULL == b or '%x' % ord(NULL) == b for b in bytestring[nelems:]):
+        # note: some ncdf files pad strings with '0' not the hex version '\x00'
         raise ValueError, ("bytestring must be padded to the nearest " +
                 "4-byte boundary with trailing null bytes")
     s = unicodedata.normalize('NFC', bytestring[:nelems].decode('utf-8'))
@@ -216,14 +235,14 @@ def read_int(f):
 
 def pack_int(i):
     if not isinstance(i, int):
-        raise TypeError, "i must be an int"
+        raise TypeError("i must be an int")
     try:
         # size of Python int is platform-dependent, so we need to check that
         # this int really fits in a 4-byte sequence
         bytestring = struct.pack(NC_BYTE_ORDER + '1i', i)
         assert i == unpack_int(bytestring)
     except:
-        raise ValueError, "Can not encode as a netCDF 32-bit integer"
+        raise ValueError("Can not encode as a netCDF 32-bit integer")
     return bytestring
 
 def write_int(f, i):
@@ -280,7 +299,7 @@ def char_stack(arr, axis=-1):
     axis : int, optional
         The axis along which the concatenation should be done. If no
         axis argument is provided, the concatenation is done along the
-        last dimension of arr.
+        last dimension of arr (axis=-1).
 
     Returns
     -------
@@ -306,31 +325,46 @@ def char_stack(arr, axis=-1):
         raise RuntimeError, "Character array concatenation failed"
     return out
 
-def char_unstack(arr):
+def char_unstack(arr, axis=-1):
     """Expand an array of fixed-width strings to a character array
 
     Given an N-dimensional numpy array whose elements are strings of
-    length K, return a (N+1)-dimensional array whose last dimension is
-    of length K and whose elements are single characters. This is
-    useful for converting a numpy array of strings into a netCDF-style
-    character array.
+    length K, return a (N+1)-dimensional array whose extra dimension is of
+    length K and whose elements are single characters. This is useful for
+    converting a numpy array of strings into a netCDF-style character array.
 
     Parameters
     ----------
     arr : array
         A numpy array of strings (i.e., arr.dtype.char == 'c')
+    axis : int, optional
+        The axis of the output array long which the string length should be
+        exploded. If no axis argument is provided, then the last dimension of
+        out corresponds to the character position within each string element of
+        arr (axis=-1).
 
     Returns
     -------
     out : array
         An array with one more dimension than arr whose dtype is 'S1'
-        and whose length along the last dimension is arr.dtype.itemsize
+        and whose length along axis is arr.dtype.itemsize
     """
     if not isinstance(arr, np.ndarray):
         raise TypeError, "arr must be a numpy ndarray"
     if not arr.dtype.char in ['c', 'S']:
         raise TypeError, "arr must be an array of strings"
     str_len = arr.dtype.itemsize
-    out_shape = list(arr.shape) + [str_len]
-    out = np.array(list(arr.tostring())).reshape(out_shape)
+    out_shape = tuple(list(arr.shape) + [str_len])
+    out = np.empty(arr.size * str_len, dtype='S1')
+    for (i, c) in enumerate(list(arr.tostring())):
+        out[i] = c
+    out = out.reshape(out_shape)
+    if axis < 0:
+        axis = out.ndim + axis
+    if axis != out.ndim - 1:
+        # Permute axes
+        axis_perm = range(out.ndim)
+        x = axis_perm.pop()
+        axis_perm.insert(axis, x)
+        out = out.transpose(axis_perm)
     return out

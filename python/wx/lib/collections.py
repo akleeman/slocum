@@ -3,6 +3,19 @@ from keyword import iskeyword as _iskeyword
 from UserDict import DictMixin
 import sys as _sys
 
+import numpy as np
+
+from wx.lib import numpylib as npl
+
+def intersect_dicts(d1, d2):
+    """Find the intersection of two dictionaries.  Treats nan values as equal."""
+    def match_nans_all(x, y):
+        out = npl.eq_match_nans(x, y)
+        if isinstance(out, np.ndarray):
+            return out.all()
+        else:
+            return out
+    return dict([k, v] for k, v in d1.items() if k in d2 and match_nans_all(d2[k], v))
 
 def namedtuple(typename, field_names, verbose=False, rename=False):
     """A drop-in replacement for collections.namedtuple in Python 2.6
@@ -218,6 +231,44 @@ class OrderedDict(dict, DictMixin):
     def __ne__(self, other):
         return not self == other
 
+class FrozenOrderedDict(OrderedDict):
+    """A subclass of OrderedDict whose contents are frozen after
+    initialization to prevent tampering. To modify contents anyway, use
+    the methods of the OrderedDict superclass.
+    """
+    def __init__(self, *args, **kwds):
+        # Reimplement __init__ to bypass the disabled __setitem__ method
+        if len(args) > 1:
+            raise TypeError('expected at most 1 arguments, got %d' % len(args))
+        try:
+            self.__end
+        except AttributeError:
+            super(FrozenOrderedDict, self).clear()
+        # Capture arguments in an OrderedDict
+        args_dict = OrderedDict(*args, **kwds)
+        # Call __setitem__ of the superclass
+        for (key, value) in args_dict.iteritems():
+            super(FrozenOrderedDict, self).__setitem__(key, value)
+
+    def __setitem__(self, key, value):
+        raise NotImplementedError, ("%s does not allow items to be assigned " %
+                (type(self).__name__))
+
+    def clear(self):
+        raise NotImplementedError, ("%s can not be cleared" %
+                (type(self).__name__))
+
+    def __delitem__(self, key):
+        raise NotImplementedError, ("%s does not allow items to be deleted" %
+                (type(self).__name__))
+
+    def pop(self, *args, **kwargs):
+        raise NotImplementedError, ("%s does not allow destructive access" %
+                (type(self).__name__))
+
+    def popitem(self, *args, **kwargs):
+        raise NotImplementedError, ("%s does not allow destructive iteration " %
+                (type(self).__name__))
 
 class SafeOrderedDict(OrderedDict):
     """A subclass of OrderedDict that prohibits overwriting an entry

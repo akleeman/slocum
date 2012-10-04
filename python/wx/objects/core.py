@@ -8,18 +8,22 @@ of code from the PuPyNeRe netCDF reader:
 pupynere is released under the MIT license for unlimited use.
 """
 
-from __future__ import with_statement
-
+import csv
 import copy
-import numpy as np
-import pickle
 import logging
+import itertools
+import numpy as np
 from os import SEEK_END
+import cPickle as pickle
+from cPickle import HIGHEST_PROTOCOL
 from operator import mul, or_
 from cStringIO import StringIO
-from wx.lib import ncdflib
-from wx.lib.collections import OrderedDict, SafeOrderedDict
 
+from wx.lib import ncdflib, numpylib, datelib
+from wx.lib.collections import OrderedDict, FrozenOrderedDict
+import wx.objects.conventions as conv
+
+ENSURE_VALID = True
 
 def _prettyprint(x, numchars):
     """Given an object x, call x.__str__() and format the returned
@@ -31,32 +35,94 @@ def _prettyprint(x, numchars):
     else:
         return s[:(numchars - 3)] + '...'
 
-def _coerce_type(arr):
-    """Coerce a numeric data type to a type that is compatible with
-    netCDF-3
 
-    netCDF-3 can not handle 64-bit integers, but on most platforms
-    Python integers are int64. To work around this discrepancy, this
-    helper function coerces int64 arrays to int32. An exception is
-    raised if this coercion is not safe.
-
-    netCDF-3 can not handle booleans, but booleans can be trivially
-    (albeit wastefully) represented as bytes. To work around this
-    discrepancy, this helper function coerces bool arrays to int8.
+class AttributesDict(OrderedDict):
+    """A subclass of OrderedDict whose __setitem__ method automatically
+    checks and converts values to be valid netCDF attributes
     """
-    if arr.dtype.newbyteorder('=') == np.dtype('int64'):
-        cast_arr = arr.astype(
-                np.dtype('int32').newbyteorder(arr.dtype.byteorder))
-        if not (cast_arr == arr).all():
-            raise ValueError("array contains integer values that " +
-                    "are not representable as 32-bit signed integers")
-        return cast_arr
-    elif arr.dtype.newbyteorder('=') == np.dtype('bool'):
-        cast_arr = arr.astype(
-                np.dtype('int8').newbyteorder(arr.dtype.byteorder))
-        return cast_arr
-    else:
-        return arr
+    def __init__(self, *args, **kwds):
+        OrderedDict.__init__(self, *args, **kwds)
+
+    def __setitem__(self, key, value):
+        if ENSURE_VALID and not ncdflib.is_valid_name(key):
+                raise ValueError("Not a valid attribute name")
+        # Strings get special handling because netCDF treats them as
+        # character arrays. Everything else gets coerced to a numpy
+        # vector. netCDF treats scalars as 1-element vectors. Arrays of
+        # non-numeric type are not allowed.
+        if isinstance(value, basestring):
+            try:
+                ncdflib.pack_string(value)
+            except:
+                raise ValueError("Not a valid value for a netCDF attribute")
+        else:
+            try:
+                value = ncdflib.coerce_type(np.atleast_1d(np.asarray(value)))
+            except:
+                import pdb; pdb.set_trace()
+                raise ValueError("Not a valid value for a netCDF attribute")
+            if value.ndim > 1:
+                raise ValueError("netCDF attributes must be vectors " +
+                        "(1-dimensional)")
+            value = ncdflib.coerce_type(value)
+            if str(value.dtype) not in ncdflib.TYPEMAP:
+                # A plain string attribute is okay, but an array of
+                # string objects is not okay!
+                raise ValueError("Can not convert to a valid netCDF type")
+        OrderedDict.__setitem__(self, key, value)
+
+    def copy(self):
+        """The copy method of the superclass simply calls the constructor,
+        which in turn calls the update method, which in turns calls
+        __setitem__. This subclass implementation bypasses the expensive
+        validation in __setitem__ for a substantial speedup."""
+        obj = self.__class__()
+        for (attr, value) in self.iteritems():
+            OrderedDict.__setitem__(obj, attr, copy.copy(value))
+        return obj
+
+    def __deepcopy__(self, memo=None):
+        """
+        Returns a deep copy of the current object.
+
+        memo does nothing but is required for compatability with copy.deepcopy
+        """
+        return self.copy()
+
+    def update(self, other=None, **kwargs):
+        """Set multiple attributes with a mapping object or an iterable of
+        key/value pairs"""
+        # Capture arguments in an OrderedDict
+        args_dict = OrderedDict(other, **kwargs)
+        try:
+            # Attempt __setitem__
+            for (attr, value) in args_dict.iteritems():
+                self.__setitem__(attr, value)
+        except:
+            # A plain string attribute is okay, but an array of
+            # string objects is not okay!
+            raise ValueError("Can not convert to a valid netCDF type")
+            # Clean up so that we don't end up in a partial state
+            for (attr, value) in args_dict.iteritems():
+                if self.__contains__(attr):
+                    self.__delitem__(attr)
+            # Re-raise
+            raise
+
+    def __eq__(self, other):
+        if not set(self.keys()) == set(other.keys()):
+            return False
+        for (key, value) in self.iteritems():
+            if value.__class__ != other[key].__class__:
+                return False
+            if isinstance(value, basestring):
+                if value != other[key]:
+                    return False
+            else:
+                if value.tostring() != other[key].tostring():
+                    return False
+        return True
+
 
 class Data(object):
     """A class to organize numpy array data in a self-describing,
@@ -73,55 +139,44 @@ class Data(object):
 
         Parameters
         ----------
-        ncdf : string or file_like, optional
-            If None (default), then an empty data object is created. If
-            string, ncdffile is interpreted as a path on the file
-            system and an attempt will be made to read from that file.
-            Otherwise, ncdffile must be a file-like object that has
-            read, seek and tell methods.
+        ncdf : str or file_like, optional
+            If None (default), then an empty data object is created.
+            If str, ncdf must be a sequence of raw bytes that
+            constitute a netCDF-3 file. Otherwise, ncdf must be an
+            object with a read() method whose contents are a
+            netCDF-3 file.
         """
         # The __setattr__ method of the base object class is used to
         # bypass the overloaded __setattr__ method
         object.__setattr__(self, '_version_byte', ncdflib._64BYTE)
-        object.__setattr__(self, 'numrecs', None)
+        # self.attributes is AttributesDict
+        object.__setattr__(self, 'attributes', AttributesDict())
+        # self.variables and self.dimensions are FrozenOrderedDict.
+        # These dictionaries should not be directly modified by the
+        # user; use the create_dimension and create_variable methods.
+        object.__setattr__(self, 'dimensions', FrozenOrderedDict())
         object.__setattr__(self, 'record_dimension', None)
-        # self.variables and self.dimensions are SafeOrderedDict. This
-        # class provides two key advantages over basic dict:
-        # (1) (key, value) elements are ordered. This ensures that
-        #     data is written to netCDF file in exactly the same
-        #     order that it was read from file.
-        # (2) Once a (key, value) element is added, it can not be
-        #     deleted or overwritten (although the value, if mutable,
-        #     can be modified in place). This helps to maintain data
-        #     consistency.
-        #
-        # self.attributes is OrderedDict, which preserves order but
-        # does not prevent overwriting or deletion of values.
-        object.__setattr__(self, 'dimensions', SafeOrderedDict())
-        object.__setattr__(self, 'attributes', OrderedDict())
-        object.__setattr__(self, 'variables', SafeOrderedDict())
+        object.__setattr__(self, 'variables', FrozenOrderedDict())
         if ncdf is not None:
-            if isinstance(ncdf, basestring):
-                with open(ncdf, 'rb') as f:
-                    self._from_file(f)
+            if isinstance(ncdf, str):
+                self._loads(ncdf)
             else:
-                self._from_file(ncdf)
+                self._load(ncdf)
 
     def __setattr__(self, attr, value):
         """"__setattr__ is overloaded to prevent operations that could
         cause loss of data consistency. If you really intend to update
         dir(self), use the self.__dict__.update method or the
-        super(type(a), self).__setattr method to bypass."""
-        raise AttributeError("Object is tamper-proof. " +
-                             "so things like obj.foo = bar wont work")
+        super(type(a), self).__setattr__ method to bypass."""
+        raise AttributeError("__setattr__ is disabled")
 
     def __delattr__(self, attr):
-        raise AttributeError("Object is tamper-proof")
+        raise AttributeError("__delattr__is disabled")
 
     def __getitem__(self, name):
         """obj[varname] returns the variable"""
         if name not in self.variables:
-            raise KeyError("variable not found")
+            raise KeyError("'%s' variable does not exist" % (str(name)))
         return self.variables[name]
 
     def __contains__(self, v):
@@ -157,12 +212,13 @@ class Data(object):
         dimension). Python requires len() to return integer, so we
         can't return None here. Instead we raise an exception. Thanks
         to bzimmer for the idea."""
-        if self.numrecs is None:
+        if (self.record_dimension is None) or \
+            (self.dimensions[self.record_dimension] is None):
             raise TypeError("Overloaded __len__ method only works for " +
                     "objects with a record dimension and at least one " +
                     "record variable")
         else:
-            return self.numrecs
+            return self.dimensions[self.record_dimension]
 
     def __iter__(self):
         """If there is a record dimension, __iter__ is overloaded in a
@@ -173,6 +229,22 @@ class Data(object):
         else:
             return self.iterator(dim=self.record_dimension)
 
+    def __copy__(self):
+        """
+        Returns a shallow copy of the current object.
+        """
+        # Create a new Data instance
+        obj = self.__class__()
+        # Copy dimensions
+        object.__setattr__(obj, 'dimensions', self.dimensions)
+        # Copy variables
+        object.__setattr__(obj, 'variables', self.variables)
+        # Copy attributes
+        object.__setattr__(obj, 'attributes', self.attributes)
+        # Copy record_dimension
+        object.__setattr__(obj, 'record_dimension', self.record_dimension)
+        return obj
+
     def __deepcopy__(self, memo=None):
         """
         Returns a deep copy of the current object.
@@ -182,23 +254,14 @@ class Data(object):
         # Create a new Data instance
         obj = self.__class__()
         # Copy dimensions
-        for (name, length) in self.dimensions.iteritems():
-            obj.create_dimension(name, length)
+        object.__setattr__(obj, 'dimensions', self.dimensions.copy())
         # Copy variables
-        for (name, var) in self.variables.iteritems():
-            obj.create_variable(name=name,
-                    dim=var.dimensions,
-                    data=var.data.copy(),
-                    attributes=var.attributes.copy())
+        object.__setattr__(obj, 'variables', copy.deepcopy(self.variables))
         # Copy attributes
-        for attr in self.attributes:
-            # Attribute values are either numpy vectors or strings; the
-            # former have a copy() method, while the latter are
-            # immutable
-            if hasattr(self.attributes[attr], 'copy'):
-                obj.set_attribute(attr, self.attributes[attr].copy())
-            else:
-                obj.set_attribute(attr, self.attributes[attr])
+        object.__setattr__(obj, 'attributes', self.attributes.copy())
+        # Copy record_dimension
+        object.__setattr__(obj, 'record_dimension',
+                           copy.deepcopy(self.record_dimension))
         return obj
 
     def __eq__(self, other):
@@ -208,13 +271,10 @@ class Data(object):
             return False
         if not dict(self.variables) == dict(other.variables):
             return False
-        if not set(self.attributes.keys()) == set(other.attributes.keys()):
+        if not self.attributes == other.attributes:
             return False
-
-        for key in self.attributes:
-            if not np.all(numpylib.naneq(self.attributes[key],
-                                         other.attributes[key])):
-                return False
+        if not self.record_dimension == other.record_dimension:
+            return False
         return True
 
     def __ne__(self, other):
@@ -236,7 +296,7 @@ class Data(object):
                 if name == self.record_dimension:
                     lines.append(' *%s| %s' %
                             (_prettyprint(name, 16),
-                            _prettyprint(self.numrecs, 8)))
+                            _prettyprint(length, 8)))
                 else:
                     lines.append('  %s| %s' %
                             (_prettyprint(name, 16),
@@ -289,7 +349,7 @@ class Data(object):
     def coordinates(self):
         # A coordinate variable is a 1-dimensional variable with the
         # same name as its dimension
-        return OrderedDict([(dim, length)
+        return FrozenOrderedDict([(dim, length)
                 for (dim, length) in self.dimensions.iteritems()
                 if (dim in self.variables) and
                 (self.variables[dim].data.ndim == 1) and
@@ -300,105 +360,35 @@ class Data(object):
     def noncoordinates(self):
         # A coordinate variable is a 1-dimensional variable with the
         # same name as its dimension
-        return OrderedDict([(name, v)
+        return FrozenOrderedDict([(name, v)
                 for (name, v) in self.variables.iteritems()
                 if name not in self.coordinates])
 
-    def has_attribute(self, attr):
-        return attr in self.attributes
-
-    def get_attribute(self, attr):
-        """Get the value of a user-defined attribute"""
-        if not self.has_attribute(attr):
-            raise KeyError("attribute not found")
-        return self.attributes[attr]
-
-    def set_attribute(self, attr, value):
-        """Set the value of a user-defined attribute"""
-        if not ncdflib.is_valid_name(attr):
-            raise ValueError("Not a valid attribute name")
-        # Strings get special handling because netCDF treats them as
-        # character arrays. Everything else gets coerced to a numpy
-        # vector. netCDF treats scalars as 1-element vectors. Arrays of
-        # non-numeric type are not allowed.
-        if isinstance(value, basestring):
-            try:
-                ncdflib.pack_string(value)
-            except:
-                raise ValueError("Not a valid value for a netCDF attribute")
-        else:
-            try:
-                value = np.atleast_1d(np.asarray(value))
-            except:
-                raise ValueError("Not a valid value for a netCDF attribute")
-            if value.ndim > 1:
-                raise ValueError("netCDF attributes must be vectors " +
-                        "(1-dimensional)")
-            value = _coerce_type(value)
-            # Coerce dtype to native byte order for hashing/dictionary lookup
-            if value.dtype.newbyteorder('=') not in ncdflib.TYPEMAP:
-                # A plain string attribute is okay, but an array of
-                # string objects is not okay!
-                raise ValueError("Can not convert to a valid netCDF type")
-        self.attributes[attr] = value
-
-    def del_attribute(self, attr):
-        if not self.has_attribute(attr):
-            raise KeyError("attribute not found")
-        del self.attributes[attr]
-
-    def update_attributes(self, *args, **kwargs):
-        """Set multiple user-defined attributes with a mapping object
-        or an iterable of key/value pairs"""
-        # Try it on a dummy copy first so that we don't end up in a
-        # partial state
-        dummy = self.__class__()
-        try:
-            attributes = OrderedDict(*args, **kwargs)
-            for (k, v) in attributes.iteritems():
-                # set_attribute method does checks and type conversions
-                dummy.set_attribute(k, v)
-            # If we can set the requested attributes without any
-            # complaints, then we can apply it to the real object.
-            del dummy
-            for (k, v) in attributes.iteritems():
-                self.set_attribute(k, v)
-        except:
-            raise
-
-    def clear_attributes(self, **kwargs):
-        """Delete all user-defined attributes"""
-        object.__setattr__(self, 'attributes', OrderedDict())
-
-    def _from_file(self, f):
+    def _load(self, f):
         """Populate an initialized, empty object from data read from
         netCDF file. This method is non-public because we don't want to
         overwrite existing data by calling it with a non-empty
         object."""
+
         # Check magic bytes
         magic = f.read(len(ncdflib.MAGIC))
         if magic != ncdflib.MAGIC:
-            raise ValueError, "Not a valid netCDF-3 file"
+            raise ValueError("Not a valid netCDF-3 file")
         # Check version_byte
         _version_byte = f.read(len(ncdflib.FILL_BYTE))
         if _version_byte not in [ncdflib._31BYTE, ncdflib._64BYTE]:
-            raise ValueError, ("netCDF file header does not have a " +
+            raise ValueError("netCDF file header does not have a " +
                     "recognized version_byte")
         object.__setattr__(self, '_version_byte', _version_byte)
         numrecs = ncdflib.read_int(f)
-        # Read dimensions and add them. The create_dimension method handles the
-        # error-checking for us.
+        # Read dimensions and add them. The create_dimension method handles
+        # the error-checking for us.
         dimensions = self._read_dim_array(f)
         for (name, length) in dimensions.iteritems():
-            if length == 0:
-                self.create_dimension(name, None)
-            else:
-                self.create_dimension(name, length)
+            self.create_dimension(name, length)
         # Read global attributes
         attributes = self._read_att_array(f)
-        # Use the update_attributes method because it does
-        # error-checking and type conversion
-        self.update_attributes(attributes)
+        self.attributes.update(attributes)
         # Read variables
         self._read_variables(f)
         # If there is a record dimension, then we need to verify that the value
@@ -409,27 +399,34 @@ class Data(object):
                 (numrecs == ncdflib.unpack_int(ncdflib.ZERO))) or\
                 ((self.record_dimension is not None) and
                 (numrecs != ncdflib.unpack_int(ncdflib.STREAMING)) and
-                (numrecs != self.numrecs)):
+                (numrecs != self.dimensions[self.record_dimension])):
             raise ValueError("netCDF file has a numrecs header field that " +
                     "is inconsistent with dimensions")
 
-    def to_file(self, ncdf):
+    def _loads(self, s):
+        """Read data from netCDF format as a string of bytes"""
+        buf = StringIO(s)
+        self._load(buf)
+        buf.close()
+
+    def dump(self, ncdf):
         """Write current data contents to file in netCDF format
 
         Parameters
         ----------
         ncdf : file-like object
-            Must have write, seek and tell methods.
+            Must have write method
         """
         # Write magic header bytes
         ncdf.write(ncdflib.MAGIC)
         # Write version byte
         ncdf.write(self._version_byte)
         # Write number of records.
-        if self.numrecs is None:
+        if self.record_dimension is None:
             ncdf.write(ncdflib.ZERO)
         else:
-            ncdflib.write_int(ncdf, self.numrecs)
+            ncdflib.write_int(ncdf,
+                self.dimensions[self.record_dimension] or 0)
         # Write dimensions
         self._write_dim_array(ncdf)
         # Write global attributes
@@ -437,37 +434,38 @@ class Data(object):
         # Write variables
         self._write_variables(ncdf)
 
-    def _loads(self, s):
-        """Read data from netCDF format as a string of bytes"""
-        buf = StringIO()
-        buf.write(s)
-        buf.seek(0)
-        self._from_file(buf)
-        buf.close()
-
     def dumps(self):
         """Return current data contents in netCDF format as a string of
         bytes"""
         buf = StringIO()
-        self.to_file(buf)
+        self.dump(buf)
         s = buf.getvalue()
         buf.close()
         return s
 
     def _read_dim_array(self, f):
         """Read dim_array from a netCDF file and return as a
-        SafeOrderedDict"""
+        FrozenOrderedDict"""
         dim_header = f.read(len(ncdflib.NC_DIMENSION))
         num_dim = ncdflib.read_int(f)
         if (dim_header not in [ncdflib.NC_DIMENSION, ncdflib.ZERO]) or\
                 ((dim_header == ncdflib.ZERO) and (num_dim != 0)) or\
                 (num_dim < 0):
-            raise ValueError, "dimensions header is invalid"
-        dimensions = SafeOrderedDict()
+            raise ValueError("dimensions header is invalid")
+        dimensions = FrozenOrderedDict()
         for dim in xrange(num_dim):
             name = ncdflib.read_string(f)
             length = ncdflib.read_int(f)
-            dimensions[name] = length
+            # This length may not be the true length of the dimension
+            # if this dimension is the record dimension. netCDF
+            # indicates the record dimension with zero length even when
+            # the number of records is non-zero. We replace this zero
+            # with None to indicate that this slot is reserved for the
+            # number of records.
+            if not length:
+                length = None
+            # Use the __setitem__ method of the superclass
+            super(type(dimensions), dimensions).__setitem__(name, length)
         return dimensions
 
     def _write_dim_array(self, f):
@@ -477,7 +475,9 @@ class Data(object):
             ncdflib.write_int(f, len(self.dimensions))
             for (name, length) in self.dimensions.iteritems():
                 ncdflib.write_string(f, name)
-                if length is None:
+                if name == self.record_dimension:
+                    # netCDF indicates the record dimension with zero
+                    # length even when the number of records is non-zero
                     f.write(ncdflib.ZERO)
                 else:
                     ncdflib.write_int(f, length)
@@ -485,14 +485,14 @@ class Data(object):
             f.write(ncdflib.ABSENT)
 
     def _read_att_array(self, f):
-        """Read att_array from a netCDF file and return as OrderedDict"""
+        """Read att_array from a netCDF file and return as AttributesDict"""
         attr_header = f.read(len(ncdflib.NC_ATTRIBUTE))
         num_attr = ncdflib.read_int(f)
         if (attr_header not in [ncdflib.NC_ATTRIBUTE, ncdflib.ZERO]) or\
                 ((attr_header == ncdflib.ZERO) and (num_attr != 0)) or\
                 (num_attr < 0):
             raise ValueError, "atttributes header is invalid"
-        attributes = OrderedDict()
+        attributes = AttributesDict()
         for attr in xrange(num_attr):
             name = ncdflib.read_string(f)
             # The next 4 bytes tell us the data type of this attribute
@@ -502,7 +502,7 @@ class Data(object):
                 value = ncdflib.read_string(f)
             else:
                 # Look up corresponding numpy dtype
-                dtype = ncdflib.TYPEMAP[nc_type]
+                dtype = np.dtype(ncdflib.TYPEMAP[nc_type])
                 # Read values and convert to numpy vector. Bytes are read
                 # with network endianness, and then the resulting numpy
                 # array is converted to native endianness. This is
@@ -513,7 +513,7 @@ class Data(object):
                 num_bytes = nelems * dtype.itemsize
                 value = np.fromstring(f.read(num_bytes),
                         dtype=dtype.newbyteorder(ncdflib.NC_BYTE_ORDER))
-                if value.dtype != value.dtype.newbyteorder('='):
+                if value.dtype.byteorder != '=':
                     value = value.byteswap().newbyteorder('=')
                 # If necessary, continue reading past the padding bytes
                 f.read(ncdflib.round_num_bytes(num_bytes) - num_bytes)
@@ -527,32 +527,27 @@ class Data(object):
             ncdflib.write_int(f, len(attributes))
             for (name, value) in attributes.iteritems():
                 ncdflib.write_string(f, name)
-
                 if not (isinstance(value, basestring) or
                         isinstance(value, np.ndarray)):
                     raise ValueError("bad attribute type: type(%s) = %s" %
                                      (name, type(value)))
-
                 if isinstance(value, basestring):
                     f.write(ncdflib.NC_CHAR)
                     ncdflib.write_string(f, value)
                 elif isinstance(value, np.ndarray):
                     if value.ndim != 1:
-                        raise ValueError, (
+                        raise ValueError(
                                 "numpy array attributes must be 1-dimensional")
-                    # Coerce dtype to native byte order for hashing/dictionary
-                    # lookup
-                    f.write(ncdflib.TYPEMAP[value.dtype.newbyteorder('=')])
+                    f.write(ncdflib.TYPEMAP[str(value.dtype)])
                     ncdflib.write_int(f, value.size)
                     # Write in network byte order
-                    if value.dtype !=\
-                            value.dtype.newbyteorder(ncdflib.NC_BYTE_ORDER):
+                    if value.dtype.byteorder != ncdflib.NC_BYTE_ORDER:
                         bytestring = value.byteswap().tostring()
                     else:
                         bytestring = value.tostring()
                     f.write(bytestring)
                     # Write any necessary padding bytes
-                    size_diff = ncdflib.round_num_bytes(len(bytestring)) -\
+                    size_diff = ncdflib.round_num_bytes(len(bytestring)) - \
                             len(bytestring)
                     padding_bytes = ncdflib.NULL * size_diff
                     f.write(padding_bytes)
@@ -573,12 +568,10 @@ class Data(object):
         # We need to keep track of the order in which variables appear
         # in var_metadata
         var_metadata = OrderedDict()
-        var_order = []
         for var in xrange(num_var):
             name = ncdflib.read_string(f)
             num_dims = ncdflib.read_int(f)
             dimids = [ncdflib.read_int(f) for i in xrange(num_dims)]
-            pos = f.tell()
             attributes = self._read_att_array(f)
             nc_type = f.read(4)
             vsize = ncdflib.read_int(f)
@@ -596,53 +589,67 @@ class Data(object):
         for var in var_metadata:
             (dimids, attributes, nc_type, vsize, begin) = var_metadata[var]
             if dimids:
-                (dimensions, shape) = zip(*[self.dimensions.items()[i]
+                (var_dims, var_shape) = zip(*[self.dimensions.items()[i]
                         for i in dimids])
             else:
-                (dimensions, shape) = ((), ())
-            if shape and (shape[0] is None):
-                # Add this record variable to the list; the variable will be
-                # created later
+                (var_dims, var_shape) = ((), ())
+            if self.record_dimension in var_dims:
+                if var_dims[0] != self.record_dimension:
+                    raise ValueError(
+                        "Record variables must have the record dimension " +
+                        "as their 0th dimension")
                 recs.append(var)
         # Determine the size of each record and the total number of records
-        if recs:
-            # For a record variable, vsize is the size of a single
-            # record of this variable (includes padding bytes if there
-            # is more than one record variable). recsize is sum of
-            # vsize over all record variables
-            recsize = sum([var_metadata[var][3] for var in recs])
-            # The data block for record variables extends to the end of
-            # the file. The 'begin' offsets for the record variables
-            # are staggered through the first record.
-            recbegin = min([var_metadata[var][4] for var in recs])
-            f.seek(recbegin)
-            f.seek(0, SEEK_END)
-            recbytes = f.tell() - recbegin
-            if recbytes % recsize != 0:
-                raise ValueError, "Record data is misaligned"
-            numrecs = recbytes / recsize
-        # The order in which variables are created is important! We
-        # need to create variables in exactly the same order as they
-        # appear in vatt_array, because the to_file() method will write
-        # the variables to vatt_array in the order of creation.
+        if any([k is None for k in self.dimensions.values()]):
+            if recs:
+                # For a record variable, vsize is the size of a single
+                # record of this variable (includes padding bytes if there
+                # is more than one record variable). recsize is sum of
+                # vsize over all record variables
+                recsize = sum([var_metadata[var][3] for var in recs])
+                # The data block for record variables extends to the end of
+                # the file. The 'begin' offsets for the record variables
+                # are staggered through the first record.
+                recbegin = min([var_metadata[var][4] for var in recs])
+                f.seek(recbegin)
+                f.seek(0, SEEK_END)
+                recbytes = f.tell() - recbegin
+                if recbytes % recsize != 0:
+                    raise ValueError, "Record data is misaligned"
+                numrecs = recbytes / recsize
+                # netCDF stores record variables as having zero length
+                # along the record dimension. Here we replace this sentinel
+                # zero with the real number of records.
+                super(type(self.dimensions), self.dimensions).__setitem__(
+                    self.record_dimension, numrecs)
+            else:
+                super(type(self.dimensions), self.dimensions).__setitem__(
+                    self.record_dimension, None)
+        # The order in which variables are created is important for file
+        # consistency. We need to create variables in exactly the same order as
+        # they appear in the netCDF file so that the dump() method reproduces
+        # the original order.
         for var in var_metadata:
             (dimids, attributes, nc_type, vsize, begin) = var_metadata[var]
             if dimids:
-                (dimensions, shape) = zip(*[self.dimensions.items()[i]
+                (var_dims, var_shape) = zip(*[self.dimensions.items()[i]
                         for i in dimids])
             else:
-                (dimensions, shape) = ((), ())
-            # Convert shape to list so that we can set elements
-            # (necessary for record variables)
-            shape = list(shape)
-            dtype = ncdflib.TYPEMAP[nc_type]
-            if var in recs:
-                if shape[0] is not None:
-                    raise ValueError, ("Not valid netCDF: the 0th " +
-                            "dimension of each record must be the " +
-                            "unlimited dimension")
-                shape[0] = numrecs
-                slice_size = reduce(mul, shape[1:], 1) * dtype.itemsize
+                (var_dims, var_shape) = ((), ())
+            # Convert var_shape to a list so that we can set elements.
+            # This is necessary because record variables have None in
+            # place of the true number of records.
+            var_shape = list(var_shape)
+            dtype = np.dtype(ncdflib.TYPEMAP[nc_type])
+            if self.record_dimension in var_dims:
+                if var_dims[0] != self.record_dimension:
+                    raise ValueError("Not valid netCDF: the 0th dimension " +
+                                     "dimension of each record variable " +
+                                     "must be the unlimited dimension")
+                if var_shape[0] != numrecs:
+                    raise ValueError("Record variable shape does not match " +
+                                     "number of records")
+                slice_size = reduce(mul, var_shape[1:], 1) * dtype.itemsize
                 if len(recs) > 1:
                     if vsize != ncdflib.round_num_bytes(slice_size):
                         raise ValueError, ("vsize does not match expected " +
@@ -667,7 +674,7 @@ class Data(object):
                             dtype=dtype.newbyteorder(ncdflib.NC_BYTE_ORDER))
             else:
                 # Read the data for this non-record variable
-                num_bytes = reduce(mul, shape, 1) * dtype.itemsize
+                num_bytes = reduce(mul, var_shape, 1) * dtype.itemsize
                 if vsize != ncdflib.round_num_bytes(num_bytes):
                     raise ValueError("data type and shape of variable are " +
                             "inconsistent with vsize specified in header")
@@ -677,13 +684,13 @@ class Data(object):
                 # If necessary, continue reading past the padding bytes
                 f.read(vsize - num_bytes)
             # Reshape flat vector to desired shape
-            data = data.reshape(shape)
+            data = data.reshape(var_shape)
             # Convert to native endianness
-            if data.dtype != data.dtype.newbyteorder('='):
+            if data.dtype.byteorder != '=':
                 data = data.byteswap().newbyteorder('=')
             # Create new variable
-            self.create_variable(var, dimensions,
-                    data=data, attributes=attributes)
+            self.create_variable(var, dim=var_dims, data=data,
+                                 attributes=attributes)
 
     def _write_variables(self, f):
         """Write the var_array and data block of a netCDF file."""
@@ -710,9 +717,8 @@ class Data(object):
                     # dimid
                     ncdflib.write_int(f, self.dimensions.keys().index(d))
                 self._write_att_array(f, v.attributes)
-                # Write nc_type enum. Coerce dtype to native byte order for
-                # hashing/dictionary lookup
-                f.write(ncdflib.TYPEMAP[v.dtype.newbyteorder('=')])
+                # Write nc_type enum.
+                f.write(ncdflib.TYPEMAP[str(v.dtype)])
                 # Write vsize. This is different depending on whether the
                 # variable is a record or non-record variable.
                 if self.record_dimension in v.dimensions:
@@ -726,7 +732,7 @@ class Data(object):
                     else:
                         # When there is exactly one record variable,
                         # vsize is unpadded.
-                        vsize = v.data.dtype.itemsize *\
+                        vsize = v.data.dtype.itemsize * \
                                 reduce(mul, v.data.shape[1:], 1)
                 else:
                     # For non-record variables, vsize is the size of the entire
@@ -771,15 +777,12 @@ class Data(object):
                 # Seek back to begin and starting writing
                 f.seek(begin)
                 data = v.data
-                if data.dtype != data.dtype.newbyteorder(
-                        ncdflib.NC_BYTE_ORDER):
+                if data.dtype.byteorder != ncdflib.NC_BYTE_ORDER:
                     bytestring = data.byteswap().tostring()
                 else:
                     bytestring = data.tostring()
                 f.write(bytestring)
                 vsize = ncdflib.round_num_bytes(len(bytestring))
-                # Coerce dtype to native byte order for hashing/dictionary
-                # lookup
                 f.write(ncdflib.NULL * (vsize - len(bytestring)))
             # The rest of the file contains data for the record variables.
             recs = [name for (name, v) in self.variables.iteritems()
@@ -796,13 +799,13 @@ class Data(object):
                 recsize = 0
                 for var in recs:
                     dtype = self.variables[var].data.dtype.newbyteorder('=')
-                    slice_size = dtype.itemsize *\
+                    slice_size = dtype.itemsize * \
                             reduce(mul, self.variables[var].data.shape[1:], 1)
                     # Record for each variable is padded to next 4-byte
                     # boundary
                     vsize = ncdflib.round_num_bytes(slice_size)
                     # Determine padding for this variable
-                    nc_type = ncdflib.TYPEMAP[dtype]
+                    nc_type = ncdflib.TYPEMAP[str(dtype)]
                     padding_bytes[var] = ncdflib.NULL * (vsize - slice_size)
                     # Write the begin position *before* incrementing recsize
                     f.seek(begin_field_offsets[var])
@@ -817,27 +820,29 @@ class Data(object):
                 # we need to return the file pointer to the start of
                 # the record data block.
                 f.seek(begin)
-                # Write each multi-variable record. We use a string buffer to
-                # assemble the contents of each record; because all records are
-                # the same size, we can repeatedly overwrite and getvalue() the
-                # same string buffer
+                # Write each multi-variable record. Because all records
+                # are the same size, we can repeatedly write and read
+                # records with the same string buffer while maintaining
+                # record alignment.
                 stringbuf = StringIO()
-                for i in xrange(self.numrecs):
-                    stringbuf.seek(0)
-                    for var in recs:
-                        data = self.variables[var].data[i, ...]
-                        if data.dtype != data.dtype.newbyteorder(
-                                ncdflib.NC_BYTE_ORDER):
-                            bytestring = data.byteswap().tostring()
-                        else:
-                            bytestring = data.tostring()
-                        stringbuf.write(bytestring)
-                        # Add any padding bytes if necessary
-                        stringbuf.write(padding_bytes[var])
-                    # Once we're done appending to the string buffer, dump its
-                    # contents to file. Each time we do this, one more record
-                    # is appended to the end of the file
-                    f.write(stringbuf.getvalue())
+                if (self.record_dimension is not None) and \
+                    (self.dimensions[self.record_dimension] is not None):
+                    for i in xrange(self.dimensions[self.record_dimension]):
+                        stringbuf.seek(0)
+                        for var in recs:
+                            data = self.variables[var].data[i, ...]
+                            if data.dtype.byteorder != ncdflib.NC_BYTE_ORDER:
+                                bytestring = data.byteswap().tostring()
+                            else:
+                                bytestring = data.tostring()
+                            stringbuf.write(bytestring)
+                            # Add any padding bytes if necessary
+                            stringbuf.write(padding_bytes[var])
+                        # Once we're done appending to the string
+                        # buffer, dump its contents to file. Each time
+                        # we do this, one more record is appended to
+                        # the end of the file
+                        f.write(stringbuf.getvalue())
             elif len(recs) == 1:
                 # Write the file offset for the beginning of the record data
                 # block
@@ -853,8 +858,7 @@ class Data(object):
                 # the record data block.
                 f.seek(begin)
                 data = v.data
-                if data.dtype != data.dtype.newbyteorder(
-                        ncdflib.NC_BYTE_ORDER):
+                if data.dtype.byteorder != ncdflib.NC_BYTE_ORDER:
                     bytestring = data.byteswap().tostring()
                 else:
                     bytestring = data.tostring()
@@ -876,20 +880,18 @@ class Data(object):
             object already has a dimension with this name. name must satisfy
             netCDF-3 naming rules.
         length : int or None
-            The length of the new dimension; must be greater than zero and
+            The length of the new dimension; must be non-negative and
             representable as a signed 32-bit integer. If None, the new
             dimension is unlimited, and its length is not determined until a
             variable is defined on it. An exception will be raised if you
             attempt to create another unlimited dimension when the object
             already has an unlimited dimension.
         """
-        if not isinstance(name, basestring):
-            raise TypeError("Dimension name must be a non-empty string")
-        if not ncdflib.is_valid_name(name):
+        if ENSURE_VALID and not ncdflib.is_valid_name(name):
             raise ValueError("Not a valid dimension name")
         if name in self.dimensions:
             raise ValueError("Dimension named '%s' already exists" % name)
-        if length is None:
+        if not length:
             # netCDF-3 only allows one unlimited dimension.
             if self.record_dimension is not None:
                 raise ValueError("Only one unlimited dimension is allowed")
@@ -897,13 +899,14 @@ class Data(object):
             if not isinstance(length, int):
                 raise TypeError("Dimension length must be int")
             try:
-                assert length > 0
+                assert length >= 0
                 ncdflib.pack_int(length)
             except:
                 raise ValueError("Length of non-record dimension must be a " +
                         "positive-valued signed 32-bit integer")
-        self.dimensions[name] = length
-        if length is None:
+        # Use the __setitem__ method of the superclass
+        super(type(self.dimensions), self.dimensions).__setitem__(name, length)
+        if not length:
             object.__setattr__(self, 'record_dimension', name)
 
     def create_variable(self, name, dim, dtype=None, data=None,
@@ -942,109 +945,58 @@ class Data(object):
         var : Variable
             Reference to the newly created variable.
         """
-        if not ncdflib.is_valid_name(name):
-            raise ValueError("Not a valid variable name: %s", str(name))
         if name in self.variables:
             raise ValueError("Variable named '%s' already exists" % (name))
-        if not isinstance(dim, tuple):
-            raise TypeError('dim must be a tuple')
-        if not all([isinstance(d, basestring) and (d in self.dimensions)
-                for d in dim]):
-            bad = [d for d in dim if not isinstance(d, basestring) or
-                                     (d not in self.dimensions)]
+        if not all([(d in self.dimensions) for d in dim]):
+            bad = [d for d in dim if (d not in self.dimensions)]
             raise ValueError("the following dim(s) are not valid " +
                     "dimensions of this object: %s" % bad)
-        if attributes is None:
-            attributes = OrderedDict()
-
-        record = (self.record_dimension in dim)
-        # Check that the record dimension does not appear anywhere
-        # other than dim[0]. This is tricky!
+        record = (self.record_dimension is not None) and \
+                 (self.record_dimension in dim)
+        # Check that the record dimension does not appear anywhere other
+        # than dim[0].
         if record and (list(reversed(dim)).index(self.record_dimension) !=
-                len(dim) - 1):
-            raise ValueError, ("only the 0th dimension of a variable is " +
-                    "allowed to be unlimited")
-
-        # Check dtype
-        if dtype is not None:
-            if not isinstance(dtype, np.dtype):
-                try:
-                    dtype = np.dtype(dtype)
-                except:
-                    TypeError, "Can not convert dtype to a numpy dtype object"
-            # byteorder must be normalized (here we choose native byte
-            # order as the standard) for hashing and dict lookup to work
-            if dtype.newbyteorder('=') not in ncdflib.TYPEMAP:
-                raise TypeError("dtype %s is not compatible with netCDF" %
-                        (str(dtype)))
+                       len(dim) - 1):
+            raise ValueError("Only the 0th dimension of a variable is " +
+                             "allowed to be the record dimension")
         if data is None:
-            if dtype is None:
-                raise ValueError("must provide dtype if data is None")
-            # If this is the first record variable to be created, then
-            # data must be provided to determine self.numrecs
-            if record and (self.numrecs is None):
-                raise ValueError("must provide data when creating " +
-                        "the first record variable of an object")
-            # Check the fillval
-            if not '_FillValue' in attributes:
-                attributes['_FillValue'] = ncdflib.FILLMAP[dtype]
-            data = np.empty(
-                    tuple(self.numrecs if d == self.record_dimension
-                    else self.dimensions[d] for d in dim),
-                    dtype=dtype)
-            data.fill(attributes['_FillValue'])
-
-        # np.asarray will turn just about anything into an array (objects,
-        # string, even np.asarray(np) works!  In turn the hope is that
-        # any arrays that consist of invalid dtypes will have been caught
-        # above.
-        data = _coerce_type(np.asarray(data))
-        if (dtype is not None) and (data.dtype != dtype):
-            raise ValueError, "dtype and data arguments are incompatible"
-
-        # Check that data is compatible with the length of the record
-        # dimension
-        if record:
-            if self.numrecs is None:
-                # If no other record variables exist, then the length
-                # of this new variable sets the number of records for
-                # the entire object
-                try:
-                    assert data.shape[0] >= 0
-                    ncdflib.pack_int(data.shape[0])
-                except:
-                    raise ValueError, ("record length must be a " +
-                            "non-negative signed 32-bit integer")
+            # Check that data is compatible with the length of the
+            # record dimension
+            if record and self.dimensions[self.record_dimension] is None:
+                raise ValueError(
+                    "data can not be None when creating the first record " +
+                    "variable in an object")
+            shape = tuple([
+                self.dimensions[d] if d != self.record_dimension
+                else self.dimensions[self.record_dimension]
+                for d in dim])
+        else:
+            data = np.asarray(data)
+            shape = data.shape
+            if record:
+                numrecs = self.dimensions[self.record_dimension]
+                if (numrecs is not None) and (shape[0] != numrecs):
+                    raise ValueError(
+                        "data length along the record dimension is "
+                        "inconsistent with the number of records in the " +
+                        "other record variables")
+        if (name in self.dimensions) and ((data is None) or (data.ndim != 1)):
+            msg = ("A coordinate variable must be defined with " +
+                    "1-dimensional data: %s") % name
+            if ENSURE_VALID:
+                raise ValueError(msg)
             else:
-                # Check that the length of data along the unlimited dimension
-                # matches the lengths of other record variables.
-                if data.shape[0] != self.numrecs:
-                    raise ValueError, ("data length along the unlimited " +
-                            "dimension is inconsistent with the number of " +
-                            "records in the other record variables")
-        # Check that data is compatible with the lengths of the non-record
-        # dimensions
-        if not len(dim) == data.ndim:
-            raise ValueError("number of dimensions don't match dim:%d data:%d"
-                             % (len(dim), data.ndim))
-        for (i, d) in enumerate(dim):
-            if d == self.record_dimension:
-                continue
-            if data.shape[i] != self.dimensions[d]:
-                raise ValueError, ("data array shape does not match the " +
-                        "length of dimension '%s'") % (d)
-        # Check that data is 1-dimensional if name matches a dimension name
-#        if (name in self.dimensions) and (data.ndim != 1):
-#            raise ValueError, "coordinate variables must be 1-dimensional"
-        self.variables[name] = Variable(
-                dim=dim, data=data, attributes=attributes)
-        # Update self.numrecs if this new variable is the first
-        # created record variable
-        if (self.record_dimension in self.variables[name].dimensions) and\
-                (self.numrecs is None):
-            object.__setattr__(self, 'numrecs', self.variables[name].shape[0])
-        return self.variables[name]
+                logging.warn(msg)
 
+        super(type(self.variables), self.variables).__setitem__(name,
+                Variable(dim=dim, data=data, dtype=dtype, shape=shape,
+                attributes=attributes))
+        # Update self.dimensions if this new variable is the first
+        # record variable
+        if record and self.dimensions[self.record_dimension] is None:
+            super(type(self.dimensions), self.dimensions).__setitem__(
+                self.record_dimension, data.shape[0])
+        return self.variables[name]
 
     def add_variable(self, name, variable):
         """A convenience function for adding a variable from one object to
@@ -1061,6 +1013,24 @@ class Data(object):
                              dim=variable.dimensions,
                              data=variable.data,
                              attributes=variable.attributes)
+        return self.variables[name]
+
+    def delete_variable(self, name):
+        """Delete a variable. Dimensions on which the variable is
+        defined are not affected.
+
+        Parameters
+        ----------
+        name : string
+            The name of the variable to be deleted. An exception will
+            be raised if there is no variable with this name.
+        """
+        if name not in self.variables:
+            raise ValueError("Object does not have a variable '%s'" %
+                    (str(name)))
+        else:
+            super(type(self.variables), self.variables).__delitem__(name)
+
 
     def create_coordinate(self, name, data, record=False, attributes=None):
         """Create a new dimension and a corresponding coordinate variable.
@@ -1100,28 +1070,19 @@ class Data(object):
         var : Variable
             Reference to the newly created coordinate variable.
         """
-        if not ncdflib.is_valid_name(name):
-            raise ValueError, "Not a valid variable name"
-        if name in self.dimensions:
-            raise ValueError, "Dimension named '%s' already exists" % (name)
-        if name in self.variables:
-            raise ValueError, "Variable named '%s' already exists" % (name)
-        data = _coerce_type(np.asarray(data))
+        data = np.asarray(data)
         if data.ndim != 1:
-            raise ValueError, "data must be 1-dimensional (vector)"
-        if data.dtype.newbyteorder('=') not in ncdflib.TYPEMAP:
-            raise TypeError, ("Can not store data type %s" % (str(data.dtype)))
+            raise ValueError("data must be 1-dimensional (vector)")
         if not isinstance(record, bool):
-            raise TypeError, "record argument must be bool"
+            raise TypeError("record argument must be bool")
         if record and self.record_dimension is not None:
-            raise ValueError, "Only one unlimited dimension is allowed"
+            raise ValueError("Only one unlimited dimension is allowed")
         # We need to be cleanly roll back the effects of
         # create_dimension if create_variable fails, otherwise we will
         # end up in a partial state.
-        old_dims = {
-                'record_dimension': self.record_dimension,
-                'dimensions': self.dimensions.copy(),
-                }
+        old_dims = {'record_dimension': self.record_dimension,
+                    'dimensions': self.dimensions.copy(),
+                   }
         if record:
             self.create_dimension(name, None)
         else:
@@ -1149,10 +1110,110 @@ class Data(object):
             passing it to this function.
         """
         # any error checking should be taken care of by create_variable
+        # TODO record should be defaulted to None and discovered in the
+        # variable if not otherwise specified
         self.create_coordinate(name=name,
                                data=coordinate.data,
                                record=record,
                                attributes=coordinate.attributes)
+        return self.variables[name]
+
+    def create_string_variable(self, name, dim, data, attributes=None,
+                               strlen=None):
+        """
+        Creates a new variable from an ndarray of variable-length
+        strings by storing them as an array characters.
+
+        Parameters
+        ----------
+        name : string
+            The name of the new variable. An exception will be raised
+            if the object already has a variable with this name. name
+            must satisfy netCDF-3 naming rules.
+        dim : tuple
+            The dimensions of the new variable. An extra dimension
+            whose name is name + '_strlen' is created to accommodate
+            the character data.
+        data : iterable
+            Data to populate the new variable; must consist of strings
+            of characters in the allowed netCDF-3 character set. data
+            is stored as a character array.
+        attributes : dict_like or None, optional
+            Attributes to assign to the new variable. Attribute names
+            must be unique and must satisfy netCDF-3 naming rules. If
+            None (default), an empty attribute dictionary is
+            initialized.
+        strlen : int or None, optional
+            Padding depth of the character array. Any strings with fewer than
+            strlen characters are right-padded with null bytes. An exception is
+            raised if any of the elements in data has length greater than
+            strlen. If None (default), then strlen equals the length of the
+            longest element in data.
+        """
+        if name in self.dimensions:
+            raise ValueError(
+                    "Character array can not be a coordinate variable")
+        data = np.asarray(data)
+        if data.dtype.char != 'S':
+            raise TypeError("data must contain string elements")
+        char_data = ncdflib.char_unstack(data, axis= -1)
+        if strlen is not None:
+            strlendiff = strlen - data.dtype.itemsize
+            if strlendiff < 0:
+                raise ValueError("strlen is smaller than the length of " +
+                        "the longest element in data")
+            elif strlendiff > 0:
+                shp = tuple(list(data.shape) + [strlendiff])
+                padding = np.empty(shp, dtype='|S1')
+                padding.fill(ncdflib.NULL)
+                char_data = np.concatenate((char_data, padding), axis= -1)
+        if not char_data.shape[-1]:
+            raise ValueError("String array must have at least one element " +
+                    "with non-zero length")
+        # we need to create a dimension for the string length
+        strlen_name = conv.strlen(name)
+        if strlen_name in dim:
+            raise ValueError("'%s' is a reserved dimension name" %
+                    (strlen_name))
+        if strlen_name in self.dimensions:
+            raise ValueError(("'%s' is not a valid variable name " +
+                    "because there is already a '%s' dimension") %
+                    (name, strlen_name))
+        # We need to be cleanly roll back the effects of
+        # create_dimension if create_variable fails, otherwise we will
+        # end up in a partial state.
+        old_dims = {'dimensions': self.dimensions.copy(),
+                   }
+        self.create_dimension(strlen_name, char_data.shape[-1])
+        try:
+            self.create_variable(name=name,
+                    dim=tuple(list(dim) + [strlen_name]),
+                    dtype=char_data.dtype,
+                    data=char_data,
+                    attributes=attributes)
+        except:
+            # Restore previous state
+            for k in old_dims:
+                object.__setattr__(self, k, old_dims[k])
+            raise
+        return self.variables[name]
+
+    def unpack_string_variable(self, name):
+        """Unpacks an array of strings stored as a char array under a variable
+        created using the create_string_variable() method.
+
+        Returns a numpy array of strings.
+        """
+        chars = self.variables[name].data
+        extra_dim = conv.strlen(name)
+        if extra_dim not in self.dimensions:
+            raise ValueError("object does not have a '%s' dimension" %
+                    (extra_dim))
+        if extra_dim != self.variables[name].dimensions[-1]:
+            raise ValueError(
+                    "variable '%s' does not have a trailing '%s' dimension" %
+                    (name, extra_dim))
+        return ncdflib.char_stack(chars, axis= -1)
 
     def create_pickled_variable(self, name, dim, data, attributes=None):
         """
@@ -1164,15 +1225,12 @@ class Data(object):
         name : string
             The name of the new variable. An exception will be raised
             if the object already has a variable with this name. name
-            must satisfy netCDF-3 naming rules. If name equals the name
-            of a dimension, then the new variable is treated as a
+            must satisfy netCDF-3 naming rules.
             coordinate variable and must be 1-dimensional.
         dim : tuple
-            The dimension of the new variable. Elements must be dimensions of
-            the object, and due to current limitations in our pickling structure
-            dim must be length one.
+            The dimensions of the new variable.
         data : iterable
-            Data to populate the new variable. Each iterate of data is
+            Data to populate the new variable. Each element of data is
             pickled and stored as a string.
         attributes : dict_like or None, optional
             Attributes to assign to the new variable. Attribute names
@@ -1180,79 +1238,49 @@ class Data(object):
             None (default), an empty attribute dictionary is
             initialized.
         """
-        logging.info("TODO: have object pickling happen internally")
-        assert len(dim) == 1
         # pickle the objects and store them in a char matrix, if the object
         # is not pickle-able it will be caught here.
-        strings = [pickle.dumps(x) for x in data]
-        max_len = max(len(x) for x in strings)
-        data = np.zeros((len(strings), max_len), dtype='c')
-        for i, s in enumerate(strings):
-            data[i,:len(s)] = s
+        data = np.asarray(data)
+        strings = [pickle.dumps(d, HIGHEST_PROTOCOL) for d in data.flat]
+        # Pack into a numpy array and reshape
+        strings = np.array(strings,
+                dtype=("|S%d" % (max([len(s) for s in strings]))))
+        strings.shape = data.shape
+        try:
+            return self.create_string_variable(name=name,
+                    dim=dim, data=strings, attributes=attributes)
+        except:
+            raise
 
-        # we need to create a dimension for the string length
-        strlen_name = "%s_strlen" % name
-        self.create_dimension(strlen_name, data.shape[1])
-        self.create_variable(name,
-                             (dim[0], strlen_name),
-                             dtype='c',
-                             data = data,
-                             attributes=attributes)
+    def unpickle_variable(self, name):
+        """Unpickles an array of pickled objects stored as a char array under a
+        variable created using the create_pickled_variable() method.
 
-    def squeeze(self, dimension):
+        Returns a numpy array of unpickled objects.
         """
-        Squeezes dimensions of length 1, removing them for an object
-        """
-        # Create a new Data instance
-        obj = self.__class__()
-        if self.dimensions[dimension] != 1:
-            raise ValueError(("Can only squeeze along dimensions with" +
-                             "length one, %s has length %d") %
-                             (dimension, self.dimensions[dimension]))
+        chars = self.variables[name].data
+        extra_dim = conv.strlen(name)
+        if extra_dim not in self.dimensions:
+            raise ValueError("object does not have a '%s' dimension" %
+                    (extra_dim))
+        if extra_dim != self.variables[name].dimensions[-1]:
+            raise ValueError(
+                    "variable '%s' does not have a trailing '%s' dimension" %
+                    (name, extra_dim))
+        strings = ncdflib.char_stack(chars, axis= -1)
+        out = np.empty(strings.shape, dtype=object)
+        for (i, s) in np.ndenumerate(strings):
+            out[i] = pickle.loads(s)
+        return out
 
-        # Copy dimensions
-        for (name, length) in self.dimensions.iteritems():
-            if not name == dimension:
-                obj.create_dimension(name, length)
-        # Copy variables
-        for (name, var) in self.variables.iteritems():
-            if not name == dimension:
-                dims = list(var.dimensions)
-                data = var.data.copy()
-                if dimension in dims:
-                    shape = list(var.data.shape)
-                    index = dims.index(dimension)
-                    shape.pop(index)
-                    dims.pop(index)
-                    data = data.reshape(shape)
-                obj.create_variable(name=name,
-                        dim=tuple(dims),
-                        data=data,
-                        attributes=var.attributes.copy())
-        # Copy attributes
-        for attr in self.attributes:
-            # Attribute values are either numpy vectors or strings; the
-            # former have a copy() method, while the latter are
-            # immutable
-            if hasattr(self.attributes[attr], 'copy'):
-                obj.set_attribute(attr, self.attributes[attr].copy())
-            else:
-                obj.set_attribute(attr, self.attributes[attr])
-        return obj
-
-    def view(self, ind, dim=None):
+    def view(self, s, dim=None):
         """Return a new object whose contents are a view of a slice from the
         current object along a specified dimension
 
         Parameters
         ----------
-        ind : integer
-            The index of the values to extract. Unlike 'take' the
-            possible values of ind are restricted to those that can be
-            represented by a slice object.  This is an artifact of
-            numpy's designation between a slice and a fancy slice
-            (which returns a copy not a view).  If ind is an integer it
-            is converted to an appropriate length-1 slice.
+        s : slice
+            The slice representing the range of the values to extract.
         dim : string, optional
             The dimension to slice along. If multiple dimensions of a
             variable equal dim (e.g. a correlation matrix), then that
@@ -1281,67 +1309,46 @@ class Data(object):
         """
         if dim is None:
             if self.record_dimension is None:
-                raise ValueError, ("object does not have a record dimension " +
-                                   "to default to")
-            dim = self.record_dimension
-        if not isinstance(dim, basestring):
-            raise TypeError, "dim must be a dimension name (string)"
-        if dim not in self.dimensions:
-            raise ValueError, "Object does not have a dimension '%s'" % (dim)
-        # Convert ind to a numpy array of integer indices. This step
-        # can be computationally expensive, but it simplifies
-        # error-checking and code maintenance
-        if dim == self.record_dimension:
-            if self.numrecs is None:
-                raise ValueError, ("Can not take data along the record " +
-                        "dimension because the number of records is " +
-                        "undetermined, this implies the record dimension" +
-                        "has no data.")
-
-        # this should be already enforced elsewhere but just in case
-        if not self.variables[dim].data.ndim == 1:
-            raise ValueError, "Coordinate is not 1-dimensional"
-
-        if isinstance(ind, int):
-            # This type test against int (not a more general integer-like base
-            # class that includes long int) works because these Data objects are
-            # restricted to dimension lengths are less than 2 ** 31
-            ind = slice(ind, ind+1)
-
-        if not isinstance(ind, slice):
-            raise IndexError("view requires ind to be a slice or integer")
-        new_size = np.arange(self.variables[dim].data.size)[ind].size
-        if new_size == 0:
-            raise IndexError("view would result in an empty coordinate")
-
-        # Create a new Data instance
-        obj = Data()
-        # Copy dimensions, modifying dim
-        for (name, length) in self.dimensions.iteritems():
-            if (length is not None) and (name == dim):
-                obj.create_dimension(name, new_size)
+                raise ValueError(
+                    "dim can not be None unless object has a record dimension")
             else:
-                obj.create_dimension(name, length)
-        # Create the views of variables
+                dim = self.record_dimension
+        if not isinstance(s, slice):
+            raise IndexError("view requires a slice argument")
+        # Create a new object
+        obj = self.__class__()
+        # Create views onto the variables and infer the new dimension length
+        new_length = self.dimensions[dim]
         for (name, var) in self.variables.iteritems():
             if dim in var.dimensions:
-                obj.variables[name] = var.view(dim, ind)
+                super(type(obj.variables), obj.variables).__setitem__(
+                    name, var.view(s, dim))
+                axis = list(var.dimensions).index(dim)
+                new_length = obj.variables[name].data.shape[axis]
             else:
-                obj.variables[name] = var
-        # Map the attributes, this intentionally does not copy.
+                super(type(obj.variables), obj.variables).__setitem__(
+                    name, var)
+        # Hard write the dimensions, skipping validation
+        object.__setattr__(obj, 'record_dimension', self.record_dimension)
+        object.__setattr__(obj, 'dimensions', self.dimensions.copy())
+        super(type(obj.dimensions), obj.dimensions).__setitem__(
+            dim, new_length)
+        if (dim != obj.record_dimension) and (obj.dimensions[dim] == 0):
+            raise IndexError(
+                "view would result in a non-record dimension of length zero")
+        # Reference to the attributes, this intentionally does not copy.
         object.__setattr__(obj, 'attributes', self.attributes)
         return obj
 
-    def take(self, ind, dim=None):
-        """Return a new object whose contents are sliced from the
+    def take(self, indices, dim=None):
+        """Return a new object whose contents are taken from the
         current object along a specified dimension
 
         Parameters
         ----------
-        ind : array_like
-            The indices of the values to extract. ind is interpreted
-            acccording to numpy conventions; i.e., slices and boolean
-            indices work.
+        indices : array_like
+            The indices of the values to extract. indices must be compatible
+            with the ndarray.take() method.
         dim : string, optional
             The dimension to slice along. If multiple dimensions of a
             variable equal dim (e.g. a correlation matrix), then that
@@ -1367,93 +1374,70 @@ class Data(object):
         """
         if dim is None:
             if self.record_dimension is None:
-                raise ValueError("object does not have an unlimited " +
-                        "dimension; a non-None dimension must be specified")
-            dim = self.record_dimension
-        if not isinstance(dim, basestring):
-            raise TypeError("dim must be a dimension name (string)")
-        if dim not in self.dimensions:
-            raise ValueError("Object does not have a dimension '%s'" % dim)
-        if (dim == self.record_dimension) and (self.numrecs is None):
-           raise ValueError("Can not take data along the record " +
-                        "dimension because the number of records is " +
-                        "undetermined, this implies the record dimension" +
-                        "has no data.")
-        if dim == self.record_dimension:
-            dim_length = self.numrecs
-        else:
-            dim_length = self.dimensions[dim]
-        try:
-            ind = np.arange(dim_length)[ind]
-        except:
-            # this logs so we know where the cause of improper indexing, but
-            # also raises the original exception
-            msg = "ind is not a valid index into dimension '%s'" % (dim)
-            logging.error(msg)
-            raise
-        # Create a new Data instance
-        obj = self.__class__()
-        # Copy dimensions, modifying dim
-        for (name, length) in self.dimensions.iteritems():
-            if (length is not None) and (name == dim):
-                obj.create_dimension(name, ind.size)
+                raise ValueError(
+                    "dim can not be None unless object has a record dimension")
             else:
-                obj.create_dimension(name, length)
-        # Copy takes of variables
+                dim = self.record_dimension
+        # Create a new object
+        obj = self.__class__()
+        # Create fancy-indexed variables and infer the new dimension length
+        new_length = self.dimensions[dim]
         for (name, var) in self.variables.iteritems():
             if dim in var.dimensions:
-                obj.variables[name] = var.take(dim, ind)
+                super(type(obj.variables), obj.variables).__setitem__(
+                        name, var.take(indices, dim))
+                new_length = obj.variables[name].data.shape[
+                    list(var.dimensions).index(dim)]
             else:
-                obj.variables[name] = copy.deepcopy(var)
-        # Maintain consistency of obj.numrecs. Ordinarily, the
-        # create_variable method does this housekeeping automatically,
-        # but we skipped this by directly assigning to obj.variables
-        if dim == self.record_dimension:
-            object.__setattr__(obj, 'numrecs', ind.size)
-        else:
-            object.__setattr__(obj, 'numrecs', self.numrecs)
+                super(type(obj.variables), obj.variables).__setitem__(
+                        name, copy.deepcopy(var))
+        # Hard write the dimensions, skipping validation
+        object.__setattr__(obj, 'record_dimension', self.record_dimension)
+        object.__setattr__(obj, 'dimensions', self.dimensions.copy())
+        super(type(obj.dimensions), obj.dimensions).__setitem__(
+            dim, new_length)
+        if (dim != obj.record_dimension) and (obj.dimensions[dim] == 0):
+            raise IndexError(
+                "take would result in a non-record dimension of length zero")
         # Copy attributes
-        for attr in self.attributes:
-            # Attribute values are either numpy vectors or strings; the
-            # former have a copy() method, while the latter are
-            # immutable
-            if hasattr(self.attributes[attr], 'copy'):
-                obj.set_attribute(attr, self.attributes[attr].copy())
-            else:
-                obj.set_attribute(attr, self.attributes[attr])
+        object.__setattr__(obj, 'attributes', self.attributes.copy())
         return obj
 
-    def renamed(self, **kwds):
+    def renamed(self, name_dict):
         """
         Returns a copy of the current object with variables and dimensions
         reanmed according to the arguments passed via **kwds
 
         Parameters
         ----------
-        **kwds : arbitrary named arguments
-            kwds should be in the form: old_name='new_name'
+        name_dict : dict-like
+            Dictionary-like object whose keys are current variable
+            names and whose values are new names.
         """
-#        for name, d in self.dimensions.iteritems():
-#            if name in self.variables and not name in self.coordinates:
-#                raise ValueError(("Renaming assumes that only coordinates " +
-#                                 "have both a dimension and variable under " +
-#                                 "the same name.  In this case it appears %s " +
-#                                 "has a dim and var but is not a coordinate")
-#                                 % name)
+        for name in self.dimensions.iterkeys():
+            if name in self.variables and not name in self.coordinates:
+                raise ValueError("Renaming assumes that only coordinates " +
+                                 "have both a dimension and variable under " +
+                                 "the same name.  In this case it appears %s " +
+                                 "has a dim and var but is not a coordinate"
+                                 % name)
 
-        new_names = dict((name, name) for name, d in self.dimensions.iteritems())
-        new_names.update(dict((name, name) for name, v in self.variables.iteritems()))
+        new_names = dict((name, name)
+                for name, d in self.dimensions.iteritems())
+        new_names.update(dict((name, name)
+                for name, v in self.variables.iteritems()))
 
-        for k, v in kwds.iteritems():
+        for k, v in name_dict.iteritems():
             if not k in new_names:
                 raise ValueError("Cannot rename %s because it does not exist" % k)
-        new_names.update(kwds)
+        new_names.update(name_dict)
 
         obj = self.__class__()
         # if a dimension is a new one it gets added, if the dimension already
         # exists we confirm that they are identical (or throw an exception)
         for (name, length) in self.dimensions.iteritems():
             obj.create_dimension(new_names[name], length)
+        object.__setattr__(obj, 'record_dimension', self.record_dimension)
         # a variable is only added if it doesn't currently exist, otherwise
         # and exception is thrown
         for (name, v) in self.variables.iteritems():
@@ -1479,8 +1463,7 @@ class Data(object):
             if not name in self.dimensions:
                 self.create_dimension(name, length)
             else:
-                length = length or other.numrecs
-                cur_length = self.dimensions[name] or self.numrecs
+                cur_length = self.dimensions[name]
                 if cur_length is None:
                     cur_length = self[self.record_dimension].data.size
                 if length != cur_length:
@@ -1498,8 +1481,10 @@ class Data(object):
             else:
                 if self[name].dimensions != other[name].dimensions:
                     raise ValueError("%s has different dimensions cur:%s new:%s"
-                                     % name, self[name].dimensions, other[name].dimensions)
-                if not np.all(numpylib.naneq(self[name].data, other[name].data)):
+                                     % (name, str(self[name].dimensions),
+                                        str(other[name].dimensions)))
+                if (self.variables[name].data.tostring() !=
+                    other.variables[name].data.tostring()):
                     raise ValueError("%s has different data" % name)
                 self[name].attributes.update(other[name].attributes)
         # update the root attributes
@@ -1529,19 +1514,22 @@ class Data(object):
         if isinstance(var, basestring):
             var = [var]
         if not (hasattr(var, '__iter__') and hasattr(var, '__len__')):
-            raise TypeError, "var must be a bounded sequence"
-        if not all([isinstance(v, basestring) and (v in self.variables)
-                for v in var]):
-            raise ValueError, ("each variable name in var must belong to " +
-                    "the object's variables dictionary")
+            raise TypeError("var must be a bounded sequence")
+        if not all((v in self.variables for v in var)):
+            raise KeyError(
+                "One or more of the specified variables does not exist")
         # Create a new Data instance
-        obj = Data()
+        obj = self.__class__()
         # Copy relevant dimensions
         dim = reduce(or_, [set(self.variables[v].dimensions) for v in var])
         # Create dimensions in the same order as they appear in self.dimension
         for d in self.dimensions:
             if d in dim:
-                obj.create_dimension(d, self.dimensions[d])
+                if d == self.record_dimension:
+                    obj.create_dimension(d, None)
+                else:
+                    obj.create_dimension(d, self.dimensions[d])
+
         # Also include any coordinate variables defined on the relevant
         # dimensions
         for (name, v) in self.variables.iteritems():
@@ -1551,17 +1539,10 @@ class Data(object):
                         data=v.data.copy(),
                         attributes=v.attributes.copy())
         # Copy attributes
-        for attr in self.attributes:
-            # Attribute values are either numpy vectors or strings; the
-            # former have a copy() method, while the latter are
-            # immutable
-            if hasattr(self.attributes[attr], 'copy'):
-                obj.set_attribute(attr, self.attributes[attr].copy())
-            else:
-                obj.set_attribute(attr, self.attributes[attr])
+        object.__setattr__(obj, 'attributes', self.attributes.copy())
         return obj
 
-    def iterator(self, dim=None):
+    def iterator(self, dim=None, views=False):
         """Iterator along a data dimension
 
         Return an iterator yielding (coordinate, data_object) pairs
@@ -1574,6 +1555,9 @@ class Data(object):
             (default), then the iterator operates along the record
             dimension; if there is no record dimension, an exception
             will be raised.
+        views : boolean, optional
+            If True, the iterator will give views of the data along
+            the dimension, otherwise copies.
 
         Returns
         -------
@@ -1643,33 +1627,70 @@ class Data(object):
           None
 
         """
-        if dim is None:
-            if self.record_dimension is None:
-                raise ValueError("object has no record dimension")
-            if self.numrecs is None:
-                raise ValueError("Can not iterate over record dimension " +
-                        "because it there are no record values. (numrecs == 0)")
-            dim = self.record_dimension
-        if dim not in self.dimensions:
-            raise ValueError("dimension is not found")
-
-        coord = (dim in self.coordinates)
-        # iterate along dim returning takes at each iterate
-        for i in range(self.variables[dim].data.size):
-            obj = self.take([i], dim)
-            if coord:
-                yield (obj[dim], obj)
+        # Determine the size of the dim we're about to iterate over
+        n = self.dimensions[dim]
+        # Iterate over the object
+        if dim in self.coordinates:
+            coord = self.variables[dim]
+            if views:
+                for i in xrange(n):
+                    s = slice(i, i + 1)
+                    yield (coord.view(s, dim=dim),
+                           self.view(s, dim=dim))
             else:
-                yield (None, obj)
+                for i in xrange(n):
+                    indices = np.array([i])
+                    yield (coord.take(indices, dim=dim),
+                           self.take(indices, dim=dim))
+        else:
+            if views:
+                for i in xrange(n):
+                    yield (None, self.view(slice(i, i + 1), dim=dim))
+            else:
+                for i in xrange(n):
+                    yield (None, self.take(np.array([i]), dim=dim))
+
+    def group_by(self, dim, keyfunc):
+        """
+        Similar to itertools.group_by, this function iterates over slices
+        along dim yielding takes of all the slices which share common keys.
+
+        keys are defined by by keyfunc which must take a core.Data object
+        as input and yield a hashable key.
+
+        Parameters
+        ---------
+        dim : string
+            the dimension to group over
+        keyfunc : callable
+            a function taking slices and yielding corresponding keys
+
+        Returns
+        ---------
+        a generator yielding : (key, obj.take(inds_with_same_key, dim)
+        """
+        def getkey(x):
+            # apply keyfunc to the slice (not the current dim value)
+            # x looks like : (ind, (dim, slice))
+            return keyfunc(x[1][1])
+        # here we only want views since we're simply getting the indices
+        iter = sorted(enumerate(self.iterator(dim, views=True)), key=getkey)
+        for k, group in itertools.groupby(iter, getkey):
+            # at this point group holds all of the (enumerated) individual
+            # slices with the same key, but what we really want is this
+            # merged into one object, rather than merging all the
+            # slices we can simply keep track of the indices and then
+            # do a take
+            inds = [x[0] for x in group]
+            yield (k, self.take(inds, dim=dim))
 
     def iterarray(self, var, dim=None):
-        """Iterator along a data dimension returning the coresponding slices
-        of a variable.
+        """Iterator along a data dimension returning the corresponding slices
+        of the underlying data of a varaible.
 
-        Return an iterator yielding (scalar, ndarray) pairs
-        that are singleton along the specified dimension.  While iterator is
-        more general this method has less overhead and in turn should be
-        considerably faster.
+        Return an iterator yielding (scalar, ndarray) pairs that are singleton
+        along the specified dimension.  While iterator is more general, this
+        method has less overhead and in turn should be considerably faster.
 
         Parameters
         ----------
@@ -1709,45 +1730,155 @@ class Data(object):
         >>> print b
         [[ 0.33499995  0.47606901  0.41334325]]
         """
-        if dim is None:
-            if self.record_dimension is None:
-                raise ValueError, "object has no record dimension"
-            if self.numrecs is None:
-                raise ValueError, ("Can not iterate over record dimension " +
-                        "because it there are no record values. (numrecs == 0)")
-            dim = self.record_dimension
-        if dim not in self.dimensions:
-            raise ValueError, "dimension %s is not found" % dim
-
-        dim_axis = list(self.variables[var].dimensions).index(dim)
-        slicer = [slice(None)] * self.variables[var].data.ndim
-
-        # We determine the size of the dim we're about to iterate over by
-        # first checking to see if it has a corresponding variable.  If it does
-        # the variables length is used, otherwise we infer the length from
-        # the dimensions (or numrecs)
-        coord = (dim in self.coordinates)
-        if coord:
-            # this should be enforced elsewhere, but just in case
-            assert self.variables[dim].data.ndim == 1
-            n = self.variables[dim].data.size
+        # Get a reference to the underlying ndarray for the desired variable
+        # and build a list of slice objects
+        data = self.variables[var].data
+        dim = dim or self.record_dimension
+        axis = list(self.variables[var].dimensions).index(dim)
+        slicer = [slice(None)] * data.ndim
+        # Determine the size of the dim we're about to iterate over
+        n = self.dimensions[dim]
+        # Iterate over dim returning views of the variable.
+        if dim in self.coordinates:
+            coord = self.variables[dim].data
+            for i in xrange(n):
+                slicer[axis] = slice(i, i + 1)
+                yield (coord[i], data[slicer])
         else:
-            # the dimension is not a coordinate so we need to infer the dim
-            # size from the dimensions (or numrecs)
-            if dim is self.record_dimension:
-                n = self.numrecs
-            else:
-                n = self.dimensions[dim]
-        # iterate over dim returning
-        for i in xrange(n):
-            slicer[dim_axis] = slice(i, i+1, None)
-            v = self.variables[var].data[slicer]
-            if coord:
-                yield self.variables[dim].data[i], v
-            else:
-                yield i, v
+            for i in xrange(n):
+                slicer[axis] = slice(i, i + 1)
+                yield (None, data[slicer])
 
-    def interpolate(self, var, **points):
+    def csv(self, var, out=None):
+        """
+        Writes the variable 'var' to csv using the I/O object out
+
+        Parameters
+        ----------
+        var : string
+            The variable to write to csv.
+        out : file-like (optional)
+            The file-like object to write the csv to.  Defaults to a new
+            StringIO object.
+
+        Returns:
+        -------
+        out : file-like
+            The object that the csv was written to.
+        """
+        if self[var].data.ndim != 2:
+            raise ValueError("csv currently only supports 2 dimensional vars")
+        # default to writing to a StringIO object
+        out = out or StringIO()
+        # get the row/col dimensions from the variable
+        row_dim, col_dim = self[var].dimensions
+        # if the column dimension is a coordinate we include the
+        # coordinate values in the first row.  other wise just index it
+        if col_dim in self.coordinates:
+            col_var = self[col_dim]
+            is_time = (col_dim == conv.TIME)
+            col_data = datelib.from_udvar(col_var) if is_time else col_var.data
+            header = col_data
+        else:
+            is_record = (col_dim == self.record_dimension)
+            dim_len = self.dimensions[col_dim]
+            header = np.arange(dim_len)
+        header = [str(x) for x in header]
+        # write the first line
+        w = csv.writer(out)
+        w.writerow(list(itertools.chain([''], [str(x) for x in header])))
+        # if the row dimensions is a coordinate we use its values other-
+        # wise we just index them.
+        if row_dim in self.coordinates:
+            row_var = self[row_dim]
+            is_time = (row_dim == conv.TIME)
+            row_data = datelib.from_udvar(row_var) if is_time else row_var.data
+            row_labels = [str(x) for x in row_data]
+        else:
+            is_record = (row_dim == self.record_dimension)
+            dim_len = self.dimensions[row_dim]
+            row_labels = '' * self.dimensions[dim_len]
+        row_labels = [str(x) for x in row_labels]
+        # write each row to csv
+        for r, data in zip(row_labels, self[var].data):
+            w.writerow(list(itertools.chain([r], [str(x) for x in data])))
+        return out
+
+    def sort_coordinate(self, coord):
+        if not coord in self.coordinates:
+            raise ValueError("%s is not a coordinate" % coord)
+        data = self[coord].data
+        if not data.ndim == 1:
+            raise ValueError("coordinate must be unidimensional")
+        inds = np.argsort(data)
+        def sort_var(x):
+            axis = x.dimensions.index(coord)
+            x.data[:] = x.data.take(inds, axis=axis)
+        [sort_var(v) for v in self.variables.values() if coord in v.dimensions]
+
+    def interpolate(self, vars=None, fast=False, **points):
+
+        if not all([k in self.coordinates for k in points.keys()]):
+            raise ValueError("interpolation only works on coordinates")
+
+        from bisect import bisect
+        def neighbors(coord, val):
+            if not self[coord].data.ndim == 1:
+                raise ValueError("coordinate has more than one dimension")
+            data = self[coord].data
+            j = bisect(data, val)
+            if j == 0 or j == data.size:
+                raise ValueError("value of %6.3f is outside the range of %s"
+                                 % (val, coord))
+            i = j-1
+            if data[i] == val:
+                return [i, i], 1.0
+            else:
+                alpha = np.abs(val - data[j])/np.abs(data[i] - data[j])
+                assert alpha <= 1. and alpha >= 0.
+                return [i, j], alpha
+
+        def weight(obj, inds, coord, w):
+            assert len(inds) == 2
+            views = [obj.view(slice(x, x+1), dim=coord) for x in inds]
+            if vars is None:
+                vs = [v for v in obj.variables.keys() if coord in obj[v].dimensions]
+            else:
+                vs = vars
+            for v in vs:
+                views[0][v].data[:] *= w
+                views[0][v].data[:] += (1. - w) * views[1][v].data[:]
+            return views[0]
+
+        def closest(obj, inds, coord, w):
+            assert len(inds) == 2
+            import pdb; pdb.set_trace()
+            views = [obj.view(x, dim=coord) for x in inds]
+            if vars is None:
+                vs = [v for v in obj.variables.keys() if coord in obj[v].dimensions]
+            else:
+                vs = vars
+            for v in vs:
+                views[0][v].data[:] *= w
+                views[0][v].data[:] += (1. - w) * views[1][v].data[:]
+            return views[0]
+
+        nhbrs = [(k, neighbors(k, v)) for k, v in points.iteritems()]
+        obj = self
+        for coord, nhbr in nhbrs:
+            if fast:
+                closest_ind = nhbr[0][nhbr[1] > 0.5]
+                obj = obj.view(slice(closest_ind, closest_ind + 1),
+                               dim=coord)
+            else:
+                obj = obj.take(nhbr[0], dim=coord)
+
+        if not fast:
+            for coord, nhbr in nhbrs:
+                obj = weight(obj, [0, 1], coord, nhbr[1])
+        return obj
+
+    def interp(self, var, **points):
         # ASSUMPTION, ALL COORDINATES ARE SORTED
         if len(points) != len(self[var].dimensions):
             msg = "interpolation requires specifying all dimensions"
@@ -1758,7 +1889,8 @@ class Data(object):
 
         from bisect import bisect
         def neighbors(coord, val):
-            assert self[coord].data.ndim == 1
+            if not self[coord].data.ndim == 1:
+                raise ValueError("coordinate has more than one dimension")
             data = self[coord].data
             j = bisect(data, val)
             if j == 0 or j == data.size:
@@ -1788,11 +1920,52 @@ class Data(object):
                 ret = ret[..., 0]
         return ret
 
+    def squeeze(self, dimension):
+        """
+        Squeezes dimensions of length 1, removing them for an object
+        """
+        # Create a new Data instance
+        obj = self.__class__()
+        if self.dimensions[dimension] != 1:
+            raise ValueError(("Can only squeeze along dimensions with" +
+                             "length one, %s has length %d") %
+                             (dimension, self.dimensions[dimension]))
+
+        # Copy dimensions
+        for (name, length) in self.dimensions.iteritems():
+            if not name == dimension:
+                obj.create_dimension(name, length)
+        # Copy variables
+        for (name, var) in self.variables.iteritems():
+            if not name == dimension:
+                dims = list(var.dimensions)
+                data = var.data.copy()
+                if dimension in dims:
+                    shape = list(var.data.shape)
+                    index = dims.index(dimension)
+                    shape.pop(index)
+                    dims.pop(index)
+                    data = data.reshape(shape)
+                obj.create_variable(name=name,
+                        dim=tuple(dims),
+                        data=data,
+                        attributes=var.attributes.copy())
+        # Copy attributes
+        for attr in self.attributes:
+            # Attribute values are either numpy vectors or strings; the
+            # former have a copy() method, while the latter are
+            # immutable
+            if hasattr(self.attributes[attr], 'copy'):
+                obj.set_attribute(attr, self.attributes[attr].copy())
+            else:
+                obj.set_attribute(attr, self.attributes[attr])
+        return obj
 
 class Variable(object):
     """A class that wraps metadata around a numpy ndarray"""
 
-    def __init__(self, dim, data=None, dtype=None, shape=None, attributes=None):
+    def __init__(self, dim, data=None, dtype=None, shape=None,
+                 attributes=None):
         """Initializes a variable object with contents read from
         specified netCDF file.
 
@@ -1814,12 +1987,11 @@ class Variable(object):
             data. If data contains int64 integers, it will be coerced
             to int32 (for the sake of netCDF compatibility), and an
             exception will be raised if this coercion is not safe.
-        dtype : dtype_like, optional
+        dtype : dtype_like or None, optional
             A numpy dtype object, or an object that can be coerced to a
-            dtype.  If the data argument is not None, then this
-            argument must equal the dtype of data. If the data argument
-            is None and dtype is None, then dtype is the numpy default
-            (typically 64-bit float).
+            dtype. If the data argument is not None, then this
+            argument must equal the dtype of data. If None (default), then
+            dtype is inferred from data.
         shape : tuple, optional
             Tuple of integers that specifies the shape of the data. If
             the data argument is not None, then this argument must
@@ -1831,71 +2003,63 @@ class Variable(object):
             None (default), an empty attribute dictionary is
             initialized.
         """
-        # initialize attributes
         if attributes is None:
-            attributes = OrderedDict()
+            attributes = AttributesDict()
         # Check dim
         if not isinstance(dim, tuple):
             raise TypeError("dim must be a tuple")
-        if not all(map(ncdflib.is_valid_name, dim)):
-            raise ValueError(
-                    "elements of dim must be valid netCDF dimension names")
-        # Check dtype
-        if dtype is not None:
-            if not isinstance(dtype, np.dtype):
-                try:
-                    dtype = np.dtype(dtype)
-                except:
-                    TypeError, "Can not convert dtype to a numpy dtype object"
-            # byteorder must be normalized (here we choose native byte
-            # order as the standard) for hashing and dict lookup to work
-            if dtype.newbyteorder('=') not in ncdflib.TYPEMAP:
-                raise TypeError("dtype %s is not compatible with netCDF" %
-                        (str(dtype)))
+        if not all([ncdflib.is_valid_name(d) for d in dim]):
+            bad = [d for d in dim if not ncdflib.is_valid_name(d)]
+            raise ValueError("the following dim(s) are not valid " +
+                             "dimensions of this object: %s" % bad)
         # Check shape
         if shape is not None:
             if not isinstance(shape, tuple):
-                raise TypeError, "shape must be a tuple"
-            if len(shape) != len(dim):
-                raise ValueError, "shape and dim must have the same length"
+                raise TypeError("shape must be a tuple")
             try:
-                assert all([ncdflib.pack_int(s) and (s > 0) for s in shape])
+                # checking for >= 0 allows empty data sets
+                assert all([ncdflib.pack_int(s) and (s >= 0) for s in shape])
             except:
-                raise ValueError("shape tuple must contain positive " +
-                        "values that can be represented as "
-                        "32-bit signed integers")
-        # Check data
+                raise ValueError("shape tuple must contain positive values " +
+                        "that can be represented as 32-bit signed integers")
+        # Convert dtype
+        if dtype is not None and not isinstance(dtype, np.dtype):
+            dtype = np.dtype(dtype)
         if data is None:
-            if (shape is None) or (dtype is None):
-                raise ValueError(
-                        "shape and dtype must be specified if data is None")
-            # Populate with np.empty if no data is provided
-            if not '_FillValue' in attributes:
-                attributes['_FillValue'] = ncdflib.FILLMAP[dtype]
+            if dtype is None:
+                raise ValueError("must provide dtype if data is None")
+            if shape is None:
+                raise ValueError("must provide shape if data is None")
             data = np.empty(shape, dtype=dtype)
-            data.fill(attributes['_FillValue'])
-        try:
-            data = np.asarray(data)
-        except:
-            raise TypeError, "data must be a numpy array or array-like"
-        data = _coerce_type(data)
-        if (shape is not None) and (data.shape != shape):
-            raise ValueError, "shape and data arguments are incompatible"
+            # Check the fillval
+            if conv.FILLVALUE not in attributes:
+                attributes[conv.FILLVALUE] = ncdflib.FILLMAP[dtype]
+            data.fill(attributes[conv.FILLVALUE])
+        data = np.asarray(data)
+        # Check dtype
         if (dtype is not None) and (data.dtype != dtype):
-            raise ValueError, "dtype and data arguments are incompatible"
+            raise ValueError("dtype and data arguments are incompatible" +
+                             "data: %s, dtype:%s" % (data.dtype, dtype))
+        # Coerce dtype to be netCDF-3 compatible, or raise an exception if this
+        # coercion is not possible without losing information
+        data = ncdflib.coerce_type(data)
+        if shape is None:
+            shape = data.shape
+        # Check data shape
+        for (i, s) in enumerate(shape):
+            if data.shape[i] != shape[i]:
+                raise ValueError(("the %d^th data dimension (%s) is %d but the" +
+                                  " input shape suggests it should be %d")
+                                  % (i, dim[i], data.shape[i], int(s)))
+        if data.shape != shape:
+            raise ValueError("data array shape %s does not match the shape %s"
+                             % (str(data.shape), str(shape)))
         if len(dim) != data.ndim:
-            raise ValueError, "dim and data arguments are incompatible"
-        # Initialize attributes
+            raise ValueError("number of dimensions don't match dim:%d data:%d"
+                             % (len(dim), data.ndim))
         object.__setattr__(self, 'dimensions', dim)
         object.__setattr__(self, 'data', data)
-        # self.attributes is an OrderedDict() to ensure consistent
-        # order of writing to file
-        object.__setattr__(self, 'attributes', OrderedDict())
-        if attributes is not None:
-            if not isinstance(attributes, OrderedDict):
-                attributes = OrderedDict(attributes)
-            for (attr, value) in attributes.iteritems():
-                self.set_attribute(attr, value)
+        object.__setattr__(self, 'attributes', AttributesDict(attributes))
 
     def __getattr__(self, attr):
         """__getattr__ is overloaded to selectively expose some of the
@@ -1913,7 +2077,7 @@ class Variable(object):
         """"__setattr__ is overloaded to prevent operations that could
         cause loss of data consistency. If you really intend to update
         dir(self), use the self.__dict__.update method or the
-        super(type(a), self).__setattr method to bypass."""
+        super(type(a), self).__setattr__ method to bypass."""
         raise AttributeError, "Object is tamper-proof"
 
     def __delattr__(self, attr):
@@ -1931,34 +2095,37 @@ class Variable(object):
         """__len__ is overloaded to access the underlying numpy data"""
         return self.data.__len__()
 
+    def __copy__(self):
+        """
+        Returns a shallow copy of the current object.
+        """
+        # Create the simplest possible dummy object and then overwrite it
+        obj = self.__class__(dim=(), data=0)
+        object.__setattr__(obj, 'dimensions', self.dimensions)
+        object.__setattr__(obj, 'data', self.data)
+        object.__setattr__(obj, 'attributes', self.attributes)
+        return obj
+
     def __deepcopy__(self, memo=None):
         """
         Returns a deep copy of the current object.
 
         memo does nothing but is required for compatability with copy.deepcopy
         """
-        obj = self.__class__(dim=self.dimensions,
-                data=self.data.copy())
-        for attr in self.attributes:
-            # Attribute values are either numpy vectors or strings; the
-            # former have a copy() method, while the latter are
-            # immutable
-            if hasattr(self.attributes[attr], 'copy'):
-                obj.set_attribute(attr, self.attributes[attr].copy())
-            else:
-                obj.set_attribute(attr, self.attributes[attr])
+        # Create the simplest possible dummy object and then overwrite it
+        obj = self.__class__(dim=(), data=0)
+        # tuples are immutable
+        object.__setattr__(obj, 'dimensions', self.dimensions)
+        object.__setattr__(obj, 'data', self.data.copy())
+        object.__setattr__(obj, 'attributes', self.attributes.copy())
         return obj
 
     def __eq__(self, other):
-        if self.dimensions != other.dimensions or not np.all(
-          numpylib.naneq(self.data, other.data)):
+        if self.dimensions != other.dimensions or \
+           (self.data.tostring() != other.data.tostring()):
             return False
-        if not set(self.attributes.keys()) == set(other.attributes.keys()):
+        if not self.attributes == other.attributes:
             return False
-        for key in self.attributes:
-            if not np.all(numpylib.naneq(self.attributes[key],
-                                         other.attributes[key])):
-                return False
         return True
 
     def __ne__(self, other):
@@ -2002,87 +2169,14 @@ class Variable(object):
         lines.append('')
         return '\n'.join(lines)
 
-    def has_attribute(self, attr):
-        return attr in self.attributes
-
-    def get_attribute(self, attr):
-        """Get the value of a user-defined attribute"""
-        if not self.has_attribute(attr):
-            raise KeyError, "attribute not found"
-        return self.attributes[attr]
-
-    def set_attribute(self, attr, value):
-        """Set the value of a user-defined attribute"""
-        if not ncdflib.is_valid_name(attr):
-            raise ValueError, "Not a valid attribute name"
-        # Strings get special handling because netCDF treats them as
-        # character arrays. Everything else gets coerced to a numpy
-        # vector. netCDF treats scalars as 1-element vectors. Arrays of
-        # non-numeric type are not allowed.
-        if isinstance(value, basestring):
-            try:
-                ncdflib.pack_string(value)
-            except:
-                raise ValueError, (
-                        "Not a valid string value for a netCDF attribute")
-        else:
-            try:
-                value = np.atleast_1d(np.asarray(value))
-            except:
-                raise ValueError, (
-                        "Not a valid vector value for a netCDF attribute")
-            if value.ndim > 1:
-                raise ValueError, ("netCDF attributes must be vectors " +
-                        "(1-dimensional)")
-            value = _coerce_type(value)
-            # Coerce dtype to native byte order for hashing/dictionary lookup
-            if value.dtype.newbyteorder('=') not in ncdflib.TYPEMAP:
-                # A plain string attribute is okay, but an array of
-                # string objects is not okay!
-                raise ValueError, "Can not convert to a valid netCDF type"
-        self.attributes[attr] = value
-
-    def del_attribute(self, attr):
-        if not self.has_attribute(attr):
-            raise KeyError, "attribute not found"
-        del self.attributes[attr]
-
-    def update_attributes(self, *args, **kwargs):
-        """Set multiple user-defined attributes with a mapping object
-        or an iterable of key/value pairs"""
-        # Try it on a dummy copy first so that we don't end up in a
-        # partial state
-        dummy = self.__class__(
-               dim=('dummy',), data=np.array([0]), attributes=self.attributes.copy())
-        try:
-            attributes = OrderedDict(*args, **kwargs)
-            for (k, v) in attributes.iteritems():
-                # set_attribute method does checks and type conversions
-                dummy.set_attribute(k, v)
-            del dummy
-            # If we can set the requested attributes without any
-            # complaints, then we can apply it to the real object.
-            for (k, v) in attributes.iteritems():
-                self.set_attribute(k, v)
-        except:
-            raise
-
-    def clear_attributes(self, **kwargs):
-        """Delete all user-defined attributes"""
-        object.__setattr__(self, 'attributes', OrderedDict())
-
-    def view(self, dim, ind):
+    def view(self, s, dim):
         """Return a new Variable object whose contents are a view of the object
         sliced along a specified dimension.
 
         Parameters
         ----------
-        ind : slice
-            The index of the values to extract.  Unlike 'take' the possible
-            values of ind are restricted to those that can be represented by
-            a slice object.  This is an artifact of numpy's designation between
-            a slice and a fancy slice (which returns a copy not a view).  If ind
-            is an integer it is converted to an appropriate slice.
+        s : slice
+            The slice representing the range of the values to extract.
         dim : string
             The dimension to slice along. If multiple dimensions equal
             dim (e.g. a correlation matrix), then the slicing is done
@@ -2101,36 +2195,25 @@ class Variable(object):
         --------
         take
         """
-        if not isinstance(dim, basestring):
-            raise TypeError("dim must be a dimension name (string)")
-        if dim not in self.dimensions:
-            raise ValueError("Object does not have a dimension '%s'" % dim)
         # When dim appears repeatededly in self.dimensions, using the index()
         # method gives us only the first one, which is the desired behavior
         axis = list(self.dimensions).index(dim)
-        if isinstance(ind, int):
-            ind = slice(ind, ind+1)
-        elif not isinstance(ind, slice):
-            raise IndexError("view requires ind to be a slice or integer")
-
-        # create a list of null slices, then fill in the appropriate axis
-        slices = [ind if i == axis else slice(None)
-                  for i in range(self.data.ndim)]
-        # apply the slice and copy attributes
-        obj = Variable(dim=self.dimensions, data=self.data[slices])
-        object.__setattr__(obj, 'attributes', self.attributes)
+        slices = [slice(None)] * self.data.ndim
+        slices[axis] = s
+        # Shallow copy
+        obj = copy.copy(self)
+        object.__setattr__(obj, 'data', self.data[slices])
         return obj
 
-    def take(self, dim, ind):
+    def take(self, indices, dim):
         """Return a new Variable object whose contents are sliced from
         the current object along a specified dimension
 
         Parameters
         ----------
-        ind : array_like
-            The indices of the values to extract. ind is interpreted
-            acccording to numpy conventions; i.e., slices and boolean
-            indices work.
+        indices : array_like
+            The indices of the values to extract. indices must be compatible
+            with the ndarray.take() method.
         dim : string
             The dimension to slice along. If multiple dimensions equal
             dim (e.g. a correlation matrix), then the slicing is done
@@ -2147,45 +2230,14 @@ class Variable(object):
         --------
         numpy.take
         """
-        if not isinstance(dim, basestring):
-            raise TypeError, "dim must be a dimension name (string)"
-        if dim not in self.dimensions:
-            raise ValueError, "Object does not have a dimension '%s'" % (dim)
+        indices = np.asarray(indices)
+        if indices.ndim != 1:
+            raise ValueError('indices should have a single dimension')
+
         # When dim appears repeatededly in self.dimensions, using the index()
         # method gives us only the first one, which is the desired behavior
         axis = list(self.dimensions).index(dim)
-        obj = Variable(dim=self.dimensions,
-                data=self.data.take(ind, axis=axis))
-        for attr in self.attributes:
-            # Attribute values are either numpy vectors or strings; the
-            # former have a copy() method, while the latter are
-            # immutable
-            if hasattr(self.attributes[attr], 'copy'):
-                obj.set_attribute(attr, self.attributes[attr].copy())
-            else:
-                obj.set_attribute(attr, self.attributes[attr])
+        # Deep copy
+        obj = copy.deepcopy(self)
+        object.__setattr__(obj, 'data', self.data.take(indices, axis=axis))
         return obj
-
-if __name__ == "__main__":
-    obj = Data()
-    obj.create_coordinate('dim1', np.arange(10))
-    obj.create_coordinate('dim2', np.arange(20))
-    obj.create_variable('var1',
-                        ('dim1', 'dim2'),
-                        data=np.random.normal(size=(10, 20)))
-
-    val = obj.interpolate('var1', dim1=3.5, dim2=2.5)
-    expected = np.mean(obj['var1'].data[3:5, 2:4])
-    np.testing.assert_almost_equal(val, expected)
-
-    val = obj.interpolate('var1', dim1=3, dim2=2.5)
-    expected = np.mean(obj['var1'].data[3, 2:4])
-    np.testing.assert_almost_equal(val, expected)
-
-    val = obj.interpolate('var1', dim1=3.5, dim2=2)
-    expected = np.mean(obj['var1'].data[3:5, 2])
-    np.testing.assert_almost_equal(val, expected)
-
-    val = obj.interpolate('var1', dim1=2.2, dim2=3.9)
-    expected = np.dot(np.dot(obj['var1'].data[2:4, 3:5].T, [0.8, 0.2]), [0.1, 0.9])
-    np.testing.assert_almost_equal(val, expected)
