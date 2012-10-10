@@ -1,15 +1,22 @@
 import numpy as np
 import coards
+import logging
 
 import matplotlib.pyplot as plt
+logging.basicConfig(level=logging.DEBUG)
 
-from mpl_toolkits.basemap import Basemap
+try:
+    from mpl_toolkits.basemap import Basemap
+except:
+    logging.debug("not loading basemap")
+
 from matplotlib.pylab import meshgrid
 
 import wx.objects.conventions as conv
 
 from wx.lib import datelib
 from wx.objects import objects
+
 
 def make_pretty(m):
     # map with continents drawn and filled.

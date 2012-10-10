@@ -36,8 +36,8 @@ def send_email(mime_email):
     to = mime_email['To']
     fr = mime_email['From']
     s = smtplib.SMTP('localhost')
-    server = smtplib.SMTP(host, port)
-    server.login(username, password)
+    server = smtplib.SMTP('mail.saltbreaker.com', 26)
+    server.login('wx@saltbreaker.com', 'w3ath3r')
     server.sendmail(fr, to, mime_email.as_string())
     s.quit()
 
