@@ -188,8 +188,6 @@ def handle_email(opts, args):
     if len(opts.email_body) > 1:
         raise ValueError("expected a single email body")
 
-    tmp = list(griblib.degrib('/home/kleeman/Downloads/GFS20121002025800202.grb'))
-    import pdb; pdb.set_trace()
     query = emaillib.parse_saildocs(opts.email_body[0])
     obj = poseidon.email_forecast(query, path=opts.grib)
     # could use other extensions:
@@ -201,7 +199,6 @@ def handle_email(opts, args):
     _, fname = tempfile.mkstemp('.fcst', 'gfs_request_', dir=temp_dir)
     gf = gzip.open(fname, 'wb')
     string = tinylib.to_beaufort(obj)
-    import pdb; pdb.set_trace()
     gf.write(string)
     gf.close()
 
