@@ -190,18 +190,19 @@ def degrib(fn):
             udunits = coards.to_udunits(start_date,
                                         'hours since %Y-%m-%d %H:%M:%S')
             uddates = [coards.datetime_to_udunits(d, udunits) for d in dates]
-
-            # if the time coordinate exists make sure it matches
-            if conv.TIME in obj.variables:
-                assert np.all(uddates == obj[conv.TIME].data)
-            else:
-                obj.create_coordinate(conv.TIME, uddates, record=True,
-                                      attributes={conv.UNITS:udunits})
-
             # create an empty data object and fill it
             data = np.zeros((len(uddates), lats.size, lons.size))
             for i, (date, x) in enumerate(iter):
                 data[i,:,:] = x
+            # if the time coordinate exists make sure it matches
+            if conv.TIME in obj.variables:
+                if not np.all(uddates == obj[conv.TIME].data):
+                    overlap_dates = sorted(set(uddates).intersection(obj[conv.TIME].data))
+            else:
+                obj.create_coordinate(conv.TIME, uddates, record=True,
+                                      attributes={conv.UNITS:udunits})
+
+
             obj.create_variable(var, dim = (conv.TIME, conv.LAT, conv.LON), data=data)
         neg_lon = obj[conv.LON].data <= 0
         obj[conv.LON].data[neg_lon] = 360. + obj[conv.LON].data[neg_lon]

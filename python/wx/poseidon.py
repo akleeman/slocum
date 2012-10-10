@@ -143,7 +143,7 @@ def nww3_subset(ll, ur, path=None):
         url = latest_nww3()
     return ncdf_subset(url=url, ll=ll, ur=ur, vars=vars, dir='nww3', path=path)
 
-def ensure_corners(ur, ll):
+def ensure_corners(ur, ll, expand=True):
     """
     Makes sure the upper right (ur) corner is actually the upper right.  Same
     for the lower left (ll).
@@ -158,11 +158,32 @@ def ensure_corners(ur, ll):
         tmp = ur.lat
         ur.lat = ll.lat
         ll.lat = tmp
-    ur.lat += 1
-    ur.lon += 1
-    ll.lat -= 1
-    ll.lon -= 1
+    if expand:
+        ur.lat += 1
+        ur.lon += 1
+        ll.lat -= 1
+        ll.lon -= 1
     return ur, ll
+
+def email_forecast(query, path=None):
+
+    ll = objects.LatLon(query['lower'], query['left'])
+    ur = objects.LatLon(query['upper'], query['right'])
+    ur, ll = ensure_corners(ur, ll, expand=False)
+    obj = gefs_subset(ll, ur, path=path)
+
+    inds = [np.nonzero(obj['time'].data == x)[0][0] for x in query['hours']]
+    obj = obj.take(inds, 'time')
+
+    lats = np.linspace(ll.lat, ur.lat,
+                       num = (ur.lat - ll.lat) / query['grid_delta'] + 1,
+                       endpoint=True)
+    lons = np.linspace(ll.lon, ur.lon,
+                       num = (ur.lon - ll.lon) / query['grid_delta'] + 1,
+                       endpoint=True)
+    obj = obj.take([np.nonzero(obj['lat'].data == x)[0][0] for x in lats], 'lat')
+    obj = obj.take([np.nonzero(obj['lon'].data == x)[0][0] for x in lons], 'lon')
+    return obj
 
 def forecast_weather(start_date, ur, ll, recent=False):
     ur, ll = ensure_corners(ur, ll)

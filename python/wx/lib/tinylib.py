@@ -18,6 +18,7 @@ def tiny_array(arr, bits=None, divs=None, dtype=np.uint8):
         bits = 4
     else:
         bits = int(np.ceil(np.log2(len(divs) + 1)))
+    n = np.power(2, bits) - 1
     b = info.bits
     if np.mod(b, bits):
         msg = "bit size in the output type must be a multiple of the num. bits"
@@ -31,7 +32,6 @@ def tiny_array(arr, bits=None, divs=None, dtype=np.uint8):
         # n is the number of 'levels' that can be represented'
         divs = np.linspace(lower, upper, n).astype(np.float32)
     vals_per_int = b / bits
-    n = np.power(2, bits) - 1
     # for each element of the array, count how many divs are less than the elem
     # this certainly not the fastest implementation but should do.
     # note that a zero now means that the value was less than all div
@@ -94,6 +94,7 @@ def tiny(obj, vars, stream=None):
     encoded_variables = {}
     vars.update(coords)
     for v in vars:
+        print v
         if v not in coords:
             encoded, divs = tiny_array(obj[v].data.flatten())
             encoded = ''.join([chr(x) for x in encoded])

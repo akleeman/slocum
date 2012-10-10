@@ -177,13 +177,37 @@ def handle_optimal(opts, args):
     plotlib.plot_passages(passages)
 
 def handle_email(opts, args):
-
-    obj = poseidon.gefs_subset(opts.start, opts.end)
+    import os
+    import gzip
+    import tempfile
     from wx.lib import tinylib
+    # if the first argument is "email" the arguments will actually be
+    # pulled from an MIMEText email piped through stdin
+    mime_text = opts.input.read()
+    opts.email_body = emaillib.get_body(mime_text)
+    if len(opts.email_body) > 1:
+        raise ValueError("expected a single email body")
 
-    string = tinylib.tiny(obj, ['uwnd', 'vwnd'])
-    new_obj = tinylib.huge(string)
+    tmp = list(griblib.degrib('/home/kleeman/Downloads/GFS20121002025800202.grb'))
     import pdb; pdb.set_trace()
+    query = emaillib.parse_saildocs(opts.email_body[0])
+    obj = poseidon.email_forecast(query, path=opts.grib)
+    # could use other extensions:
+    # .grb, .grib  < 30kBytes
+    # .bz2         < 5kBytes
+    # .fcst        < 30kBytes
+    # .gfcst       < 15kBytes
+    temp_dir = opts.temp_dir if opts.temp_dir else os.path.dirname(__file__)
+    _, fname = tempfile.mkstemp('.fcst', 'gfs_request_', dir=temp_dir)
+    gf = gzip.open(fname, 'wb')
+    string = tinylib.to_beaufort(obj)
+    import pdb; pdb.set_trace()
+    gf.write(string)
+    gf.close()
+
+    sender = emaillib.get_sender(mime_text)
+    email = emaillib.create_email(sender, 'wx@saltbreaker.com', attach=fname)
+    emaillib.send_email(email)
 
 def main(opts=None, args=None):
     p = OptionParser(usage="""%%prog [options]
@@ -203,14 +227,15 @@ def main(opts=None, args=None):
         help="the end location ie.  --end=lat,lon")
     p.add_option("", "--waypoints", default=None, action="store",
         help="lat,lon:lat,lon:lat,lon")
+    p.add_option("", "--input", default=None, action="store")
+    p.add_option("", "--temp-dir", default=None, action="store")
     p.add_option("", "--start-date", default=None, action="store")
-    p.add_option("", "--hist", default=False, action="store_true")
+    p.add_option("", "--email", default=False, action="store_true")
     p.add_option("", "--optimal", default=False, action="store_true")
     p.add_option("", "--optimal-routes", default=False, action="store_true")
     p.add_option("", "--simulate", default=False, action="store_true")
     p.add_option("", "--when", default=False, action="store_true")
     p.add_option("-v", "--verbose", default=False, action="store_true")
-    p.add_option("", "--small", default=False, action="store_true")
     p.add_option("", "--fast", default=False, action="store_true")
     p.add_option("", "--grib", default=None, action="store",
                  help="A grib file containing forecasts")
@@ -226,15 +251,9 @@ def main(opts=None, args=None):
                  help="File to store iterated optimal routes in.")
 
     core.ENSURE_VALID = False
-    # if the first argument is "email" the arguments will actually be
-    # pulled from an MIMEText email piped through stdin
-    if len(sys.argv) > 1 and sys.argv[1] == "email":
-        email_args = emaillib.args_from_email(sys.stdin.read())
-        opts, args = p.parse_args(args=email_args)
-        opts.email = True
-    else:
-        opts, args = p.parse_args()
-        opts.email = False
+    opts, args = p.parse_args()
+
+    opts.input = open(opts.input, 'r') if opts.input else sys.stdin
 
     if opts.verbose:
         logging.basicConfig(level=logging.DEBUG)
@@ -246,6 +265,7 @@ def main(opts=None, args=None):
         start = objects.LatLon(*[float(x) for x in opts.start.split(',')])
         end = objects.LatLon(*[float(x) for x in opts.end.split(',')])
         opts.waypoints = [start, end]
+
     elif opts.waypoints:
         def degreeify(x):
             if '^' in x:
