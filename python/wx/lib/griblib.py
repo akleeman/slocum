@@ -1,7 +1,10 @@
 import os
 import numpy as np
 import coards
-import pygrib
+try:
+    import pygrib
+except:
+    pass
 import itertools
 
 from datetime import datetime, timedelta
