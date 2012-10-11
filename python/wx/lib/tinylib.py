@@ -11,75 +11,67 @@ from wx import poseidon
 from wx.lib import pupynere
 from wx.objects import objects, core
 
+
+def pack_ints(arr, req_bits = None):
+    if np.any(arr < 0):
+        raise ValueError("expected all values of arr to be non negative")
+    # the number of bits required to store the largest number in arr
+    req_bits = req_bits or int(np.ceil(np.log2(np.max(arr) + 1)))
+    if req_bits >= 8:
+        raise ValueError("why not just use uint8 or bigger?")
+    out_bits = 8
+    if np.mod(out_bits, req_bits):
+        print "output: %d    required: %d" % (out_bits, req_bits)
+        raise ValueError("bit size in the output type must be a multiple of the num. bits")
+    vals_per_int = out_bits / req_bits
+    # required is the number of required elements in the array
+    required = np.ceil(float(arr.size) * req_bits / out_bits)
+    output = np.zeros(shape=(required, ), dtype=np.uint8)
+    # iterate over each input element
+    for i, x in enumerate(arr):
+        # determine which index
+        ind = np.floor(i / vals_per_int)
+        if np.mod(i, vals_per_int):
+            output[ind] = output[ind] << req_bits
+        output[ind] += x
+    return output, req_bits, np.mod(arr.size, 2) != 0
+
+def unpack_ints(arr, bits, is_even):
+    info = np.iinfo(arr.dtype)
+    enc_bits = info.bits
+    if np.mod(enc_bits, bits):
+        raise ValueError("the bit encoding doesn't line up")
+    # how many values are in each int?
+    vals_per_int = enc_bits / bits
+    if vals_per_int != 2:
+        raise ValueError("assumed two vals packed in one")
+    def iter_vals():
+        # iterate over the reversed array
+        for i, x in enumerate(arr):
+            one = x >> 4
+            two = x - (one << 4)
+            if not i == (arr.size - 1) or not is_even:
+                yield one
+            yield two
+    return np.array([x for x in iter_vals()])
+
 def tiny_array(arr, bits=None, divs=None, dtype=np.uint8):
-    # this will fail if dtype is not a integer
-    info = np.iinfo(dtype)
-    if bits is None and divs is None:
-        bits = 4
-    else:
-        bits = int(np.ceil(np.log2(len(divs) + 1)))
-    n = np.power(2, bits) - 1
-    b = info.bits
-    if np.mod(b, bits):
-        msg = "bit size in the output type must be a multiple of the num. bits"
-        raise ValueError(msg)
-    if info.kind != 'u':
-        # we need unsigned bits so that 00....00 corresponds to the integer 0
-        raise ValueError("must use unsigned integer types")
     if divs is None:
         lower = np.min(arr)
         upper = np.max(arr)
         # n is the number of 'levels' that can be represented'
         divs = np.linspace(lower, upper, n).astype(np.float32)
-    vals_per_int = b / bits
     # for each element of the array, count how many divs are less than the elem
     # this certainly not the fastest implementation but should do.
     # note that a zero now means that the value was less than all div
-    bins = [bisect(divs, np.ceil(y)) for y in arr]
-    # here we get the binary representations for each of the possible bins
-    bitreps = dict((i, np.unpackbits(np.array(i, dtype=dtype))) for i in xrange(n))
-    # required is the number of required elements in the array
-    required = np.ceil(float(arr.size) * bits / b)
-    output = np.zeros(shape=(required, ), dtype=dtype)
-    # iterate over each input element
-    for i, x in enumerate(bins):
-        # determine which index
-        ind = np.floor(i / vals_per_int)
-        if np.mod(i, vals_per_int):
-            output[ind] = np.left_shift(output[ind], bits)
-        output[ind] = np.bitwise_or(x, output[ind])
-    return output, divs
+    bins = np.maximum(np.minimum(np.array([bisect(divs, y) for y in arr]), 16), 1)
+    output, enc_bits, is_even = pack_ints(bins - 1, bits)
+    recon = unpack_ints(output, enc_bits, is_even) + 1
+    return output, enc_bits, is_even, divs
 
-def expand(arr, divs):
-    bits = np.log2(divs.size + 1)
-    if bits >=8:
-        raise ValueError("with bits > 8 why not just use uint8?")
-    if int(bits) != bits:
-        raise ValueError("bit encoding doesn't appear to be base 2")
-    bits = int(bits)
-    dtype = np.uint8
-    info = np.iinfo(dtype)
-    b = info.bits
-
-    n = 8
-    mask = np.ones((n,), dtype=np.uint8)
-    mask[:(n - bits)] = 0.
-    mask = np.packbits(mask)
-    vals_per_int = b / bits
-
-
-    def itervals():
-        # iterate over the reversed array
-        for x in arr[::-1]:
-            for i in xrange(vals_per_int):
-                y = np.bitwise_and(mask, x)
-                # zeros indicate missing values
-                if y:
-                    yield y
-                x = np.right_shift(x, bits)
-
-    bins = np.array([x for x in itervals()])
-    return divs[bins - 1][::-1]
+def expand_array(arr, bits, is_even, divs):
+    bins = unpack_ints(arr, bits, is_even)
+    return divs[bins]
 
 def tiny(obj, vars, stream=None):
     info = {}
@@ -140,33 +132,51 @@ def to_beaufort(obj):
     vwnd = obj[conv.VWND].data
     if not uwnd.shape == vwnd.shape:
         raise ValueError("expected uwnd and vwnd to have same shape")
+
     wind = [objects.Wind(*x) for x in zip(uwnd.flatten(), vwnd.flatten())]
     speeds = np.array([x.speed for x in wind])
-    beaufort_speed = tiny_array(speeds, divs=_beaufort_scale)[0]
+    encoded_wind, wind_bits, wind_iseven, divs = tiny_array(speeds, bits=4, divs=_beaufort_scale)
 
-    dir_bins = np.arange(-7./8.*np.pi, np.pi, step=np.pi/8.)
+    dir_bins = np.arange(-np.pi, np.pi, step=np.pi/8)
     dirs = np.array([x.dir for x in wind])
-    cardinal_dir =  tiny_array(dirs, divs=dir_bins)[0]
+    encoded_dirs, dir_bits, dir_iseven, divs =  tiny_array(dirs, bits=4, divs=dir_bins)
 
     dims = obj[conv.UWND].dimensions
     coords = set([x for x in dims if x in obj.coordinates])
     encoded_variables = {}
     for v in coords:
         encoded = obj[v].data.tostring()
-        divs = str(obj[v].data.dtype)
-        encoded_variables[v] = (obj[v].shape, encoded, divs,
+        encoded_variables[v] = (obj[v].shape, encoded,
+                                str(obj[v].data.dtype), int(0), int(0),
                                 dict(obj[v].attributes), obj[v].dimensions)
-    encoded_variables[conv.WIND_SPEED] = (uwnd.shape, beaufort_speed.tostring(),
-                                          _beaufort_scale,
+    encoded_variables[conv.WIND_SPEED] = (uwnd.shape, encoded_wind.tostring(),
+                                          wind_bits, int(1 * wind_iseven), _beaufort_scale,
                                           dict(obj[conv.UWND].attributes), dims)
-    encoded_variables[conv.WIND_DIR]= (uwnd.shape, cardinal_dir.tostring(),
-                                       dir_bins,
+    encoded_variables[conv.WIND_DIR]= (uwnd.shape, encoded_dirs.tostring(),
+                                       dir_bits, int(1 * dir_iseven), dir_bins,
                                        dict(obj[conv.UWND].attributes), dims)
     info = {}
     info['dimensions'] = dims
     info['coordinates'] = coords
     info['variables'] = encoded_variables
     return yaml.dump(info)
+
+def from_beaufort(yaml_dump):
+    info = yaml.load(yaml_dump)
+    obj = core.Data()
+    wind_speed = info['variables']['wind_speed']
+    for coord in info['coordinates']:
+        shape, enc, dtype, _, _, attr, _ = info['variables'][coord]
+        data = np.fromstring(enc, dtype=dtype).reshape(shape)
+        obj.create_coordinate(coord, data, attributes=attr)
+    non_coords = [x for x in info['variables'].keys() if not x in info['coordinates']]
+    for var in non_coords:
+        shape, enc, bits, iseven, divs, attr, dims = info['variables'][var]
+        enc = np.fromstring(enc, dtype='uint8')
+        print var
+        data = expand_array(enc, bits, iseven, divs).reshape(shape)
+        obj.create_variable(var, dims, data=data, attributes=attr)
+    return obj
 
 def test():
     core.ENSURE_VALID = False

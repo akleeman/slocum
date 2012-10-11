@@ -197,9 +197,12 @@ def handle_email(opts, args):
     # .fcst        < 30kBytes
     # .gfcst       < 15kBytes
     temp_dir = opts.temp_dir if opts.temp_dir else os.path.dirname(__file__)
-    _, fname = tempfile.mkstemp('.fcst', 'gfs_request_', dir=temp_dir)
+    _, fname = tempfile.mkstemp('.fcst', 'weatherbreaker', dir=temp_dir)
     gf = gzip.open(fname, 'wb')
     string = tinylib.to_beaufort(obj)
+    f = open('/home/kleeman/Desktop/test.yaml', 'w')
+    f.write(string)
+    f.close()
     gf.write(string)
     gf.close()
 
