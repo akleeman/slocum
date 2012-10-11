@@ -181,8 +181,14 @@ def email_forecast(query, path=None):
     lons = np.linspace(ll.lon, ur.lon,
                        num = (ur.lon - ll.lon) / query['grid_delta'] + 1,
                        endpoint=True)
-    obj = obj.take([np.nonzero(obj['lat'].data == x)[0][0] for x in lats], 'lat')
-    obj = obj.take([np.nonzero(obj['lon'].data == x)[0][0] for x in lons], 'lon')
+    lat_inds = np.concatenate([np.nonzero(obj['lat'].data == x)[0] for x in lats])
+    if not lat_inds.size:
+        raise ValueError("forecast lats don't overlap with the requested lats")
+    lon_inds = np.concatenate([np.nonzero(obj['lon'].data == x)[0] for x in lons])
+    if not lon_inds.size:
+        raise ValueError("forecast lons don't overlap with the requested lons")
+    obj = obj.take(lat_inds, 'lat')
+    obj = obj.take(lon_inds, 'lon')
     return obj
 
 def forecast_weather(start_date, ur, ll, recent=False):
