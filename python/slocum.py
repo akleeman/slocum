@@ -200,9 +200,6 @@ def handle_email(opts, args):
     _, fname = tempfile.mkstemp('.fcst', 'weatherbreaker', dir=temp_dir)
     gf = gzip.open(fname, 'wb')
     string = tinylib.to_beaufort(obj)
-    f = open('/home/kleeman/Desktop/test.yaml', 'w')
-    f.write(string)
-    f.close()
     gf.write(string)
     gf.close()
 
