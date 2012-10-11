@@ -190,7 +190,7 @@ def handle_email(opts, args):
 
     query = emaillib.parse_saildocs(opts.email_body[0])
 
-    #obj = poseidon.email_forecast(query, path=opts.grib)
+    obj = poseidon.email_forecast(query, path=opts.grib)
     # could use other extensions:
     # .grb, .grib  < 30kBytes
     # .bz2         < 5kBytes
@@ -199,8 +199,7 @@ def handle_email(opts, args):
     temp_dir = opts.temp_dir if opts.temp_dir else os.path.dirname(__file__)
     _, fname = tempfile.mkstemp('.fcst', 'gfs_request_', dir=temp_dir)
     gf = gzip.open(fname, 'wb')
-    #string = tinylib.to_beaufort(obj)
-    string = "this is a test file"
+    string = tinylib.to_beaufort(obj)
     gf.write(string)
     gf.close()
 
