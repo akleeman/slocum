@@ -1,9 +1,10 @@
+import os
 import re
 import sys
 import numpy as np
 import itertools
 
-from email import Parser, mime
+from email import Parser, mime, encoders
 from email.mime import Multipart
 from optparse import OptionParser
 
@@ -27,11 +28,15 @@ def create_email(to, fr, body, subject=None, attach=None):
     msg['To'] = to
     msg.preamble = body
 
-    part = mime.base.MIMEBase('application', "octet-stream")
-    part.set_payload(open(attach,"rb").read())
-    part.add_header('Content-Disposition', 'attachment; filename="%s"' % attach)
-    msg.attach(part)   # msg is an instance of MIMEMultipart()
+    if attach:
+        part = mime.base.MIMEBase('application', "octet-stream")
+        part.set_payload(open(attach,"rb").read())
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', 'attachment; filename="%s"' % os.path.basename(attach))
+        msg.attach(part)   # msg is an instance of MIMEMultipart()
+
     return msg
+
 
 def send_email(mime_email):
     to = mime_email['To']
