@@ -205,7 +205,7 @@ def handle_email(opts, args):
     gf.close()
 
     sender = emaillib.get_sender(mime_text)
-    email = emaillib.create_email(sender, 'wx@saltbreaker.com', attach=fname)
+    email = emaillib.create_email(sender, 'wx@saltbreaker.com', 'the body', attach=fname)
     emaillib.send_email(email)
 
 def main(opts=None, args=None):
