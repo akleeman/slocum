@@ -4,6 +4,7 @@ import numpy as np
 import itertools
 
 from email import Parser, mime
+from email.mime import Multipart
 from optparse import OptionParser
 
 from wx.objects import objects
@@ -18,7 +19,7 @@ def get_sender(email):
     return 'akleeman@gmail.com'
 
 def create_email(to, fr, body, subject=None, attach=None):
-    msg = mime.multipart.MIMEMultipart()
+    msg = Multipart.MIMEMultipart()
     msg['Subject'] = subject or '(no subject)'
     msg['From'] = fr
     if type(to) == type(list()):
