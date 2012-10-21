@@ -51,12 +51,15 @@ TODO:
 - Download forecasts on the fly using the fast downloading scheme here: http://www.cpc.ncep.noaa.gov/products/wesley/fast_downloading_grib.html
 """
 
+import os
 import sys
+import gzip
 import pytz
 import numpy as np
 import base64
 import logging
 import datetime
+import tempfile
 
 from optparse import OptionParser
 from matplotlib import pyplot as plt
@@ -64,7 +67,7 @@ from matplotlib import pyplot as plt
 import wx.objects.conventions as conv
 
 from wx import poseidon, spray
-from wx.lib import plotlib, emaillib, griblib, datelib
+from wx.lib import plotlib, emaillib, griblib, datelib, tinylib
 from wx.objects import objects, core
 
 logging.basicConfig(level=logging.DEBUG)
@@ -176,36 +179,21 @@ def handle_optimal(opts, args):
     passages = spray.optimal_passage(iterroutes)
     plotlib.plot_passages(passages)
 
+def handle_plot(opts, args):
+    """
+    Unpacks and plots an email issued forecast
+    """
+    gf = gzip.open(opts.grib, 'r')
+    fcst = tinylib.from_beaufort(gf.read())
+    plotlib.plot_wind(fcst)
+
 def handle_email(opts, args):
-    import os
-    import gzip
-    import tempfile
-    from wx.lib import tinylib
-    # if the first argument is "email" the arguments will actually be
-    # pulled from an MIMEText email piped through stdin
-    mime_text = opts.input.read()
-    opts.email_body = emaillib.get_body(mime_text)
-    if len(opts.email_body) > 1:
-        raise ValueError("expected a single email body")
-
-    query = emaillib.parse_saildocs(opts.email_body[0])
-
-    obj = poseidon.email_forecast(query, path=opts.grib)
-    # could use other extensions:
-    # .grb, .grib  < 30kBytes
-    # .bz2         < 5kBytes
-    # .fcst        < 30kBytes
-    # .gfcst       < 15kBytes
-    temp_dir = opts.temp_dir if opts.temp_dir else os.path.dirname(__file__)
-    _, fname = tempfile.mkstemp('.fcst', 'weatherbreaker', dir=temp_dir)
-    gf = gzip.open(fname, 'wb')
-    string = tinylib.to_beaufort(obj)
-    gf.write(string)
-    gf.close()
-
-    sender = emaillib.get_sender(mime_text)
-    email = emaillib.create_email(sender, 'wx@saltbreaker.com', 'the body', attach=fname)
-    emaillib.send_email(email)
+    """
+    Processes a MIME e-mail from --input (or stdin) extracting
+    a saildocs-like request and replying to the sender with
+    an packed ensemble forecast.
+    """
+    emaillib.wind_breaker(opts.input.read(), opts.grib)
 
 def main(opts=None, args=None):
     p = OptionParser(usage="""%%prog [options]
@@ -229,6 +217,7 @@ def main(opts=None, args=None):
     p.add_option("", "--temp-dir", default=None, action="store")
     p.add_option("", "--start-date", default=None, action="store")
     p.add_option("", "--email", default=False, action="store_true")
+    p.add_option("", "--plot", default=False, action="store_true")
     p.add_option("", "--optimal", default=False, action="store_true")
     p.add_option("", "--optimal-routes", default=False, action="store_true")
     p.add_option("", "--simulate", default=False, action="store_true")
@@ -304,6 +293,8 @@ def main(opts=None, args=None):
         handle_when(opts, args)
     elif opts.email:
         handle_email(opts, args)
+    elif opts.plot:
+        handle_plot(opts, args)
     else:
         p.error("slocum completed exactly what you told it to do ... nothing.")
 

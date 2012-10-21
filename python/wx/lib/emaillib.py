@@ -1,15 +1,24 @@
 import os
 import re
 import sys
+import zlib
+import yaml
 import numpy as np
+import logging
 import itertools
 
 from email import Parser, mime, encoders
 from email.mime import Multipart
 from optparse import OptionParser
+from cStringIO import StringIO
 
+from wx import poseidon
+from wx.lib import tinylib
 from wx.objects import objects
 import smtplib
+
+logger = logging.getLogger(os.path.basename(__file__))
+logger.setLevel(logging.DEBUG)
 
 def args_from_email(email):
     body = get_body(email)
@@ -19,7 +28,8 @@ def args_from_email(email):
 def get_sender(email):
     return 'akleeman@gmail.com'
 
-def create_email(to, fr, body, subject=None, attach=None):
+def create_email(to, fr, body, subject=None, attachments=None):
+
     msg = Multipart.MIMEMultipart()
     msg['Subject'] = subject or '(no subject)'
     msg['From'] = fr
@@ -28,15 +38,16 @@ def create_email(to, fr, body, subject=None, attach=None):
     msg['To'] = to
     msg.preamble = body
 
-    if attach:
-        part = mime.base.MIMEBase('application', "octet-stream")
-        part.set_payload(open(attach,"rb").read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', 'attachment; filename="%s"' % os.path.basename(attach))
-        msg.attach(part)   # msg is an instance of MIMEMultipart()
+    if attachments:
+        for attach_name, attach in attachments.iteritems():
+            part = mime.base.MIMEBase('application', "octet-stream")
+            part.set_payload(attach.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', 'attachment; filename="%s"'
+                            % attach_name)
+            msg.attach(part)
 
     return msg
-
 
 def send_email(mime_email):
     to = mime_email['To']
@@ -65,14 +76,67 @@ def get_body(email):
 
     return filter(len, get_body(msg))
 
-def parse_saildocs(query_body):
+def wind_breaker(mime_text, ncdf_weather=None):
+    """
+    Takes a mime_text email that contains one or several saildoc-like
+    requests and replies to the sender with emails containing the
+    desired forecasts.
+    """
+    logger.debug('Wind Breaker')
+    email_body = get_body(mime_text)
+    logger.debug('Extracted email body')
+    if len(email_body) > 1:
+        raise ValueError("expected a single email body")
+    sender = get_sender(mime_text)
+    # Turns a query string into a dict of params
+    queries = list(parse_saildocs(email_body[0]))
+    if len(queries) == 0:
+        logger.debug('Email did not contain any queries')
+        # if there are no queries let the sender know
+        send_email(create_email(sender, 'wx@saltbreaker.com',
+                                'We were unable to find any forecast requests in your recent email.'))
+    # fore each query we send a seperate email
+    for query in queries:
+        try:
+            logger.debug('Processing query')
+            # Aquires a forecast corresponding to a query
+            obj = poseidon.email_forecast(query, path=ncdf_weather)
+            # could use other extensions:
+            # .grb, .grib  < 30kBytes
+            # .bz2         < 5kBytes
+            # .fcst        < 30kBytes
+            # .gfcst       < 15kBytes
+            logger.debug('Obtained the required forecast')
+            forecast_attachment = StringIO(zlib.compress(tinylib.to_beaufort(obj), 9))
+            logger.debug('Tinified the forecast')
+            # creates the new mime email
+            weather_email = create_email(sender, 'wx@saltbreaker.com',
+                                          'This forecast has been brought to you by your friends on Saltbreaker.',
+                                          attachments={'weather_breaker.fcst': forecast_attachment})
+            logger.debug('Email sent to %s' % sender)
+            send_email(weather_email)
+        except:
+            send_email(create_email(sender, 'wx@saltbreaker.com',
+                                    'Failure processing your query\n\n%s' % yaml.dump(query)))
+
+def parse_saildocs(email_body):
+    """
+    Searches through an email body and yields individual saildocs queries
+    """
+    lines = email_body.lower().split('\n')
+    matches = filter(lambda x : x,
+                     [re.match('\s*(send\s.+)\s*', x) for x in lines])
+    queries = [x.groups()[0] for x in matches]
+    return (parse_saildocs_query(x) for x in queries)
+
+def parse_saildocs_query(query):
     """
     Parses a saildocs string retrieving the forecast query params
     """
-    query_body = query_body.strip()
-    if not len(query_body.split(' ', 2)) == 2:
+    query = query.strip()
+    if not len(query.split(' ', 2)) == 2:
         raise ValueError("expected a single space")
-    command, options = query_body.split(' ', 1)
+    command, options = query.split(' ', 1)
     # subscribe and spot doesn't currently work
     if not command.lower() == 'send':
         raise ValueError("currently only supports the 'send' command")
@@ -84,11 +148,11 @@ def parse_saildocs(query_body):
     # parse the corners of the forecast grid
     def floatify(latlon):
         """ Turns a latlon string into a float """
-        sign = -2. * (latlon[-1] in ['S', 'W']) + 1
+        sign = -2. * (latlon[-1].lower() in ['s', 'w']) + 1
         return float(latlon[:-1]) * sign
     upper, lower, left, right = map(floatify, corners.split(','))
     # determine the grid size
-    grid_delta = set(map(float, grid.split(',')))
+    grid_delta = set([np.abs(float(x)) for x in grid.split(',')])
     if len(grid_delta) > 1:
         raise ValueError("grid delta must be the same for lat/lon")
     grid_delta = grid_delta.pop()
@@ -117,8 +181,8 @@ def parse_saildocs(query_body):
 
 def test_parse_saildocs():
 
-    print parse_saildocs('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|PRMSL,WIND,RAIN')
-    print parse_saildocs('send GFS:10S,42S,162E,144W|13,13|0,6,12,24..60,66..90,102,120|PRMSL,WIND,WAVES,RAIN')
+    print parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|PRMSL,WIND,RAIN')
+    print parse_saildocs_query('send GFS:10S,42S,162E,144W|13,13|0,6,12,24..60,66..90,102,120|PRMSL,WIND,WAVES,RAIN')
 
 if __name__ == "__main__":
     test_parse_saildocs()

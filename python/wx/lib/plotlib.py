@@ -10,18 +10,233 @@ try:
 except:
     logging.debug("not loading basemap")
 
-from matplotlib.pylab import meshgrid
+from bisect import bisect
+from matplotlib import pylab, cm
 
 import wx.objects.conventions as conv
 
 from wx.lib import datelib
 from wx.objects import objects
 
+def plot_wind(fcst, **kwdargs):
+    hist_fig = plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(16, 10))
+    map_axis= fig.add_subplot(1,1,1)
+    hist_axis = fig.add_subplot(1,1,1)
+    lons = fcst['lon'].data
+    lats = fcst['lat'].data
+    ll = objects.LatLon(min(lats), min(lons))
+    ur = objects.LatLon(max(lats), max(lons))
 
-def make_pretty(m):
+    h = hist_axis.hist(fcst['wind_speed'].data.flatten())
+
+    for i, (_, fc) in enumerate(fcst.iterator(conv.TIME)):
+        m = plot_map(ll, ur)
+        m.fillcontinents(color='green',lake_color='white')
+        m.drawparallels(lats, zorder=5)
+        m.drawmeridians(lons, zorder=5)
+        x, y = m(*pylab.meshgrid(lons,lats))
+        fc_time = datelib.from_udvar(fc[conv.TIME])[0]
+        fc.squeeze(conv.TIME)
+        ens_axis = fc['wind_dir'].dimensions.index(conv.ENSEMBLE)
+        ax = wind(x, y, fc['wind_dir'].data, fc['wind_speed'].data)
+        ax.set_title(fc_time.strftime('%A %B %d at %H:%M GMT'))
+        ax.set_xticks(x[-1, :])
+        ax.set_xticklabels(['%.0fE' % z for z in lons])
+        ax.set_yticks(y[:, 0])
+        ax.set_yticklabels(['%.0fN' % z for z in lats])
+
+        def onpress(event):
+            lon, lat = m(event.xdata, event.ydata, inverse=True)
+            print lat, lon
+            lat_ind = np.argmin(np.abs(fc['lat'].data - lat))
+            grid = fc.take([lat_ind], 'lat')
+            grid.squeeze('lat')
+            lon_ind = np.argmin(np.abs(fc['lon'].data - lon))
+            grid = grid.take([lon_ind], 'lon')
+            grid.squeeze('lon')
+            (grid['wind_speed'].data.flatten())
+
+
+        fig.canvas.mpl_connect('button_press_event', onpress)
+        plt.show()
+        import pdb; pdb.set_trace()
+#        plt.pause(2)
+#        plt.clf()
+    return ax
+
+def wind(x, y, wind_dir, wind_speed, ax=None, scale=1.):
+    if not (wind_dir.shape == wind_speed.shape):
+        raise ValueError("expected all arrays to be the same size")
+
+    radius = scale * 0.45 * np.min(np.diff(x))
+    x = x.flatten()
+    y = y.flatten()
+
+    if not ax:
+        ax = plt.subplot(1,1,1)
+    n = 5.
+    for i in range(1):
+        circles = [plt.Circle((ix, iy), radius=radius * np.power((n - i) / n, 0.8),
+                              edgecolor='k', facecolor='w', zorder=10, alpha=0.6) for ix, iy in zip(x, y)]
+        [ax.add_patch(c) for c in circles]
+    ax.set_xlim(min(x), max(x))
+    ax.set_ylim(min(y), max(y))
+    max_wind = np.max(wind_speed)
+    for (wd, ws) in zip(wind_dir, wind_speed):
+        wd = wd.flatten()
+        ws = ws.flatten()
+        ws_scale = radius # * np.sqrt(ws / max_wind)
+        min_x = x + ws_scale * np.sin(wd - np.pi/16.)
+        min_y = y + ws_scale * np.cos(wd - np.pi/16.)
+        max_x = x + ws_scale * np.sin(wd + np.pi/16.)
+        max_y = y + ws_scale * np.cos(wd + np.pi/16.)
+        xn = x.shape[0]
+        xs = np.concatenate([x, min_x, max_x])
+        ys = np.concatenate([y, min_y, max_y])
+        triangles = [(i, i + xn, i + 2*xn) for i in range(xn)]
+        ws = ws.repeat(3).reshape(xn, 3).T.flatten()
+        ax.tripcolor(xs, ys, triangles, ws, shading='flat',
+                     edgecolors='none', facecolors='r', alpha=0.7, zorder=100)
+    return ax
+
+def tmp_wind(x, y, min_dir, max_dir, wind_speed, scale=1.):
+    if not (x.shape == max_dir.shape and
+            y.shape == max_dir.shape and
+            min_dir.shape == max_dir.shape):
+        raise ValueError("expected all arrays to be the same size")
+
+    import pdb; pdb.set_trace()
+    min_dir = min_dir.flatten()
+    max_dir = max_dir.flatten()
+    mid_dir = 0.5 * (min_dir + max_dir)
+    min_x = x + radius * np.sin(min_dir - np.pi/32.)
+    min_y = y + radius * np.cos(min_dir - np.pi/32.)
+    mid_x = x + radius * np.sin(mid_dir - np.pi/32.)
+    mid_y = y + radius * np.sin(mid_dir - np.pi/32.)
+    max_x = x + radius * np.sin(max_dir + np.pi/32.)
+    max_y = y + radius * np.cos(max_dir + np.pi/32.)
+
+    n = x.shape[0]
+    xs = np.concatenate([x, min_x, max_x])
+    ys = np.concatenate([y, min_y, max_y])
+    triangles = [(i, i + n, i + 2*n) for i in range(n)]
+    wind_speed = wind_speed.repeat(3).reshape(n, 3).T.flatten()
+    plt.tripcolor(xs, ys, triangles, wind_speed, shading='faceted')
+    plt.plot(x, y, 'k.')
+    plt.show()
+#x = xy[:,0]*180/3.14159
+#y = xy[:,1]*180/3.14159
+#x0 = -5
+#y0 = 52
+#z = np.exp(-0.01*( (x-x0)*(x-x0) + (y-y0)*(y-y0) ))
+#
+#triangles = np.asarray([
+#    [67,66, 1],[65, 2,66],[ 1,66, 2],[64, 2,65],[63, 3,64],[60,59,57],
+#    [ 2,64, 3],[ 3,63, 4],[ 0,67, 1],[62, 4,63],[57,59,56],[59,58,56],
+#    [61,60,69],[57,69,60],[ 4,62,68],[ 6, 5, 9],[61,68,62],[69,68,61],
+#    [ 9, 5,70],[ 6, 8, 7],[ 4,70, 5],[ 8, 6, 9],[56,69,57],[69,56,52],
+#    [70,10, 9],[54,53,55],[56,55,53],[68,70, 4],[52,56,53],[11,10,12],
+#    [69,71,68],[68,13,70],[10,70,13],[51,50,52],[13,68,71],[52,71,69],
+#    [12,10,13],[71,52,50],[71,14,13],[50,49,71],[49,48,71],[14,16,15],
+#    [14,71,48],[17,19,18],[17,20,19],[48,16,14],[48,47,16],[47,46,16],
+#    [16,46,45],[23,22,24],[21,24,22],[17,16,45],[20,17,45],[21,25,24],
+#    [27,26,28],[20,72,21],[25,21,72],[45,72,20],[25,28,26],[44,73,45],
+#    [72,45,73],[28,25,29],[29,25,31],[43,73,44],[73,43,40],[72,73,39],
+#    [72,31,25],[42,40,43],[31,30,29],[39,73,40],[42,41,40],[72,33,31],
+#    [32,31,33],[39,38,72],[33,72,38],[33,38,34],[37,35,38],[34,38,35],
+#    [35,37,36] ])
+#
+## Rather than create a Triangulation object, can simply pass x, y and triangles
+## arrays to tripcolor directly.  It would be better to use a Triangulation object
+## if the same triangulation was to be used more than once to save duplicated
+## calculations.
+#plt.figure()
+#plt.gca().set_aspect('equal')
+#plt.tripcolor(x, y, triangles, z, shading='faceted')
+#plt.colorbar()
+#plt.title('tripcolor of user-specified triangulation')
+#plt.xlabel('Longitude (degrees)')
+#plt.ylabel('Latitude (degrees)')
+
+def plot_variance(fcst):
+    plt.figure(figsize=(16, 10))
+    lons = fcst['lon'].data
+    lats = fcst['lat'].data
+    ll = objects.LatLon(min(lats), min(lons))
+    ur = objects.LatLon(max(lats), max(lons))
+    m = plot_map(ll, ur)
+    m.fillcontinents(color='green',lake_color='white')
+
+    for i, (_, fc) in enumerate(fcst.iterator(conv.TIME)):
+        var = fc.take([0], conv.ENSEMBLE)
+        var['wind_speed'].data[:] = np.var(fc['wind_speed'].data, axis=0)
+        var = var.squeeze(conv.TIME)
+        var = var.squeeze(conv.ENSEMBLE)
+
+        mean = fc.take([0], conv.ENSEMBLE)
+        mean['wind_speed'].data[:] = np.mean(fc['wind_speed'].data, axis=0)
+        mean = mean.squeeze(conv.TIME)
+        mean = mean.squeeze(conv.ENSEMBLE)
+        if i == 0:
+            field = plot_field(m, var, 'wind_speed', cmap=cm.Blues, alpha=0.8)
+            plt.clim()
+            barbs = plot_barbs(m, mean, 'uwnd', 'vwnd', cmap=cm.hot_r)
+        else:
+            field.set_data(var['wind_speed'].data)
+            U = mean['uwnd'].data
+            V = mean['vwnd'].data
+            barbs[1].set_UVC(U, V, np.sqrt(U*U + V*V))
+        plt.pause(0.5)
+
+def plot_forecast(fcst):
+
+    iter_var = conv.ENSEMBLE
+    slice_var = conv.TIME
+    fcst = fcst.take([0], slice_var)
+    fcst = fcst.squeeze(slice_var)
+    plt.figure(figsize=(16, 10))
+    for i, (_, fc) in enumerate(fcst.iterator(iter_var)):
+        fc = fc.squeeze(iter_var)
+        if i == 0:
+            lons = fcst['lon'].data
+            lats = fcst['lat'].data
+            ll = objects.LatLon(min(lats), min(lons))
+            ur = objects.LatLon(max(lats), max(lons))
+            m = plot_map(ll, ur)
+            #m.drawparallels(lats)
+            #m.drawmeridians(lons)
+            p = plot_quiver(m, fc, 'uwnd', 'vwnd')[1]
+            #p = plot_field(m, fc, 'wind_speed')
+            #plt.clim()
+        else:
+            #p.set_data(fc['wind_speed'].data)
+            U = fc['uwnd'].data
+            V = fc['vwnd'].data
+            p.set_UVC(U, V, np.sqrt(U*U + V*V))
+        plt.pause(0.5)
+    #plot_barbs(m, fcst, 'uwnd', 'vwnd')
+    #plt.imshow(speed,
+    #           extent = (min(lons), max(lons), min(lats), max(lats)))
+#    bins = np.array([1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., np.inf])
+#    colors = ['#a1eeff', # light blue
+#              '#42b1e5', # darker blue
+#              '#60fd4b', # green
+#              '#1cea00', # yellow-green
+#              '#fbef36', # yellow
+#              '#fbc136', # orange
+#              '#ff4f02', # red
+#              '#ff0e02', # darker-red
+#              '#ff00c0', # red-purple
+#              '#d925ac', # purple
+#              '#b30d8a', # dark purple
+#              '#000000', # black
+#              ]
+
+def make_pretty(m, ocean_color='#dcdcdc'):
     # map with continents drawn and filled.
     m.drawcoastlines()
-    m.fillcontinents(color='green',lake_color='aqua')
+    m.drawlsmask(land_color='green',ocean_color=ocean_color,lakes=True)
     m.drawcountries()
     # draw parallels and meridians.
     m.drawparallels(np.arange(-90.,120.,30.))
@@ -156,7 +371,7 @@ def plot_summaries(passages):
     fig.suptitle(earliest.strftime('starting x hours after %Y-%m-%d %H:%M'))
     plt.show()
 
-def plot_map(passage, proj='lcc', pad=0.25):
+def plot_passage_map(passage, proj='lcc', pad=0.25):
     start_lat = np.mean(passage[conv.LAT].data[0])
     start_lon = np.mean(passage[conv.LON].data[0])
     if conv.STEP in passage.dimensions:
@@ -167,15 +382,17 @@ def plot_map(passage, proj='lcc', pad=0.25):
     else:
         end_lat = np.mean(passage[conv.LAT].data[-1])
         end_lon = np.mean(passage[conv.LON].data[-1])
-    mid = objects.LatLon(0.5*(start_lat + end_lat), 0.5*(start_lon + end_lon))
 
-    lat_deg = max(np.abs(start_lat - end_lat), 2)
-    lon_deg = max(np.abs(start_lon - end_lon), 2)
+def plot_map(ll, ur, proj='lcc', pad=0.25):
+    mid = objects.LatLon(0.5*(ll.lat + ur.lat), 0.5*(ll.lon + ur.lon))
 
-    llcrnrlon=min(start_lon, end_lon)-pad*lon_deg
-    llcrnrlat=min(start_lat, end_lat)-pad*lat_deg
-    urcrnrlon=max(start_lon, end_lon)+pad*lon_deg
-    urcrnrlat=max(start_lat, end_lat)+pad*lat_deg
+    lat_deg = max(np.abs(ll.lat - ur.lat), 2)
+    lon_deg = max(np.abs(ll.lon - ur.lon), 2)
+
+    llcrnrlon=min(ll.lon, ur.lon) - pad * lon_deg
+    llcrnrlat=min(ll.lat, ur.lat) - pad * lat_deg
+    urcrnrlon=max(ll.lon, ur.lon) + pad * lon_deg
+    urcrnrlat=max(ll.lat, ur.lat) + pad * lat_deg
 
     m = Basemap(projection=proj,
                 lon_0=mid.lon,
@@ -186,10 +403,9 @@ def plot_map(passage, proj='lcc', pad=0.25):
                 urcrnrlat=urcrnrlat,
                 rsphere=(6378137.00,6356752.3142),
                 area_thresh=1000.,
-                width=np.abs(start_lon - end_lon),
-                height=np.abs(start_lat - end_lat),
+                width=np.abs(ll.lon - ur.lon),
+                height=np.abs(ll.lat - ur.lat),
                 resolution='l')
-
     make_pretty(m)
     return m
 
@@ -235,38 +451,48 @@ def plot_routes(routes, colors = None, proj = 'lcc'):
         m.plot(xvals, yvals, color=color, linewidth=3)
     plt.show()
 
-def plot_field(field, proj='lcc'):
+def plot_field(m, obj, var, **kwdargs):
+    if not ('lat', 'lon') == obj[var].dimensions:
+        raise ValueError("expected var to have only lat and lon as dims")
+    lats = obj['lat'].data
+    lons = obj['lon'].data
 
-    field = field['uwnd']
-    lats, lons = field.dims
+    x, y = m(*pylab.meshgrid(lons,lats))
+    p = m.imshow(obj[var].data,
+                 interpolation = 'gaussian',
+                 extent = (np.min(x), np.max(x), np.min(y), np.max(y)),
+                 **kwdargs)
+    return p
 
-    start = objects.LatLon(min(lats), min(lons))
-    end = objects.LatLon(max(lats), max(lons))
-    mid = objects.LatLon(0.5*(start.lat + end.lat), 0.5*(start.lon + end.lon))
+def plot_barbs(m, obj, uvar, vvar, cmap=None):
+    if not ('lat', 'lon') == obj[uvar].dimensions:
+        raise ValueError("expected var to have only lat and lon as dims")
+    if not obj[uvar].dimensions == obj[vvar].dimensions:
+        raise ValueError("expected both uvar and vvar to be of same dim")
+    lats = obj['lat'].data
+    lons = obj['lon'].data
 
-    llcrnrlon=min(start.lon, end.lon)-5
-    llcrnrlat=min(start.lat, end.lat)-5
-    urcrnrlon=max(start.lon, end.lon)+5
-    urcrnrlat=max(start.lat, end.lat)+5
+    x, y = m(*pylab.meshgrid(lons,lats))
+    U = obj[uvar].data
+    V = obj[vvar].data
+    return m.barbs(x, y, U, V, flip_barb=False, length=7, cmap=cmap, pivot='middle')
 
-    m = Basemap(projection=proj,
-                lon_0=mid.lon,
-                lat_0=mid.lat,
-                llcrnrlon=llcrnrlon,
-                llcrnrlat=llcrnrlat,
-                urcrnrlon=urcrnrlon,
-                urcrnrlat=urcrnrlat,
-                rsphere=(6378137.00, 6356752.3142),
-                area_thresh=1000.,
-                width=np.abs(start.lon - end.lon),
-                height=np.abs(start.lat - end.lat),
-                resolution='l')
+def plot_quiver(m, obj, uvar, vvar, **kwdargs):
+    if not ('lat', 'lon') == obj[uvar].dimensions:
+        raise ValueError("expected var to have only lat and lon as dims")
+    if not obj[uvar].dimensions == obj[vvar].dimensions:
+        raise ValueError("expected both uvar and vvar to be of same dim")
+    lats = obj['lat'].data
+    lons = obj['lon'].data
 
-    x, y = m(*meshgrid(lons,lats))
-    m.contour(x, y, field.data)
-    # map with continents drawn and filled.
-    make_pretty(m)
-    plt.show()
+    x, y = m(*pylab.meshgrid(lons,lats))
+    U = obj[uvar].data
+    V = obj[vvar].data
+    Q = m.quiver(x, y, U, V,
+                pivot='mid', color='r', units='dots' )
+    #qk = quiverkey(Q, 0.5, 0.03, 1, r'$1 \frac{m}{s}$', fontproperties={'weight': 'bold'})
+    m.plot(x, y, 'k.')
+    return Q
 
 def plot_circle(opts, args):
     """

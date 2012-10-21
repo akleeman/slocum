@@ -166,7 +166,6 @@ def ensure_corners(ur, ll, expand=True):
     return ur, ll
 
 def email_forecast(query, path=None):
-
     ll = objects.LatLon(query['lower'], query['left'])
     ur = objects.LatLon(query['upper'], query['right'])
     ur, ll = ensure_corners(ur, ll, expand=False)

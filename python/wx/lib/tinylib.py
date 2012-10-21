@@ -164,7 +164,6 @@ def to_beaufort(obj):
 def from_beaufort(yaml_dump):
     info = yaml.load(yaml_dump)
     obj = core.Data()
-    wind_speed = info['variables']['wind_speed']
     for coord in info['coordinates']:
         shape, enc, dtype, _, _, attr, _ = info['variables'][coord]
         data = np.fromstring(enc, dtype=dtype).reshape(shape)
@@ -173,9 +172,16 @@ def from_beaufort(yaml_dump):
     for var in non_coords:
         shape, enc, bits, iseven, divs, attr, dims = info['variables'][var]
         enc = np.fromstring(enc, dtype='uint8')
-        print var
         data = expand_array(enc, bits, iseven, divs).reshape(shape)
         obj.create_variable(var, dims, data=data, attributes=attr)
+
+    tan = np.tan(obj['wind_dir'])
+    denom = np.sqrt(1. + np.power(tan, 2.))
+    dims = obj['wind_speed'].dimensions
+    vwnd = -obj['wind_speed'].data / denom
+    obj.create_variable('vwnd', dim = dims, data = vwnd, attributes={'units':'knots'})
+    uwnd = tan * vwnd
+    obj.create_variable('uwnd', dim = dims, data = uwnd, attributes={'units':'knots'})
     return obj
 
 def test():
