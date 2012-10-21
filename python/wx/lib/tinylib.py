@@ -11,8 +11,14 @@ from wx import poseidon
 from wx.lib import pupynere
 from wx.objects import objects, core
 
-
 def pack_ints(arr, req_bits = None):
+    """
+    Takes an arry of integers
+    """
+    try:
+        np.iinfo(arr.dtype)
+    except:
+        raise ValueError("pack_ints requires an integer array as input")
     if np.any(arr < 0):
         raise ValueError("expected all values of arr to be non negative")
     # the number of bits required to store the largest number in arr
@@ -28,50 +34,100 @@ def pack_ints(arr, req_bits = None):
     required = np.ceil(float(arr.size) * req_bits / out_bits)
     output = np.zeros(shape=(required, ), dtype=np.uint8)
     # iterate over each input element
-    for i, x in enumerate(arr):
+    for i, x in enumerate(arr.flatten()):
         # determine which index
         ind = np.floor(i / vals_per_int)
         if np.mod(i, vals_per_int):
             output[ind] = output[ind] << req_bits
         output[ind] += x
-    return output, req_bits, np.mod(arr.size, 2) != 0
+    packed_array = {'packed_array':output,
+                    'bits':req_bits,
+                    'shape':arr.shape,
+                    'dtype':str(arr.dtype)}
+    return packed_array
 
-def unpack_ints(arr, bits, is_even):
-    info = np.iinfo(arr.dtype)
+def unpack_ints(packed_array, bits, shape, dtype=None):
+    """
+    Takes an packed array and unpacks it to the original
+    array.
+
+    This should be true:
+
+    np.all(original_array == unpack_ints(**pack_ints(original_array)))
+    """
+    info = np.iinfo(packed_array.dtype)
     enc_bits = info.bits
     if np.mod(enc_bits, bits):
         raise ValueError("the bit encoding doesn't line up")
     # how many values are in each int?
     vals_per_int = enc_bits / bits
-    if vals_per_int != 2:
-        raise ValueError("assumed two vals packed in one")
+    size = reduce(lambda x, y : x*y, shape)
+    # the masks are used for logical AND comparisons to retrieve the values
+    masks = [(2 ** bits - 1) << i * bits for i in range(vals_per_int)]
+    # iterate over array values until we've generated enough values to
+    # fill the original array
     def iter_vals():
-        # iterate over the reversed array
-        for i, x in enumerate(arr):
-            one = x >> 4
-            two = x - (one << 4)
-            if not i == (arr.size - 1) or not is_even:
-                yield one
-            yield two
-    return np.array([x for x in iter_vals()])
+        cnt = 0
+        for x in packed_array:
+            # nvals is the number of values contained in the next packed int
+            nvals = min(size - cnt, 4)
+            # by comparing the int x to each of the masks and shifting we
+            # recover the packed values.  Note that this will always generate
+            # 'vals_per_int' values but sometimes we only need a few which is
+            # why we select out the first nvals
+            reversed_vals = [(x & y) >> j*bits for j, y in enumerate(masks)][:nvals]
+            for v in reversed(reversed_vals):
+                yield v
+            cnt += len(reversed_vals)
+    # recreate the original array
+    return np.array([x for x in iter_vals()], dtype=dtype).reshape(shape)
 
-def tiny_array(arr, bits=None, divs=None, dtype=np.uint8):
+def tiny_array(arr, bits=None, divs=None):
+    """
+    Bins the values in arr by using uniformly spaced divisions, 'divs', unless
+    the divs have been provided.  Then rather than storing each value of arr
+    only the bin is stored.  If the number of divs is small the resulting
+    array is compressed even further by packing several sets of 'bins' into
+    a single uint8 using pack_its.
+
+    Returns a dictionary holding all the required arguments for expand_array
+    """
     if divs is None:
+        bits = bits or 4 # it doesn't make sense to store anything larger than this
+        n = np.power(2., bits)
         lower = np.min(arr)
         upper = np.max(arr)
         # n is the number of 'levels' that can be represented'
-        divs = np.linspace(lower, upper, n).astype(np.float32)
+        divs = np.linspace(lower, upper, n).astype(np.float)
+    else:
+        bits = bits or np.ceil(np.log2(divs.size))
+    if int(np.log2(bits)) != np.log2(bits):
+        raise ValueError("bits must be a power of two")
+    n = np.power(2., bits)
     # for each element of the array, count how many divs are less than the elem
     # this certainly not the fastest implementation but should do.
     # note that a zero now means that the value was less than all div
-    bins = np.maximum(np.minimum(np.array([bisect(divs, y) for y in arr]), 16), 1)
-    output, enc_bits, is_even = pack_ints(bins - 1, bits)
-    recon = unpack_ints(output, enc_bits, is_even) + 1
-    return output, enc_bits, is_even, divs
+    bins = np.maximum(np.minimum(np.array([bisect(divs, y) for y in arr.flatten()]), n), 1)
+    bins = bins.astype(np.uint8)
+    tiny = pack_ints(bins - 1, bits)
+    tiny['divs'] = divs
+    tiny['shape'] = arr.shape
+    return tiny
 
-def expand_array(arr, bits, is_even, divs):
-    bins = unpack_ints(arr, bits, is_even)
-    return divs[bins]
+def expand_array(packed_array, bits, shape, divs, dtype=None, **kwdargs):
+    """
+    Expands a tiny array to its 'original' ... but remember
+    theres been a loss of information so it won't quite be
+    the same
+
+    Typical usage:
+    original_array = np.random.normal(size=(30, 3))
+    tiny = tiny_array(original_array)
+    recovered = expand_array(**tiny)
+    """
+    dtype = dtype or divs.dtype
+    bins = unpack_ints(packed_array, bits, shape)
+    return divs[bins].astype(dtype).reshape(shape)
 
 def tiny(obj, vars, stream=None):
     info = {}
@@ -126,35 +182,42 @@ def huge(tiny_string):
                             attributes=attributes)
     return obj
 
-_beaufort_scale = np.array([1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., np.inf])
+_beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., np.inf])
 def to_beaufort(obj):
     uwnd = obj[conv.UWND].data
     vwnd = obj[conv.VWND].data
     if not uwnd.shape == vwnd.shape:
         raise ValueError("expected uwnd and vwnd to have same shape")
-
-    wind = [objects.Wind(*x) for x in zip(uwnd.flatten(), vwnd.flatten())]
-    speeds = np.array([x.speed for x in wind])
-    encoded_wind, wind_bits, wind_iseven, divs = tiny_array(speeds, bits=4, divs=_beaufort_scale)
-
-    dir_bins = np.arange(-np.pi, np.pi, step=np.pi/8)
-    dirs = np.array([x.dir for x in wind])
-    encoded_dirs, dir_bits, dir_iseven, divs =  tiny_array(dirs, bits=4, divs=dir_bins)
-
+    # first we store all the required coordinates
     dims = obj[conv.UWND].dimensions
     coords = set([x for x in dims if x in obj.coordinates])
     encoded_variables = {}
     for v in coords:
-        encoded = obj[v].data.tostring()
-        encoded_variables[v] = (obj[v].shape, encoded,
-                                str(obj[v].data.dtype), int(0), int(0),
-                                dict(obj[v].attributes), obj[v].dimensions)
-    encoded_variables[conv.WIND_SPEED] = (uwnd.shape, encoded_wind.tostring(),
-                                          wind_bits, int(1 * wind_iseven), _beaufort_scale,
-                                          dict(obj[conv.UWND].attributes), dims)
-    encoded_variables[conv.WIND_DIR]= (uwnd.shape, encoded_dirs.tostring(),
-                                       dir_bits, int(1 * dir_iseven), dir_bins,
-                                       dict(obj[conv.UWND].attributes), dims)
+        encoded_variables[v] = {'encoded_array':obj[v].data.tostring(),
+                                'bits' : int(0), # bits
+                                'shape' : obj[v].shape,
+                                'divs' : int(0), # divs
+                                'dtype' : str(obj[v].data.dtype),
+                                'attributes' : dict(obj[v].attributes),
+                                'dims' : obj[v].dimensions}
+    # convert the wind speeds to a beaufort scale and store them
+    wind = [objects.Wind(*x) for x in zip(uwnd.flatten(), vwnd.flatten())]
+    speeds = np.array([x.speed for x in wind]).reshape(uwnd.shape)
+    tiny_wind = tiny_array(speeds, bits=4, divs=_beaufort_scale)
+    tiny_wind['encoded_array'] = tiny_wind.pop('packed_array').tostring()
+    tiny_wind['attributes'] = dict(obj[conv.UWND].attributes)
+    tiny_wind['dims'] = dims
+    encoded_variables[conv.WIND_SPEED] = tiny_wind
+
+    # convert the direction to cardinal directions and store them
+    direction_bins = np.arange(-np.pi, np.pi, step=np.pi/8)
+    directions = np.array([x.dir for x in wind]).reshape(uwnd.shape)
+    tiny_direction =  tiny_array(directions, bits=4, divs=direction_bins)
+    tiny_direction['encoded_array'] = tiny_direction.pop('packed_array').tostring()
+    tiny_direction['attributes'] = dict(obj[conv.UWND].attributes)
+    tiny_direction['dims'] = dims
+    encoded_variables[conv.WIND_DIR] = tiny_direction
+
     info = {}
     info['dimensions'] = dims
     info['coordinates'] = coords
@@ -164,16 +227,22 @@ def to_beaufort(obj):
 def from_beaufort(yaml_dump):
     info = yaml.load(yaml_dump)
     obj = core.Data()
+    # first create the coordinates
     for coord in info['coordinates']:
-        shape, enc, dtype, _, _, attr, _ = info['variables'][coord]
-        data = np.fromstring(enc, dtype=dtype).reshape(shape)
-        obj.create_coordinate(coord, data, attributes=attr)
+        v = info['variables'][coord]
+        data = np.fromstring(v['encoded_array'],
+                             dtype=v['dtype']).reshape(v['shape'])
+        obj.create_coordinate(coord, data, attributes=v['attributes'])
+    # next create any non coordinates, these are all assumed to be tiny arrays
     non_coords = [x for x in info['variables'].keys() if not x in info['coordinates']]
     for var in non_coords:
-        shape, enc, bits, iseven, divs, attr, dims = info['variables'][var]
-        enc = np.fromstring(enc, dtype='uint8')
-        data = expand_array(enc, bits, iseven, divs).reshape(shape)
-        obj.create_variable(var, dims, data=data, attributes=attr)
+        v = info['variables'][var]
+        v['packed_array'] = np.fromstring(v.pop('encoded_array'), dtype='uint8')
+        data = expand_array(**v)
+        try:
+            obj.create_variable(var, v['dims'], data=data, attributes=v['attributes'])
+        except:
+            import pdb; pdb.set_trace()
 
     tan = np.tan(obj['wind_dir'])
     denom = np.sqrt(1. + np.power(tan, 2.))
@@ -195,14 +264,14 @@ def test():
     f = open('/home/kleeman/Desktop/beaufort.yaml', 'w')
     f.write(ret)
     f.close()
-    import pdb; pdb.set_trace()
+
+    f = open('/home/kleeman/Desktop/beaufort.yaml', 'r')
+    reconstructed = from_beaufort(f.read())
 
     np.random.seed(1982)
     tmp = np.random.normal(size=(101,))
     ret, divs = tiny_array(tmp.copy())
     recon = expand(ret, divs)
-
-    import pdb; pdb.set_trace()
 
 if __name__ == "__main__":
     import sys
