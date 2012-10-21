@@ -55,7 +55,10 @@ import os
 import sys
 import gzip
 import pytz
-import numpy as np
+try:
+    import numpy as np
+except:
+    raise ValueError("login: %s \t\t uid: %s \t\t gid:%s" % (os.getlogin(), str(os.getudi()), str(os.getgid())))
 import base64
 import logging
 import datetime
