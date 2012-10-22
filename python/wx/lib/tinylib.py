@@ -112,6 +112,7 @@ def tiny_array(arr, bits=None, divs=None):
     tiny = pack_ints(bins - 1, bits)
     tiny['divs'] = divs
     tiny['shape'] = arr.shape
+    tiny['dtype'] = str(arr.dtype)
     return tiny
 
 def expand_array(packed_array, bits, shape, divs, dtype=None, **kwdargs):

@@ -26,10 +26,14 @@ def args_from_email(email):
     return body[0].rstrip().split(' ')
 
 def get_sender(email):
-    return 'akleeman@gmail.com'
+    parse = Parser.Parser()
+    msg = parse.parsestr(email)
+    if msg['Reply-To']:
+        return msg['Reply-To']
+    elif msg['From']:
+        return msg['From']
 
 def create_email(to, fr, body, subject=None, attachments=None):
-
     msg = Multipart.MIMEMultipart()
     msg['Subject'] = subject or '(no subject)'
     msg['From'] = fr
@@ -97,27 +101,26 @@ def wind_breaker(mime_text, ncdf_weather=None):
                                 'We were unable to find any forecast requests in your recent email.'))
     # fore each query we send a seperate email
     for query in queries:
-        try:
-            logger.debug('Processing query')
-            # Aquires a forecast corresponding to a query
-            obj = poseidon.email_forecast(query, path=ncdf_weather)
-            # could use other extensions:
-            # .grb, .grib  < 30kBytes
-            # .bz2         < 5kBytes
-            # .fcst        < 30kBytes
-            # .gfcst       < 15kBytes
-            logger.debug('Obtained the required forecast')
-            forecast_attachment = StringIO(zlib.compress(tinylib.to_beaufort(obj), 9))
-            logger.debug('Tinified the forecast')
-            # creates the new mime email
-            weather_email = create_email(sender, 'wx@saltbreaker.com',
-                                          'This forecast has been brought to you by your friends on Saltbreaker.',
-                                          attachments={'windbreaker.fcst': forecast_attachment})
-            send_email(weather_email)
-            logger.debug('Email sent to %s' % sender)
-        except:
-            send_email(create_email(sender, 'wx@saltbreaker.com',
-                                    'Failure processing your query\n\n%s' % yaml.dump(query)))
+        logger.debug('Processing query')
+        # Aquires a forecast corresponding to a query
+        obj = poseidon.email_forecast(query, path=ncdf_weather)
+        # could use other extensions:
+        # .grb, .grib  < 30kBytes
+        # .bz2         < 5kBytes
+        # .fcst        < 30kBytes
+        # .gfcst       < 15kBytes
+        logger.debug('Obtained the required forecast')
+        forecast_attachment = StringIO(zlib.compress(tinylib.to_beaufort(obj), 9))
+        logger.debug('Tinified the forecast')
+        # creates the new mime email
+        weather_email = create_email(sender, 'wx@saltbreaker.com',
+                                      'This forecast has been brought to you by your friends on Saltbreaker.',
+                                      attachments={'windbreaker.fcst': forecast_attachment})
+        send_email(weather_email)
+        logger.debug('Email sent to %s' % sender)
+#        except:
+#            send_email(create_email(sender, 'wx@saltbreaker.com',
+#                                    'Failure processing your query\n\n%s' % yaml.dump(query)))
 
 def parse_saildocs(email_body):
     """
@@ -177,7 +180,7 @@ def parse_saildocs_query(query):
             'left': left,
             'right': right,
             'grid_delta': grid_delta,
-            'hours': list(hours_gen(hours_str)),}
+            'hours': hours_str,}
 
 def test_parse_saildocs():
 

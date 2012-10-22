@@ -18,17 +18,39 @@ import wx.objects.conventions as conv
 from wx.lib import datelib
 from wx.objects import objects
 
+wind_bins = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55.])
+def wind_hist(arr, ax=None):
+
+    colors = ['#a1eeff', # light blue
+              '#42b1e5', # darker blue
+              '#60fd4b', # green
+              '#1cea00', # yellow-green
+              '#fbef36', # yellow
+              '#fbc136', # orange
+              '#ff4f02', # red
+              '#ff0e02', # darker-red
+              '#ff00c0', # red-purple
+              '#d925ac', # purple
+              '#b30d8a', # dark purple
+              #'#000000', # black
+              ]
+    hist_ret = ax.hist(arr, bins=wind_bins, normed=True)
+    patches = hist_ret[2]
+    [x.set_facecolor(color) for x, color in zip(patches, colors)]
+    return hist_ret
+
+def update_wind_hist(hist_ret, arr):
+    _, bins, patches = hist_ret
+    heights, _ = np.histogram(arr, bins, normed=True)
+    [x.set_height(h) for x, h in zip(patches, heights)]
+
 def plot_wind(fcst, **kwdargs):
-    hist_fig = plt.figure(figsize=(8, 8))
     fig = plt.figure(figsize=(16, 10))
     map_axis= fig.add_subplot(1,1,1)
-    hist_axis = fig.add_subplot(1,1,1)
     lons = fcst['lon'].data
     lats = fcst['lat'].data
     ll = objects.LatLon(min(lats), min(lons))
     ur = objects.LatLon(max(lats), max(lons))
-
-    h = hist_axis.hist(fcst['wind_speed'].data.flatten())
 
     for i, (_, fc) in enumerate(fcst.iterator(conv.TIME)):
         m = plot_map(ll, ur)
@@ -46,6 +68,9 @@ def plot_wind(fcst, **kwdargs):
         ax.set_yticks(y[:, 0])
         ax.set_yticklabels(['%.0fN' % z for z in lats])
 
+        hist_fig = plt.figure()
+        hist_axis = hist_fig.add_subplot(1, 1, 1)
+
         def onpress(event):
             lon, lat = m(event.xdata, event.ydata, inverse=True)
             print lat, lon
@@ -55,14 +80,13 @@ def plot_wind(fcst, **kwdargs):
             lon_ind = np.argmin(np.abs(fc['lon'].data - lon))
             grid = grid.take([lon_ind], 'lon')
             grid.squeeze('lon')
-            (grid['wind_speed'].data.flatten())
-
+            h = wind_hist(grid['wind_speed'].data.flatten(), ax=hist_axis)
+            hist_fig.show()
 
         fig.canvas.mpl_connect('button_press_event', onpress)
-        plt.show()
+        fig.show()
+        hist_fig.show()
         import pdb; pdb.set_trace()
-#        plt.pause(2)
-#        plt.clf()
     return ax
 
 def wind(x, y, wind_dir, wind_speed, ax=None, scale=1.):

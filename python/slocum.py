@@ -53,12 +53,9 @@ TODO:
 
 import os
 import sys
-import gzip
 import pytz
-try:
-    import numpy as np
-except:
-    raise ValueError("login: %s \t\t uid: %s \t\t gid:%s" % (os.getlogin(), str(os.getuid()), str(os.getgid())))
+import zlib
+import numpy as np
 import base64
 import logging
 import datetime
@@ -74,6 +71,7 @@ from wx.lib import plotlib, emaillib, griblib, datelib, tinylib
 from wx.objects import objects, core
 
 logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(os.path.basename(__file__))
 
 def weather(opts, args):
     if opts.grib:
@@ -186,8 +184,8 @@ def handle_plot(opts, args):
     """
     Unpacks and plots an email issued forecast
     """
-    gf = gzip.open(opts.grib, 'r')
-    fcst = tinylib.from_beaufort(gf.read())
+    f = open(opts.grib, 'r')
+    fcst = tinylib.from_beaufort(zlib.decompress(f.read()))
     plotlib.plot_wind(fcst)
 
 def handle_email(opts, args):
@@ -197,6 +195,33 @@ def handle_email(opts, args):
     an packed ensemble forecast.
     """
     emaillib.wind_breaker(opts.input.read(), opts.grib)
+
+def handle_email_queue(opts, args):
+    """
+    Processes all MIME e-mails that have been queued up
+    and which are expected to reside in --queue-directory
+    """
+    if not opts.queue_directory:
+        raise ValueError("expected --queue_directory")
+    if not os.path.isdir(opts.queue_directory):
+        raise ValueError("%s is not a directory" % opts.queue_directory)
+    processed_dir = os.path.join(opts.queue_directory, 'processed')
+    if not os.path.exists(processed_dir):
+        os.mkdir(processed_dir)
+    failed_dir = os.path.join(opts.queue_directory, 'failed')
+    if not os.path.exists(failed_dir):
+        os.mkdir(failed_dir)
+    emails = [f for f in os.listdir(opts.queue_directory) if f.endswith('.mime')]
+    logger.debug("processing %d emails from %s" % (len(emails), opts.queue_directory))
+    for fn in emails:
+        full_path = os.path.join(opts.queue_directory, fn)
+        logger.debug("processing %s" % full_path)
+        f = open(full_path, 'r')
+        emaillib.wind_breaker(f.read(), opts.grib)
+        f.close()
+        os.rename(full_path, os.path.join(processed_dir, fn))
+
+    logger.debug("queue processing complete.")
 
 def main(opts=None, args=None):
     p = OptionParser(usage="""%%prog [options]
@@ -217,9 +242,10 @@ def main(opts=None, args=None):
     p.add_option("", "--waypoints", default=None, action="store",
         help="lat,lon:lat,lon:lat,lon")
     p.add_option("", "--input", default=None, action="store")
-    p.add_option("", "--temp-dir", default=None, action="store")
+    p.add_option("", "--queue-directory", default=None, action="store")
     p.add_option("", "--start-date", default=None, action="store")
     p.add_option("", "--email", default=False, action="store_true")
+    p.add_option("", "--email-queue", default=False, action="store_true")
     p.add_option("", "--plot", default=False, action="store_true")
     p.add_option("", "--optimal", default=False, action="store_true")
     p.add_option("", "--optimal-routes", default=False, action="store_true")
@@ -296,6 +322,8 @@ def main(opts=None, args=None):
         handle_when(opts, args)
     elif opts.email:
         handle_email(opts, args)
+    elif opts.email_queue:
+        handle_email_queue(opts, args)
     elif opts.plot:
         handle_plot(opts, args)
     else:

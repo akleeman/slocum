@@ -103,7 +103,7 @@ def gefs_subset(ll, ur, url=None, path=None):
     """
 
     vars = {'U-component_of_wind_height_above_ground':conv.UWND,
-            'V-component_of_wind_height_above_ground':conv.VWND}
+            'V-component_of_wind_height_above_ground':conv.VWND,}
 
     if not url and not path:
         url = latest_gefs()
@@ -171,8 +171,22 @@ def email_forecast(query, path=None):
     ur, ll = ensure_corners(ur, ll, expand=False)
     obj = gefs_subset(ll, ur, path=path)
 
-    inds = [np.nonzero(obj['time'].data == x)[0][0] for x in query['hours']]
-    obj = obj.take(inds, 'time')
+    # the hours query is a bit complex since it
+    # involves interpreting the '..' as slices
+    all_inds = np.arange(obj.dimensions['time'])
+    def time_ind_generator(hours_str):
+        """Parses a saildocs string of desired hours"""
+        for hr in hours_str.split(','):
+            if '..' in hr:
+                low, high = map(float, hr.split('..'))
+                low_ind = np.nonzero(obj['time'].data == low)[0][0]
+                high_ind = np.nonzero(obj['time'].data == high)[0][0]
+                for x in all_inds[low_ind:(high_ind + 1)]:
+                    yield x
+            else:
+                yield np.nonzero(obj['time'].data == float(hr))[0][0]
+    time_inds = list(time_ind_generator(query['hours']))
+    obj = obj.take(time_inds, 'time')
 
     lats = np.linspace(ll.lat, ur.lat,
                        num = (ur.lat - ll.lat) / query['grid_delta'] + 1,
