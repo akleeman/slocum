@@ -116,8 +116,9 @@ def wind_breaker(mime_text, ncdf_weather=None):
         weather_email = create_email(sender, 'wx@saltbreaker.com',
                                       'This forecast has been brought to you by your friends on Saltbreaker.',
                                       attachments={'windbreaker.fcst': forecast_attachment})
+        logger.debug('Sending email to %s' % sender)
         send_email(weather_email)
-        logger.debug('Email sent to %s' % sender)
+        logger.debug('Email sent.')
 #        except:
 #            send_email(create_email(sender, 'wx@saltbreaker.com',
 #                                    'Failure processing your query\n\n%s' % yaml.dump(query)))
