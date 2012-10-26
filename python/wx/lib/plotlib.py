@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import coards
 import logging
@@ -11,82 +12,236 @@ except:
     logging.debug("not loading basemap")
 
 from bisect import bisect
-from matplotlib import pylab, cm
+from matplotlib import pylab, cm, colors, colorbar, patches, cbook
+from matplotlib.widgets import Button, RectangleSelector
 
 import wx.objects.conventions as conv
 
 from wx.lib import datelib
 from wx.objects import objects
+from wx import poseidon
 
-wind_bins = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55.])
+beaufort_colors = ['#a1eeff', # light blue
+          '#42b1e5', # darker blue
+          '#60fd4b', # green
+          '#1cea00', # yellow-green
+          '#fbef36', # yellow
+          '#fbc136', # orange
+          '#ff4f02', # red
+          '#ff0e02', # darker-red
+          '#ff00c0', # red-purple
+          '#d925ac', # purple
+          '#b30d8a', # dark purple
+          #'#000000', # black
+          ]
+
+beaufort_cm = colors.ListedColormap(beaufort_colors, 'beaufort_map')
+beaufort_cm.set_over('0.25')
+beaufort_cm.set_under('0.75')
+
+beaufort_bins = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55.])
+beaufort_norm = colors.BoundaryNorm(beaufort_bins, beaufort_cm.N)
+
 def wind_hist(arr, ax=None):
-
-    colors = ['#a1eeff', # light blue
-              '#42b1e5', # darker blue
-              '#60fd4b', # green
-              '#1cea00', # yellow-green
-              '#fbef36', # yellow
-              '#fbc136', # orange
-              '#ff4f02', # red
-              '#ff0e02', # darker-red
-              '#ff00c0', # red-purple
-              '#d925ac', # purple
-              '#b30d8a', # dark purple
-              #'#000000', # black
-              ]
-    hist_ret = ax.hist(arr, bins=wind_bins, normed=True)
-    patches = hist_ret[2]
-    [x.set_facecolor(color) for x, color in zip(patches, colors)]
+    vals, bins = np.histogram(arr, bins=beaufort_bins, normed=True)
+    hist_ret = ax.fill_between(beaufort_bins[1:], vals, color='r')
     return hist_ret
 
-def update_wind_hist(hist_ret, arr):
-    _, bins, patches = hist_ret
-    heights, _ = np.histogram(arr, bins, normed=True)
-    [x.set_height(h) for x, h in zip(patches, heights)]
+def axis_figure(axis=None, figure=None):
+        if not axis and not figure:
+            fig = plt.gcf()
+            axis = plt.gca()
+        if not figure and axis:
+            fig = axis.figure
+        if not axis and figure:
+            axis = fig.gca()
+        return axis, figure
+
+class ButtonIndex(object):
+    """
+    A class which keeps track of the current index
+    and when clicked increments the index and calls
+    drawfunc with the current ind.
+    """
+    def __init__(self, n, drawfunc):
+        self.ind = 0
+        self.n = n
+        self.drawfunc = drawfunc
+
+    def draw(self):
+        i = self.ind % self.n
+        self.drawfunc(i)
+
+    def next(self, event):
+        self.ind += 1
+        self.draw()
+
+    def prev(self, event):
+        self.ind -= 1
+        self.draw()
+
+def frame_off(axis):
+    axis.set_frame_on(False)
+    axis.set_xticks([])
+    axis.set_yticks([])
 
 def plot_wind(fcst, **kwdargs):
-    fig = plt.figure(figsize=(16, 10))
-    map_axis= fig.add_subplot(1,1,1)
-    lons = fcst['lon'].data
-    lats = fcst['lat'].data
-    ll = objects.LatLon(min(lats), min(lons))
-    ur = objects.LatLon(max(lats), max(lons))
+    fig = plt.figure(figsize=(16, 8))
+    # the area in which the map is ploted
+    map_axis = fig.add_axes([0.25, 0.05, 0.7, 0.9])
+    wind_axis = fig.add_axes([0.25, 0.05, 0.7, 0.9], zorder=1000)
+    invisible = colors.colorConverter.to_rgba(colors.cnames['red'],
+                                              alpha = 0)
+    wind_axis.set_axis_bgcolor(invisible)
+    # the histogram axes
+    info_axis = fig.add_axes([0.03, 0.15, 0.18, 0.2])
+    direc_axis = fig.add_axes([0.03, 0.45, 0.18, 0.2])
+    speed_axis = fig.add_axes([0.03, 0.75, 0.18, 0.2])
+    # the color bar
+    cb_axis = fig.add_axes([0.97, 0.05, 0.01, 0.9])
+    # the previous button
+    prev_ax = fig.add_axes([0.08, 0.05, 0.03, 0.04])
+    # the next button
+    next_ax = fig.add_axes([0.13, 0.05, 0.03, 0.04])
 
-    for i, (_, fc) in enumerate(fcst.iterator(conv.TIME)):
-        m = plot_map(ll, ur)
-        m.fillcontinents(color='green',lake_color='white')
-        m.drawparallels(lats, zorder=5)
-        m.drawmeridians(lons, zorder=5)
-        x, y = m(*pylab.meshgrid(lons,lats))
-        fc_time = datelib.from_udvar(fc[conv.TIME])[0]
-        fc.squeeze(conv.TIME)
-        ens_axis = fc['wind_dir'].dimensions.index(conv.ENSEMBLE)
-        ax = wind(x, y, fc['wind_dir'].data, fc['wind_speed'].data)
-        ax.set_title(fc_time.strftime('%A %B %d at %H:%M GMT'))
-        ax.set_xticks(x[-1, :])
-        ax.set_xticklabels(['%.0fE' % z for z in lons])
-        ax.set_yticks(y[:, 0])
-        ax.set_yticklabels(['%.0fN' % z for z in lats])
+    info_axis.set_axis_bgcolor(fig.get_facecolor())
+    frame_off(info_axis)
+    # fill in the colorbar
+    cb = colorbar.ColorbarBase(cb_axis, cmap=beaufort_cm,
+                               norm=beaufort_norm,
+                               ticks=beaufort_bins,
+                               boundaries=beaufort_bins)
 
-        hist_fig = plt.figure()
-        hist_axis = hist_fig.add_subplot(1, 1, 1)
+    original_forecast = copy.deepcopy(fcst)
 
-        def onpress(event):
+    def draw_map(f, map_axis):
+        lons = f['lon'].data
+        lats = f['lat'].data
+        ll = objects.LatLon(min(lats), min(lons))
+        ur = objects.LatLon(max(lats), max(lons))
+        map = plot_map(ll, ur, ax=map_axis)
+        x, y = map(*pylab.meshgrid(lons,lats))
+        map_axis.set_xticks(x[-1, :])
+        map_axis.set_xticklabels(['%.0fE' % z for z in lons])
+        map_axis.set_yticks(y[:, 0])
+        map_axis.set_yticklabels(['%.0fN' % z for z in lats])
+        return map
+    m = draw_map(fcst, map_axis)
+
+    def single_slice(fcst, index, dim):
+        fc = fcst.take([index], dim)
+        fc.squeeze(dim)
+        return fc
+
+    def iter_wind(f, map):
+        for _, f in fcst.iterator(conv.TIME):
+            # This checks to make sure the time dim is length one
+            f.squeeze(conv.TIME)
+            map_axis = map.ax
+            lons = f['lon'].data
+            lats = f['lat'].data
+            x, y = map(*pylab.meshgrid(lons,lats))
+            forecast_time = datelib.from_udvar(f[conv.TIME])[0]
+            ens_axis = f['wind_dir'].dimensions.index(conv.ENSEMBLE)
+            f['wind_speed'].data[:, :, 0, 0] = 25
+            triangles = wind(x, y, f['wind_dir'].data, f['wind_speed'].data, ax=map_axis)
+            yield triangles
+
+    wind_plots = list(iter_wind(fcst, m))
+
+    def draw_forecast(f, map, wind_axis):
+        # This checks to make sure the time dim is length one
+        f.squeeze(conv.TIME)
+        lons = f['lon'].data
+        lats = f['lat'].data
+        x, y = map(*pylab.meshgrid(lons,lats))
+        forecast_time = datelib.from_udvar(f[conv.TIME])[0]
+        ens_axis = f['wind_dir'].dimensions.index(conv.ENSEMBLE)
+        f['wind_speed'].data[:, :, 0, 0] = 25
+
+        wind_axis.cla()
+        wind(x, y, f['wind_dir'].data, f['wind_speed'].data, ax=wind_axis)
+#        wind_axis.update_from(map_axis)
+#        wind_axis.set_axis_bgcolor(invisible)
+#        frame_off(wind_axis)
+        wind_axis.set_title(forecast_time.strftime('%A %B %d at %H:%M GMT'))
+        plt.draw()
+
+    def draw_single_time(fcst, index):
+        for i, ens_triangles in enumerate(wind_plots):
+            [tri.set_visible(index == i) for tri in ens_triangles]
+
+    callback = ButtonIndex(fcst.dimensions[conv.TIME], lambda x : draw_single_time(fcst, x))
+    bnext = Button(next_ax, '>')
+    bnext.on_clicked(callback.next)
+    bprev = Button(prev_ax, '<')
+    bprev.on_clicked(callback.prev)
+
+    draw_single_time(fcst, 0)
+
+    wind_hist(fcst['wind_speed'].data.flatten(), speed_axis)
+    speed_axis.set_title("Wind distribution")
+    def show_hist(event):
+        if event.inaxes:
+            speed_axis.cla()
             lon, lat = m(event.xdata, event.ydata, inverse=True)
-            print lat, lon
-            lat_ind = np.argmin(np.abs(fc['lat'].data - lat))
-            grid = fc.take([lat_ind], 'lat')
+            fcst_lats = np.mod(fcst['lat'].data + 90, 180) - 90
+            lat_ind = np.argmin(np.abs(fcst_lats - np.mod(lat + 90, 180) - 90))
+            grid = fcst.take([lat_ind], 'lat')
             grid.squeeze('lat')
-            lon_ind = np.argmin(np.abs(fc['lon'].data - lon))
+            fcst_lons = np.mod(fcst['lon'].data, 360)
+            lon_ind = np.argmin(np.abs(fcst_lons - np.mod(lon, 360)))
             grid = grid.take([lon_ind], 'lon')
             grid.squeeze('lon')
-            h = wind_hist(grid['wind_speed'].data.flatten(), ax=hist_axis)
-            hist_fig.show()
+            wind_hist(grid['wind_speed'].data.flatten(), speed_axis)
+            speed_axis.set_title('Wind distribution at %d, %d' %
+                                (grid['lat'].data[0], grid['lon'].data[0]))
+            speed_axis.set_ylim([0, speed_axis.get_ylim()[1]])
+            speed_axis.set_yticks([])
+            plt.draw()
+    plt.connect('button_press_event', show_hist)
 
-        fig.canvas.mpl_connect('button_press_event', onpress)
-        fig.show()
-        hist_fig.show()
-        import pdb; pdb.set_trace()
+    def line_select_callback(eclick, erelease):
+        'eclick and erelease are the press and release events'
+        x1, y1 = m(eclick.xdata, eclick.ydata, inverse=True)
+        x2, y2 = m(erelease.xdata, erelease.ydata, inverse=True)
+        xmin = min(x1, x2)
+        xmax = max(x1, x2)
+        ymin = min(y1, y2)
+        ymax = max(y1, y2)
+        ll = objects.LatLon(ymin, xmin)
+        ur = objects.LatLon(ymax, xmax)
+        ur, ll = poseidon.ensure_corners(ll, ur)
+        lon_inds = np.arange(bisect(fcst[conv.LON], ll.lon - 1.),
+                             bisect(fcst[conv.LON], ur.lon + 1.))
+        lat_inds = np.arange(bisect(fcst[conv.LAT], ll.lat - 1.),
+                             bisect(fcst[conv.LAT], ur.lat + 1.))
+        fc = fcst.take(lon_inds, conv.LON)
+        fc = fc.take(lat_inds, conv.LAT)
+        map_axis.cla()
+        plot_map(ll, ur, ax=map_axis)
+        draw_single_time(fc, callback.ind)
+        plt.draw()
+
+    def toggle_selector(event):
+        if event.key in ['Q', 'q'] and toggle_selector.RS.active:
+            toggle_selector.RS.set_active(False)
+        if event.key in ['A', 'a'] and not toggle_selector.RS.active:
+            toggle_selector.RS.set_active(True)
+
+    toggle_selector.RS = RectangleSelector(map_axis, line_select_callback,
+                                           drawtype='box', useblit=True,
+                                           button=[1,3], # don't use middle button
+                                           minspanx=5, minspany=5,
+                                           spancoords='data')
+
+#    plt.connect('key_press_event', toggle_selector)
+    plt.show()
+
+
+    #fig.canvas.mpl_connect('button_press_event', onpress)
+    #fig.show()
+    #hist_fig.show()
     return ax
 
 def wind(x, y, wind_dir, wind_speed, ax=None, scale=1.):
@@ -104,25 +259,28 @@ def wind(x, y, wind_dir, wind_speed, ax=None, scale=1.):
         circles = [plt.Circle((ix, iy), radius=radius * np.power((n - i) / n, 0.8),
                               edgecolor='k', facecolor='w', zorder=10, alpha=0.6) for ix, iy in zip(x, y)]
         [ax.add_patch(c) for c in circles]
-    ax.set_xlim(min(x), max(x))
-    ax.set_ylim(min(y), max(y))
+    ax.set_xlim(min(x) - radius, max(x) + radius)
+    ax.set_ylim(min(y) - radius, max(y) + radius)
     max_wind = np.max(wind_speed)
-    for (wd, ws) in zip(wind_dir, wind_speed):
-        wd = wd.flatten()
-        ws = ws.flatten()
-        ws_scale = radius # * np.sqrt(ws / max_wind)
-        min_x = x + ws_scale * np.sin(wd - np.pi/16.)
-        min_y = y + ws_scale * np.cos(wd - np.pi/16.)
-        max_x = x + ws_scale * np.sin(wd + np.pi/16.)
-        max_y = y + ws_scale * np.cos(wd + np.pi/16.)
-        xn = x.shape[0]
-        xs = np.concatenate([x, min_x, max_x])
-        ys = np.concatenate([y, min_y, max_y])
-        triangles = [(i, i + xn, i + 2*xn) for i in range(xn)]
-        ws = ws.repeat(3).reshape(xn, 3).T.flatten()
-        ax.tripcolor(xs, ys, triangles, ws, shading='flat',
-                     edgecolors='none', facecolors='r', alpha=0.7, zorder=100)
-    return ax
+    # iterates over grid points, plotting all ensemble members
+    def iter_triangles():
+        for (wd, ws) in zip(wind_dir, wind_speed):
+            wd = wd.flatten()
+            ws = ws.flatten()
+            ws_scale = radius # * np.sqrt(ws / max_wind)
+            min_x = x + ws_scale * np.sin(wd - np.pi/16.)
+            min_y = y + ws_scale * np.cos(wd - np.pi/16.)
+            max_x = x + ws_scale * np.sin(wd + np.pi/16.)
+            max_y = y + ws_scale * np.cos(wd + np.pi/16.)
+            xn = x.shape[0]
+            xs = np.concatenate([x, min_x, max_x])
+            ys = np.concatenate([y, min_y, max_y])
+            triangles = [(i, i + xn, i + 2*xn) for i in range(xn)]
+            ws = ws.repeat(3).reshape(xn, 3).T.flatten()
+            tri = ax.tripcolor(xs, ys, triangles, ws, shading='flat', cmap=beaufort_cm,
+                               norm=beaufort_norm, edgecolors='none', alpha=0.7, zorder=100)
+            yield tri
+    return list(iter_triangles())
 
 def tmp_wind(x, y, min_dir, max_dir, wind_speed, scale=1.):
     if not (x.shape == max_dir.shape and
@@ -407,7 +565,7 @@ def plot_passage_map(passage, proj='lcc', pad=0.25):
         end_lat = np.mean(passage[conv.LAT].data[-1])
         end_lon = np.mean(passage[conv.LON].data[-1])
 
-def plot_map(ll, ur, proj='lcc', pad=0.25):
+def plot_map(ll, ur, proj='lcc', pad=0.25, ax=None):
     mid = objects.LatLon(0.5*(ll.lat + ur.lat), 0.5*(ll.lon + ur.lon))
 
     lat_deg = max(np.abs(ll.lat - ur.lat), 2)
@@ -429,7 +587,8 @@ def plot_map(ll, ur, proj='lcc', pad=0.25):
                 area_thresh=1000.,
                 width=np.abs(ll.lon - ur.lon),
                 height=np.abs(ll.lat - ur.lat),
-                resolution='l')
+                resolution='l',
+                ax=ax)
     make_pretty(m)
     return m
 

@@ -330,7 +330,7 @@ def main(opts=None, args=None):
         p.error("slocum completed exactly what you told it to do ... nothing.")
 
 if __name__ == "__main__":
-    #import cProfile
-    #cProfile.runctx('main()', globals(), locals(),
-    #                filename='/u/slocum/profile.prof')
-    sys.exit(main())
+    import cProfile
+    cProfile.runctx('main()', globals(), locals(),
+                    filename=os.path.join(os.path.dirname(__file__), 'profile.prof'))
+    #sys.exit(main())
