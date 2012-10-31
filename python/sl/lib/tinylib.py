@@ -74,7 +74,7 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
         cnt = 0
         for x in packed_array:
             # nvals is the number of values contained in the next packed int
-            nvals = min(size - cnt, 4)
+            nvals = min(size - cnt, vals_per_int)
             # by comparing the int x to each of the masks and shifting we
             # recover the packed values.  Note that this will always generate
             # 'vals_per_int' values but sometimes we only need a few which is
@@ -86,7 +86,13 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
     # recreate the original array
     return np.array([x for x in iter_vals()], dtype=dtype).reshape(shape)
 
-def tiny_array(arr, bits=None, divs=None):
+def tiny_array(arr, bits=None, divs=None, mask=None):
+    if mask is None:
+        return tiny_unmasked(arr, bits, divs)
+    else:
+        return tiny_masked(arr, mask, bits, divs)
+
+def tiny_unmasked(arr, bits=None, divs=None):
     """
     Bins the values in arr by using uniformly spaced divisions, 'divs', unless
     the divs have been provided.  Then rather than storing each value of arr
@@ -119,7 +125,26 @@ def tiny_array(arr, bits=None, divs=None):
     tiny['dtype'] = str(arr.dtype)
     return tiny
 
-def expand_array(packed_array, bits, shape, divs, dtype=None, **kwdargs):
+def tiny_bool(arr, mask=None):
+    if not arr.dtype == 'bool':
+        raise ValueError("expected a boolean valued array")
+    return tiny_array(arr, bits=1, divs=np.array([0., 1.e-6, np.inf]), mask=mask)
+
+def expand_bool(packed_array, bits, shape, divs, dtype=None, masked=False, mask=None, **kwdargs):
+    if masked:
+        return expand_masked(mask, packed_array, bits = 1, shape=shape,
+                            divs=np.array([False, True]), dtype=np.bool)
+    else:
+        return expand_array(packed_array, bits = 1, shape=shape,
+                            divs=np.array([False, True]), dtype=np.bool)
+
+def expand_array(packed_array, bits, shape, divs, dtype=None, masked=False, mask=None, **kwdargs):
+    if masked:
+        return expand_masked(mask, packed_array, bits, shape, divs, dtype)
+    else:
+        return expand_unmasked(packed_array, bits, shape, divs, dtype)
+
+def expand_unmasked(packed_array, bits, shape, divs, dtype=None, **kwdargs):
     """
     Expands a tiny array to its 'original' ... but remember
     theres been a loss of information so it won't quite be
@@ -134,7 +159,7 @@ def expand_array(packed_array, bits, shape, divs, dtype=None, **kwdargs):
     bins = unpack_ints(packed_array, bits, shape)
     return divs[bins].astype(dtype).reshape(shape)
 
-def masked_tiny(arr, mask, bits=None, divs=None):
+def tiny_masked(arr, mask=None, bits=None, divs=None):
     if mask is None:
         return tiny_array(arr, bits, divs)
     masked = arr[mask].flatten()
@@ -176,7 +201,8 @@ def rhumbline_slice(start, end, lats, lons, max_dist=180):
     mask = np.array(list(iter_distances())).reshape(grid_lon.shape)
     return mask
 
-
+_cloud_scale = np.array([0., np.inf])
+_precip_scale = np.array([0., 1e-2, 0.25, np.inf])
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., np.inf])
 def to_beaufort(obj, start=None, end=None):
     if (start is None and end) or (start and end is None):
@@ -212,7 +238,7 @@ def to_beaufort(obj, start=None, end=None):
     # convert the wind speeds to a beaufort scale and store them
     wind = [objects.Wind(*x) for x in zip(uwnd.flatten(), vwnd.flatten())]
     speeds = np.array([x.speed for x in wind]).reshape(uwnd.shape)
-    tiny_wind = masked_tiny(speeds, bits=4, divs=_beaufort_scale, mask=mask)
+    tiny_wind = tiny_array(speeds, bits=4, divs=_beaufort_scale, mask=mask)
     tiny_wind['encoded_array'] = tiny_wind.pop('packed_array').tostring()
     tiny_wind['attributes'] = dict(obj[conv.UWND].attributes)
     tiny_wind['dims'] = dims
@@ -221,11 +247,25 @@ def to_beaufort(obj, start=None, end=None):
     # convert the direction to cardinal directions and store them
     direction_bins = np.arange(-np.pi, np.pi, step=np.pi/8)
     directions = np.array([x.dir for x in wind]).reshape(uwnd.shape)
-    tiny_direction =  masked_tiny(directions, bits=4, divs=direction_bins, mask=mask)
+    tiny_direction =  tiny_array(directions, bits=4, divs=direction_bins, mask=mask)
     tiny_direction['encoded_array'] = tiny_direction.pop('packed_array').tostring()
     tiny_direction['attributes'] = dict(obj[conv.UWND].attributes)
     tiny_direction['dims'] = dims
     encoded_variables[conv.WIND_DIR] = tiny_direction
+
+    if conv.PRECIP in obj.variables:
+        tiny_precip = tiny_array(obj[conv.PRECIP], bits=2, divs=_precip_scale, mask=mask)
+        tiny_precip['encoded_array'] = tiny_precip.pop('packed_array').tostring()
+        tiny_precip['attributes'] = dict(obj[conv.PRECIP].attributes)
+        tiny_precip['dims'] = dims
+        encoded_variables[conv.PRECIP] = tiny_precip
+
+    if conv.CLOUD in obj.variables:
+        tiny_cloud = tiny_array(obj[conv.CLOUD], bits=1, divs=_cloud_scale, mask=mask)
+        tiny_cloud['encoded_array'] = tiny_cloud.pop('packed_array').tostring()
+        tiny_cloud['attributes'] = dict(obj[conv.cloud].attributes)
+        tiny_cloud['dims'] = dims
+        encoded_variables[conv.CLOUD] = tiny_cloud
 
     info = {}
     info['dimensions'] = dims
@@ -254,10 +294,11 @@ def from_beaufort(yaml_dump):
         mask = np.array([[mask for i in range(ntime)] for j in range(nens)])
     else:
         mask = None
+
     for var in non_coords:
         v = info['variables'][var]
         v['packed_array'] = np.fromstring(v.pop('encoded_array'), dtype='uint8')
-        data = expand_array(**v) if mask is None else expand_masked(mask=mask, **v)
+        data = expand_array(mask=mask, **v)
         obj.create_variable(var, v['dims'], data=data, attributes=v['attributes'])
 
     dims = obj['wind_speed'].dimensions

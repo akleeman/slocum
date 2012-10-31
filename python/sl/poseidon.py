@@ -62,7 +62,10 @@ def ncdf_subset(url, ll, ur, vars, dir=None, path=None):
     if 'ens' in obj.variables and obj['ens'].ndim != 1:
         obj.delete_variable('ens')
 
-    return units.normalize_data(obj.renamed(vars))
+    # we rename any variables that are found in the object
+    contained_vars = dict((k, v) for k, v in vars.iteritems() if k in obj.variables)
+    # then normalize the units
+    return units.normalize_data(obj.renamed(contained_vars))
 
 def latest_nww3():
     index_url = 'http://motherlode.ucar.edu/thredds/catalog/fmrc/NCEP/WW3/Global/runs/catalog.html'
@@ -173,6 +176,10 @@ def email_forecast(query, path=None):
     if 'wind' in query['vars']:
         vars['U-component_of_wind_height_above_ground'] = conv.UWND
         vars['V-component_of_wind_height_above_ground'] = conv.VWND
+    if 'rain' in query['vars'] or 'precip' in query['vars']:
+        vars['Total-Precipitation'] = conv.PRECIP
+    if 'cloud' in query['vars']:
+        vars['Cloud-Cover'] = conv.CLOUD
     obj = gefs_subset(ll, ur, path=path, vars=vars)
     # the hours query is a bit complex since it
     # involves interpreting the '..' as slices

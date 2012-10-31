@@ -3,14 +3,21 @@ import numpy as np
 
 from sl.lib import tinylib
 
+def test_bool():
+    np.random.seed(seed=1982)
+    original_array = np.random.normal(size=100)
+    tiny = tinylib.tiny_bool(original_array > 0.)
+    recovered = tinylib.expand_bool(**tiny)
+    assert not np.any(np.logical_xor(original_array > 0., recovered))
+
 def test_masked():
     # test packing 2 bit ints of odd length
     np.random.seed(seed=1982)
     shape = (30, 3)
     original_array = np.random.normal(size=shape)
     mask = np.random.uniform(size=shape) > 0.5
-    tiny = tinylib.masked_tiny(original_array, mask)
-    recovered = tinylib.expand_masked(mask=mask, **tiny)
+    tiny = tinylib.tiny_array(original_array, mask)
+    recovered = tinylib.expand_array(mask=mask, **tiny)
     assert np.sum(np.isfinite(recovered)) == np.sum(mask)
     assert np.max(np.abs(recovered[mask] - original_array[mask])) < np.max(np.diff(tiny['divs']))
 
@@ -58,6 +65,7 @@ def test_pack_unpack():
     assert np.all(orig == recovered)
 
 def main():
+    test_bool()
     test_masked()
     test_pack_unpack()
     test_consistent()
