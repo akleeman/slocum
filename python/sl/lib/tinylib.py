@@ -5,8 +5,6 @@ import simplejson
 from bisect import bisect
 from cStringIO import StringIO
 
-from scipy import optimize
-
 import matplotlib.pyplot as plt
 
 import sl.objects.conventions as conv
@@ -189,10 +187,9 @@ def rhumbline_slice(start, end, lats, lons, max_dist=180):
     def distance(latlon):
         def func(x):
             return spray.rhumbline_distance(latlon, rhumbline(x))
+        dists = map(func, np.linspace(0., max_distance, num=1000))
         # find the point on the rhumbline thats closest to our lat lon
-        xmin = optimize.fminbound(func, 0., max_distance, xtol=1e-1)[0]
-        # return the distance to the closest point
-        return func(xmin)
+        return min(dists)
 
     def iter_distances():
         for lat, lon in zip(grid_lat.flatten(), grid_lon.flatten()):
