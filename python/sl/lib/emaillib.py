@@ -110,7 +110,8 @@ def wind_breaker(mime_text, ncdf_weather=None):
         # .fcst        < 30kBytes
         # .gfcst       < 15kBytes
         logger.debug('Obtained the required forecast')
-        forecast_attachment = StringIO(zlib.compress(tinylib.to_beaufort(obj), 9))
+        tiny_fcst = tinylib.to_beaufort(obj, query['start'], query['end'])
+        forecast_attachment = StringIO(zlib.compress(tiny_fcst, 9))
         logger.debug('Tinified the forecast')
         # creates the new mime email
         weather_email = create_email(sender, 'wx@saltbreaker.com',
@@ -138,13 +139,23 @@ def parse_saildocs_query(query):
     Parses a saildocs string retrieving the forecast query params
     """
     query = query.strip()
-    if not len(query.split(' ', 2)) == 2:
-        raise ValueError("expected a single space")
-    command, options = query.split(' ', 1)
+    if len(query.split(' ', 2)) == 0:
+        raise ValueError("expected at least one space")
+    command, opts_args = query.split(' ', 1)
+    opts_args = filter(len, opts_args.split(' '))
+    if len(opts_args) > 1:
+        options = opts_args[0]
+        args = opts_args[1:]
+    else:
+        options = opts_args[0]
+        args = None
     # subscribe and spot doesn't currently work
     if not command.lower() == 'send':
         raise ValueError("currently only supports the 'send' command")
     region, grid, hours_str, vars  = options.split('|')
+    vars = set([x.lower() for x in vars.split(',')])
+    if not len(vars):
+        vars = 'wind'
     # we only support the gfs model for now
     provider, corners = region.split(':')
     if not provider.lower() == 'gfs':
@@ -176,16 +187,27 @@ def parse_saildocs_query(query):
             else:
                 yield float(hr)
 
-    return {'upper': upper,
+    query_dict = {'upper': upper,
             'lower': lower,
             'left': left,
             'right': right,
             'grid_delta': grid_delta,
-            'hours': hours_str,}
+            'hours': hours_str,
+            'start':None,
+            'end':None,
+            'vars':vars}
+
+    if args:
+        kwdargs = dict(x.lower().split('=') for x in args)
+        if 'start' in kwdargs and 'end' in kwdargs:
+            query_dict['start'] = objects.LatLon(*[floatify(x) for x in kwdargs['start'].split(',')])
+            query_dict['end'] = objects.LatLon(*[floatify(x) for x in kwdargs['end'].split(',')])
+
+    return query_dict
 
 def test_parse_saildocs():
 
-    print parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|PRMSL,WIND,RAIN')
+    print parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND START=25,175')
     print parse_saildocs_query('send GFS:10S,42S,162E,144W|13,13|0,6,12,24..60,66..90,102,120|PRMSL,WIND,WAVES,RAIN')
 
 if __name__ == "__main__":

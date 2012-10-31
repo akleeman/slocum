@@ -10,8 +10,9 @@ def test_masked():
     original_array = np.random.normal(size=shape)
     mask = np.random.uniform(size=shape) > 0.5
     tiny = tinylib.masked_tiny(original_array, mask)
-    recovered = tinylib.expand_masked(**tiny)
-    import pdb; pdb.set_trace()
+    recovered = tinylib.expand_masked(mask=mask, **tiny)
+    assert np.sum(np.isfinite(recovered)) == np.sum(mask)
+    assert np.max(np.abs(recovered[mask] - original_array[mask])) < np.max(np.diff(tiny['divs']))
 
 def test_consistent():
     np.random.seed(seed=1982)
@@ -24,7 +25,6 @@ def test_consistent():
     original_array = np.random.normal(size=(30, 3))
     tiny = tinylib.tiny_array(original_array)
     recovered = tinylib.expand_array(**tiny)
-
 
 def test_pack_unpack():
     # test packing 2 bit ints of odd length

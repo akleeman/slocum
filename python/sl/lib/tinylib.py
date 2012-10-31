@@ -135,16 +135,18 @@ def expand_array(packed_array, bits, shape, divs, dtype=None, **kwdargs):
     return divs[bins].astype(dtype).reshape(shape)
 
 def masked_tiny(arr, mask, bits=None, divs=None):
+    if mask is None:
+        return tiny_array(arr, bits, divs)
     masked = arr[mask].flatten()
     ta = tiny_array(masked, bits=bits, divs=divs)
     ta['shape'] = arr.shape
     ta['masked'] = True
     return ta
 
-def expand_masked(packed_array, bits, shape, divs, mask, dtype=None, **kwdargs):
+def expand_masked(mask, packed_array, bits, shape, divs, dtype=None, **kwdargs):
     masked_shape = (np.sum(mask),)
     masked = expand_array(packed_array, bits, masked_shape, divs, dtype)
-    ret = numpyblib.nans(shape)
+    ret = numpylib.nans(shape)
     ret[mask] = masked
     return ret
 
@@ -179,12 +181,22 @@ _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 5
 def to_beaufort(obj, start=None, end=None):
     if (start is None and end) or (start and end is None):
         raise ValueError("expected both start and end or neither")
-    mask = rhumbline_slice(start, end,
-                           obj[conv.LAT].data, obj[conv.LON].data)
     uwnd = obj[conv.UWND].data
     vwnd = obj[conv.VWND].data
     if not uwnd.shape == vwnd.shape:
         raise ValueError("expected uwnd and vwnd to have same shape")
+    if not start is None and not end is None:
+        mask = rhumbline_slice(start, end,
+                               obj[conv.LAT].data, obj[conv.LON].data)
+        if not obj[conv.UWND].dimensions == (conv.ENSEMBLE, conv.TIME, conv.LAT, conv.LON):
+            raise ValueError("masking only works with specific dimensions")
+        ntime = obj.dimensions[conv.TIME]
+        nens = obj.dimensions[conv.ENSEMBLE]
+        mask = np.array([[mask for i in range(ntime)] for j in range(nens)])
+        if not mask.shape == uwnd.shape:
+            raise ValueError("something funkys up with those shapes")
+    else:
+        mask = None
     # first we store all the required coordinates
     dims = obj[conv.UWND].dimensions
     coords = set([x for x in dims if x in obj.coordinates])
@@ -234,14 +246,19 @@ def from_beaufort(yaml_dump):
         obj.create_coordinate(coord, data, attributes=v['attributes'])
     # next create any non coordinates, these are all assumed to be tiny arrays
     non_coords = [x for x in info['variables'].keys() if not x in info['coordinates']]
+    if ('start' in info and 'end' in info) and info['start'] and info['end']:
+        mask = rhumbline_slice(info['start'], info['end'],
+                               obj[conv.LAT].data, obj[conv.LON].data)
+        ntime = obj.dimensions[conv.TIME]
+        nens = obj.dimensions[conv.ENSEMBLE]
+        mask = np.array([[mask for i in range(ntime)] for j in range(nens)])
+    else:
+        mask = None
     for var in non_coords:
         v = info['variables'][var]
         v['packed_array'] = np.fromstring(v.pop('encoded_array'), dtype='uint8')
-        data = expand_array(**v)
-        try:
-            obj.create_variable(var, v['dims'], data=data, attributes=v['attributes'])
-        except:
-            import pdb; pdb.set_trace()
+        data = expand_array(**v) if mask is None else expand_masked(mask=mask, **v)
+        obj.create_variable(var, v['dims'], data=data, attributes=v['attributes'])
 
     dims = obj['wind_speed'].dimensions
     vwnd = -np.cos(obj['wind_dir'].data) * obj['wind_speed'].data

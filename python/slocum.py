@@ -191,9 +191,8 @@ def handle_plot(opts, args):
     if not opts.fcst:
         raise ValueError("point to a windbreaker file with --fcst")
     f = open(opts.fcst, 'r')
-    fcst = tinylib.from_beaufort(zlib.decompress(f.read()))
-    mask = tinylib.rhumbline_slice(opts.waypoints[0], opts.waypoints[1], fcst['lat'].data, fcst['lon'].data)
-    tinylib.tiny_slice(fcst['wind_speed'].data, )
+    unzipped = zlib.decompress(f.read())
+    fcst = tinylib.from_beaufort(unzipped)
     plotlib.plot_wind(fcst)
 
 def handle_email(opts, args):

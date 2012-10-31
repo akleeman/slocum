@@ -97,13 +97,13 @@ def latest_gefs():
     #http://motherlode.ucar.edu/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_20110830_1800.grib2
     return url
 
-def gefs_subset(ll, ur, url=None, path=None):
+def gefs_subset(ll, ur, url=None, path=None, vars=None):
     """
     Global Ensemble Forecast System forecast object
     """
-
-    vars = {'U-component_of_wind_height_above_ground':conv.UWND,
-            'V-component_of_wind_height_above_ground':conv.VWND,}
+    if vars is None:
+        vars = {'U-component_of_wind_height_above_ground':conv.UWND,
+                'V-component_of_wind_height_above_ground':conv.VWND,}
 
     if not url and not path:
         url = latest_gefs()
@@ -169,8 +169,11 @@ def email_forecast(query, path=None):
     ll = objects.LatLon(query['lower'], query['left'])
     ur = objects.LatLon(query['upper'], query['right'])
     ur, ll = ensure_corners(ur, ll, expand=False)
-    obj = gefs_subset(ll, ur, path=path)
-
+    vars = {}
+    if 'wind' in query['vars']:
+        vars['U-component_of_wind_height_above_ground'] = conv.UWND
+        vars['V-component_of_wind_height_above_ground'] = conv.VWND
+    obj = gefs_subset(ll, ur, path=path, vars=vars)
     # the hours query is a bit complex since it
     # involves interpreting the '..' as slices
     all_inds = np.arange(obj.dimensions['time'])
