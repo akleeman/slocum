@@ -3,6 +3,16 @@ import numpy as np
 
 from wx.lib import tinylib
 
+def test_masked():
+    # test packing 2 bit ints of odd length
+    np.random.seed(seed=1982)
+    shape = (30, 3)
+    original_array = np.random.normal(size=shape)
+    mask = np.random.uniform(size=shape) > 0.5
+    tiny = tinylib.masked_tiny(original_array, mask)
+    recovered = tinylib.expand_masked(**tiny)
+    import pdb; pdb.set_trace()
+
 def test_consistent():
     np.random.seed(seed=1982)
     dirs = np.random.uniform(-np.pi, np.pi, size=(3960,)).astype('float32')
@@ -15,7 +25,6 @@ def test_consistent():
     tiny = tinylib.tiny_array(original_array)
     recovered = tinylib.expand_array(**tiny)
 
-    import pdb; pdb.set_trace()
 
 def test_pack_unpack():
     # test packing 2 bit ints of odd length
@@ -49,7 +58,7 @@ def test_pack_unpack():
     assert np.all(orig == recovered)
 
 def main():
-
+    test_masked()
     test_pack_unpack()
     test_consistent()
 

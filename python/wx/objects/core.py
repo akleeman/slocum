@@ -224,6 +224,7 @@ class Data(object):
         """If there is a record dimension, __iter__ is overloaded in a
         manner analogoues to __len__"""
         if self.record_dimension is None:
+            import pdb; pdb.set_trace()
             raise TypeError("Overloaded __iter__ method only works for " +
                     "objects with a record dimension")
         else:

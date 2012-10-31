@@ -2,6 +2,7 @@ import copy
 import numpy as np
 import coards
 import logging
+import itertools
 
 import matplotlib.pyplot as plt
 logging.basicConfig(level=logging.DEBUG)
@@ -42,6 +43,7 @@ beaufort_cm.set_under('0.75')
 beaufort_bins = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55.])
 beaufort_norm = colors.BoundaryNorm(beaufort_bins, beaufort_cm.N)
 
+
 def wind_hist(arr, ax=None):
     vals, bins = np.histogram(arr, bins=beaufort_bins, normed=True)
     hist_ret = ax.fill_between(beaufort_bins[1:], vals, color='r')
@@ -49,12 +51,12 @@ def wind_hist(arr, ax=None):
 
 def axis_figure(axis=None, figure=None):
         if not axis and not figure:
-            fig = plt.gcf()
+            figure = plt.gcf()
             axis = plt.gca()
         if not figure and axis:
-            fig = axis.figure
+            figure = axis.figure
         if not axis and figure:
-            axis = fig.gca()
+            axis = figure.gca()
         return axis, figure
 
 class ButtonIndex(object):
@@ -89,10 +91,6 @@ def plot_wind(fcst, **kwdargs):
     fig = plt.figure(figsize=(16, 8))
     # the area in which the map is ploted
     map_axis = fig.add_axes([0.25, 0.05, 0.7, 0.9])
-    wind_axis = fig.add_axes([0.25, 0.05, 0.7, 0.9], zorder=1000)
-    invisible = colors.colorConverter.to_rgba(colors.cnames['red'],
-                                              alpha = 0)
-    wind_axis.set_axis_bgcolor(invisible)
     # the histogram axes
     info_axis = fig.add_axes([0.03, 0.15, 0.18, 0.2])
     direc_axis = fig.add_axes([0.03, 0.45, 0.18, 0.2])
@@ -115,17 +113,21 @@ def plot_wind(fcst, **kwdargs):
     original_forecast = copy.deepcopy(fcst)
 
     def draw_map(f, map_axis):
-        lons = f['lon'].data
-        lats = f['lat'].data
+        lons = f[conv.LON].data
+        lats = f[conv.LAT].data
         ll = objects.LatLon(min(lats), min(lons))
         ur = objects.LatLon(max(lats), max(lons))
         map = plot_map(ll, ur, ax=map_axis)
+        map.fillcontinents(color='green',lake_color='white')
+        map.drawparallels(lats, zorder=5)
+        map.drawmeridians(lons, zorder=5)
         x, y = map(*pylab.meshgrid(lons,lats))
         map_axis.set_xticks(x[-1, :])
         map_axis.set_xticklabels(['%.0fE' % z for z in lons])
         map_axis.set_yticks(y[:, 0])
         map_axis.set_yticklabels(['%.0fN' % z for z in lats])
         return map
+
     m = draw_map(fcst, map_axis)
 
     def single_slice(fcst, index, dim):
@@ -133,51 +135,18 @@ def plot_wind(fcst, **kwdargs):
         fc.squeeze(dim)
         return fc
 
-    def iter_wind(f, map):
-        for _, f in fcst.iterator(conv.TIME):
-            # This checks to make sure the time dim is length one
-            f.squeeze(conv.TIME)
-            map_axis = map.ax
-            lons = f['lon'].data
-            lats = f['lat'].data
-            x, y = map(*pylab.meshgrid(lons,lats))
-            forecast_time = datelib.from_udvar(f[conv.TIME])[0]
-            ens_axis = f['wind_dir'].dimensions.index(conv.ENSEMBLE)
-            f['wind_speed'].data[:, :, 0, 0] = 25
-            triangles = wind(x, y, f['wind_dir'].data, f['wind_speed'].data, ax=map_axis)
-            yield triangles
-
-    wind_plots = list(iter_wind(fcst, m))
-
-    def draw_forecast(f, map, wind_axis):
-        # This checks to make sure the time dim is length one
-        f.squeeze(conv.TIME)
-        lons = f['lon'].data
-        lats = f['lat'].data
-        x, y = map(*pylab.meshgrid(lons,lats))
-        forecast_time = datelib.from_udvar(f[conv.TIME])[0]
-        ens_axis = f['wind_dir'].dimensions.index(conv.ENSEMBLE)
-        f['wind_speed'].data[:, :, 0, 0] = 25
-
-        wind_axis.cla()
-        wind(x, y, f['wind_dir'].data, f['wind_speed'].data, ax=wind_axis)
-#        wind_axis.update_from(map_axis)
-#        wind_axis.set_axis_bgcolor(invisible)
-#        frame_off(wind_axis)
-        wind_axis.set_title(forecast_time.strftime('%A %B %d at %H:%M GMT'))
-        plt.draw()
+    wind_map = WindMap(fcst.take([0], conv.TIME), m)
 
     def draw_single_time(fcst, index):
-        for i, ens_triangles in enumerate(wind_plots):
-            [tri.set_visible(index == i) for tri in ens_triangles]
+        wind_map.update(fcst.take([index], conv.TIME))
+        fig.canvas.blit(map_axis.bbox)
+        fig.canvas.draw()
 
     callback = ButtonIndex(fcst.dimensions[conv.TIME], lambda x : draw_single_time(fcst, x))
     bnext = Button(next_ax, '>')
     bnext.on_clicked(callback.next)
     bprev = Button(prev_ax, '<')
     bprev.on_clicked(callback.prev)
-
-    draw_single_time(fcst, 0)
 
     wind_hist(fcst['wind_speed'].data.flatten(), speed_axis)
     speed_axis.set_title("Wind distribution")
@@ -219,8 +188,8 @@ def plot_wind(fcst, **kwdargs):
         fc = fcst.take(lon_inds, conv.LON)
         fc = fc.take(lat_inds, conv.LAT)
         map_axis.cla()
-        plot_map(ll, ur, ax=map_axis)
-        draw_single_time(fc, callback.ind)
+        m = draw_map(fcst, map_axis)
+        wind_map = WindMap(fcst.take([callback.ind], conv.TIME), m)
         plt.draw()
 
     def toggle_selector(event):
@@ -235,185 +204,124 @@ def plot_wind(fcst, **kwdargs):
                                            minspanx=5, minspany=5,
                                            spancoords='data')
 
-#    plt.connect('key_press_event', toggle_selector)
+    plt.connect('key_press_event', toggle_selector)
     plt.show()
-
-
-    #fig.canvas.mpl_connect('button_press_event', onpress)
-    #fig.show()
-    #hist_fig.show()
     return ax
 
-def wind(x, y, wind_dir, wind_speed, ax=None, scale=1.):
+class WindMap(object):
+
+    def __init__(self, fcst, base_map, scale = 1):
+        # This checks to make sure the time dim is length one
+        fcst.squeeze(conv.TIME)
+        self.base_map = base_map
+        self.axis = base_map.ax
+        lons = fcst['lon'].data
+        lats = fcst['lat'].data
+        self.x, self.y = base_map(*pylab.meshgrid(lons,lats))
+        self.radius = scale * 0.45 * np.min(np.abs(np.diff(self.x)))
+        self.axis.set_ylim([np.min(self.y) - self.radius, np.max(self.y) + self.radius])
+        self.axis.set_xlim([np.min(self.x) - self.radius, np.max(self.x) + self.radius])
+        def iter_circles():
+            for lat, flat in fcst.iterator('lat'):
+                flat.squeeze('lat')
+                for lon, fpoint in flat.iterator('lon'):
+                    fpoint.squeeze('lon')
+                    x, y = base_map(lon.data, lat.data)
+                    yield WindCircle(x, y,
+                                     fpoint['wind_speed'].data,
+                                     fpoint['wind_dir'].data,
+                                     self.radius,
+                                     ax=self.axis)
+
+        fc_time = datelib.from_udvar(fcst[conv.TIME])[0]
+        self.axis.set_title(fc_time.strftime('%A %B %d at %H:%M GMT'))
+        self.circles = list(iter_circles())
+
+    def update(self, fcst):
+        # This checks to make sure the time dim is length one
+        fcst.squeeze(conv.TIME)
+        lons = fcst['lon'].data
+        lats = fcst['lat'].data
+        x, y = self.base_map(*pylab.meshgrid(lons,lats))
+        if not np.all(self.x == x) or not np.all(self.y == y):
+            raise ValueError("expected lat lons to be the same")
+
+        def iter_point():
+            for lat, flat in fcst.iterator('lat'):
+                flat.squeeze('lat')
+                for lon, fpoint in flat.iterator('lon'):
+                    fpoint.squeeze('lon')
+                    yield fpoint
+
+        fc_time = datelib.from_udvar(fcst[conv.TIME])[0]
+        self.axis.set_title(fc_time.strftime('%A %B %d at %H:%M GMT'))
+        for wind_circle, point_forecast in zip(self.circles, iter_point()):
+            wind_circle.update(point_forecast['wind_speed'].data,
+                               point_forecast['wind_dir'].data)
+
+    def draw(self):
+        [wind_circle.draw() for wind_circle in self.circles]
+
+class WindCircle(object):
+
+    def __init__(self, x, y, speeds, directions, radius,
+                 cmap=None, norm=None, ax=None, fig=None):
+        self.axis, self.fig = axis_figure(ax, fig)
+        self.x = x
+        self.y = y
+        self.center = np.array([self.x, self.y]).flatten()
+        self.radius = radius
+        self.cm = cmap or beaufort_cm
+        self.norm = norm or beaufort_norm
+        self.wind_alpha = 0.7
+        self.circle_alpha = 0.6
+        self.speeds = speeds
+        self.directions = directions
+        self.polys = self._build_polys(self.speeds, self.directions)
+        self.circle = self._build_circle()
+        self.axis.add_patch(self.circle)
+        [self.axis.add_patch(poly) for poly in self.polys]
+
+    def _build_circle(self):
+        return patches.Circle([self.x, self.y], radius=self.radius,
+                                edgecolor='k', facecolor='w',
+                                zorder=10, alpha=self.circle_alpha)
+
+    def radial(self, theta):
+        return self.center + self.radius * np.array([np.sin(theta), np.cos(theta)])
+
+    def _poly(self, speed, direction):
+        xy = np.vstack([self.center,
+                        self.radial(direction - np.pi / 16.),
+                        self.radial(direction),
+                        self.radial(direction + np.pi / 16.)])
+        color = self.cm(self.norm(np.atleast_1d(speed)), alpha=self.wind_alpha)[0]
+        return patches.Polygon(xy, closed=True, color=color, zorder=11)
+
+    def _build_polys(self, speeds, directions):
+        speeds = speeds.flatten()
+        directions = directions.flatten()
+        isvalid = np.logical_and(np.isfinite(speeds), np.isfinite(directions))
+        return [self._poly(ws, wd) for ws, wd in zip(speeds[isvalid], directions[isvalid])]
+
+    def update(self, speeds, directions):
+        new_polys = self._build_polys(speeds, directions)
+        for poly, new_poly in zip(self.polys, new_polys):
+            poly.xy[:] = new_poly.xy[:]
+            poly.set_facecolor(new_poly.get_facecolor())
+            poly.set_edgecolor(new_poly.get_edgecolor())
+        self.fig.canvas.blit(self.axis.bbox)
+
+    def draw(self):
+        self.axis.draw_artist(self.circle)
+        [self.axis.draw_artist(poly) for poly in self.polys]
+        self.fig.canvas.blit(self.axis.bbox)
+
+def wind(x, y, wind_speed, wind_dir, ax=None, fig=None, scale=1.):
     if not (wind_dir.shape == wind_speed.shape):
         raise ValueError("expected all arrays to be the same size")
-
+    ax, fig = axis_figure(axis=ax, figure=fig)
     radius = scale * 0.45 * np.min(np.diff(x))
-    x = x.flatten()
-    y = y.flatten()
-
-    if not ax:
-        ax = plt.subplot(1,1,1)
-    n = 5.
-    for i in range(1):
-        circles = [plt.Circle((ix, iy), radius=radius * np.power((n - i) / n, 0.8),
-                              edgecolor='k', facecolor='w', zorder=10, alpha=0.6) for ix, iy in zip(x, y)]
-        [ax.add_patch(c) for c in circles]
-    ax.set_xlim(min(x) - radius, max(x) + radius)
-    ax.set_ylim(min(y) - radius, max(y) + radius)
-    max_wind = np.max(wind_speed)
-    # iterates over grid points, plotting all ensemble members
-    def iter_triangles():
-        for (wd, ws) in zip(wind_dir, wind_speed):
-            wd = wd.flatten()
-            ws = ws.flatten()
-            ws_scale = radius # * np.sqrt(ws / max_wind)
-            min_x = x + ws_scale * np.sin(wd - np.pi/16.)
-            min_y = y + ws_scale * np.cos(wd - np.pi/16.)
-            max_x = x + ws_scale * np.sin(wd + np.pi/16.)
-            max_y = y + ws_scale * np.cos(wd + np.pi/16.)
-            xn = x.shape[0]
-            xs = np.concatenate([x, min_x, max_x])
-            ys = np.concatenate([y, min_y, max_y])
-            triangles = [(i, i + xn, i + 2*xn) for i in range(xn)]
-            ws = ws.repeat(3).reshape(xn, 3).T.flatten()
-            tri = ax.tripcolor(xs, ys, triangles, ws, shading='flat', cmap=beaufort_cm,
-                               norm=beaufort_norm, edgecolors='none', alpha=0.7, zorder=100)
-            yield tri
-    return list(iter_triangles())
-
-def tmp_wind(x, y, min_dir, max_dir, wind_speed, scale=1.):
-    if not (x.shape == max_dir.shape and
-            y.shape == max_dir.shape and
-            min_dir.shape == max_dir.shape):
-        raise ValueError("expected all arrays to be the same size")
-
-    import pdb; pdb.set_trace()
-    min_dir = min_dir.flatten()
-    max_dir = max_dir.flatten()
-    mid_dir = 0.5 * (min_dir + max_dir)
-    min_x = x + radius * np.sin(min_dir - np.pi/32.)
-    min_y = y + radius * np.cos(min_dir - np.pi/32.)
-    mid_x = x + radius * np.sin(mid_dir - np.pi/32.)
-    mid_y = y + radius * np.sin(mid_dir - np.pi/32.)
-    max_x = x + radius * np.sin(max_dir + np.pi/32.)
-    max_y = y + radius * np.cos(max_dir + np.pi/32.)
-
-    n = x.shape[0]
-    xs = np.concatenate([x, min_x, max_x])
-    ys = np.concatenate([y, min_y, max_y])
-    triangles = [(i, i + n, i + 2*n) for i in range(n)]
-    wind_speed = wind_speed.repeat(3).reshape(n, 3).T.flatten()
-    plt.tripcolor(xs, ys, triangles, wind_speed, shading='faceted')
-    plt.plot(x, y, 'k.')
-    plt.show()
-#x = xy[:,0]*180/3.14159
-#y = xy[:,1]*180/3.14159
-#x0 = -5
-#y0 = 52
-#z = np.exp(-0.01*( (x-x0)*(x-x0) + (y-y0)*(y-y0) ))
-#
-#triangles = np.asarray([
-#    [67,66, 1],[65, 2,66],[ 1,66, 2],[64, 2,65],[63, 3,64],[60,59,57],
-#    [ 2,64, 3],[ 3,63, 4],[ 0,67, 1],[62, 4,63],[57,59,56],[59,58,56],
-#    [61,60,69],[57,69,60],[ 4,62,68],[ 6, 5, 9],[61,68,62],[69,68,61],
-#    [ 9, 5,70],[ 6, 8, 7],[ 4,70, 5],[ 8, 6, 9],[56,69,57],[69,56,52],
-#    [70,10, 9],[54,53,55],[56,55,53],[68,70, 4],[52,56,53],[11,10,12],
-#    [69,71,68],[68,13,70],[10,70,13],[51,50,52],[13,68,71],[52,71,69],
-#    [12,10,13],[71,52,50],[71,14,13],[50,49,71],[49,48,71],[14,16,15],
-#    [14,71,48],[17,19,18],[17,20,19],[48,16,14],[48,47,16],[47,46,16],
-#    [16,46,45],[23,22,24],[21,24,22],[17,16,45],[20,17,45],[21,25,24],
-#    [27,26,28],[20,72,21],[25,21,72],[45,72,20],[25,28,26],[44,73,45],
-#    [72,45,73],[28,25,29],[29,25,31],[43,73,44],[73,43,40],[72,73,39],
-#    [72,31,25],[42,40,43],[31,30,29],[39,73,40],[42,41,40],[72,33,31],
-#    [32,31,33],[39,38,72],[33,72,38],[33,38,34],[37,35,38],[34,38,35],
-#    [35,37,36] ])
-#
-## Rather than create a Triangulation object, can simply pass x, y and triangles
-## arrays to tripcolor directly.  It would be better to use a Triangulation object
-## if the same triangulation was to be used more than once to save duplicated
-## calculations.
-#plt.figure()
-#plt.gca().set_aspect('equal')
-#plt.tripcolor(x, y, triangles, z, shading='faceted')
-#plt.colorbar()
-#plt.title('tripcolor of user-specified triangulation')
-#plt.xlabel('Longitude (degrees)')
-#plt.ylabel('Latitude (degrees)')
-
-def plot_variance(fcst):
-    plt.figure(figsize=(16, 10))
-    lons = fcst['lon'].data
-    lats = fcst['lat'].data
-    ll = objects.LatLon(min(lats), min(lons))
-    ur = objects.LatLon(max(lats), max(lons))
-    m = plot_map(ll, ur)
-    m.fillcontinents(color='green',lake_color='white')
-
-    for i, (_, fc) in enumerate(fcst.iterator(conv.TIME)):
-        var = fc.take([0], conv.ENSEMBLE)
-        var['wind_speed'].data[:] = np.var(fc['wind_speed'].data, axis=0)
-        var = var.squeeze(conv.TIME)
-        var = var.squeeze(conv.ENSEMBLE)
-
-        mean = fc.take([0], conv.ENSEMBLE)
-        mean['wind_speed'].data[:] = np.mean(fc['wind_speed'].data, axis=0)
-        mean = mean.squeeze(conv.TIME)
-        mean = mean.squeeze(conv.ENSEMBLE)
-        if i == 0:
-            field = plot_field(m, var, 'wind_speed', cmap=cm.Blues, alpha=0.8)
-            plt.clim()
-            barbs = plot_barbs(m, mean, 'uwnd', 'vwnd', cmap=cm.hot_r)
-        else:
-            field.set_data(var['wind_speed'].data)
-            U = mean['uwnd'].data
-            V = mean['vwnd'].data
-            barbs[1].set_UVC(U, V, np.sqrt(U*U + V*V))
-        plt.pause(0.5)
-
-def plot_forecast(fcst):
-
-    iter_var = conv.ENSEMBLE
-    slice_var = conv.TIME
-    fcst = fcst.take([0], slice_var)
-    fcst = fcst.squeeze(slice_var)
-    plt.figure(figsize=(16, 10))
-    for i, (_, fc) in enumerate(fcst.iterator(iter_var)):
-        fc = fc.squeeze(iter_var)
-        if i == 0:
-            lons = fcst['lon'].data
-            lats = fcst['lat'].data
-            ll = objects.LatLon(min(lats), min(lons))
-            ur = objects.LatLon(max(lats), max(lons))
-            m = plot_map(ll, ur)
-            #m.drawparallels(lats)
-            #m.drawmeridians(lons)
-            p = plot_quiver(m, fc, 'uwnd', 'vwnd')[1]
-            #p = plot_field(m, fc, 'wind_speed')
-            #plt.clim()
-        else:
-            #p.set_data(fc['wind_speed'].data)
-            U = fc['uwnd'].data
-            V = fc['vwnd'].data
-            p.set_UVC(U, V, np.sqrt(U*U + V*V))
-        plt.pause(0.5)
-    #plot_barbs(m, fcst, 'uwnd', 'vwnd')
-    #plt.imshow(speed,
-    #           extent = (min(lons), max(lons), min(lats), max(lats)))
-#    bins = np.array([1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., np.inf])
-#    colors = ['#a1eeff', # light blue
-#              '#42b1e5', # darker blue
-#              '#60fd4b', # green
-#              '#1cea00', # yellow-green
-#              '#fbef36', # yellow
-#              '#fbc136', # orange
-#              '#ff4f02', # red
-#              '#ff0e02', # darker-red
-#              '#ff00c0', # red-purple
-#              '#d925ac', # purple
-#              '#b30d8a', # dark purple
-#              '#000000', # black
-#              ]
 
 def make_pretty(m, ocean_color='#dcdcdc'):
     # map with continents drawn and filled.
@@ -425,60 +333,102 @@ def make_pretty(m, ocean_color='#dcdcdc'):
     m.drawmeridians(np.arange(0.,420.,60.))
     m.drawmapboundary(fill_color='aqua')
 
-def plot_passages(passages, etc_var=None):
-    if conv.ENSEMBLE in passages.variables and passages.dimensions[conv.ENSEMBLE] > 1:
-        passages = [y for x, y in passages.iterator(conv.ENSEMBLE)]
-    else:
-        passages = [passages]
-    passage = passages[0]
-    if conv.STEP in passage.dimensions:
-        passage = passage.view(slice(0, passage[conv.NUM_STEPS].data), conv.STEP)
-    times = datelib.from_udvar(passage[conv.TIME])
-    units = min(times)[0].strftime('days since %Y-%m-%d %H:00:00')
-    fig = plt.figure()
-    fig.subplots_adjust(hspace=0.45, wspace=0.3)
-    ax = fig.add_subplot(1, 3, 1)
-    plot_route(passage)
+def plot_passages_map(overlap_passages, ax=None):
+    """
+    Given an object with overlapping passages (ie, all STEPS of the passage
+    have the same lat lon) this will plot the wind circles experienced at
+    each of the steps.
+    """
+    lons = np.unique(overlap_passages[conv.LON].data)
+    lats = np.unique(overlap_passages[conv.LAT].data)
+    ll = objects.LatLon(np.min(lats), np.min(lons))
+    ur = objects.LatLon(np.max(lats), np.max(lons))
+    ur, ll = poseidon.ensure_corners(ur, ll)
+    m = plot_map(ll, ur, ax=ax)
+    m.drawcoastlines()
+    m.drawcountries()
+    m.fillcontinents(color='green',lake_color='white')
+    grid_lats = np.linspace(ll.lat, ur.lat, 5, endpoint=True)
+    m.drawparallels(grid_lats, zorder=5)
+    grid_lons = np.linspace(ll.lon, ur.lon, 5, endpoint=True)
+    m.drawmeridians(grid_lons, zorder=5)
+    x, y = m(*pylab.meshgrid(grid_lons,grid_lats))
+    m.ax.set_xticks(x[-1, :])
+    m.ax.set_xticklabels(['%.1fE' % z for z in grid_lons])
+    m.ax.set_yticks(y[:, 0])
+    m.ax.set_yticklabels(['%.1fN' % z for z in grid_lats])
 
-    ax2 = fig.add_subplot(3, 3, 2)
-    ax2.set_title("Boat Speed")
-    ax2.set_ylim([0, 7])
-    ax3 = fig.add_subplot(3, 3, 3, sharex=ax2)
-    ax3.set_title("Wind Speed")
-    ax4 = fig.add_subplot(3, 3, 5, sharex=ax2)
-    ax4.set_title("Relative Wind Dir")
-    ax4.set_ylim([0, np.pi])
-    ax5 = fig.add_subplot(3, 3, 6, sharex=ax2)
-    ax5.set_title("Motor On")
-    ax5.set_ylim([0, 1])
-    if etc_var:
-        ax5 = fig.add_subplot(3, 3, 6, sharex=ax2)
-        ax5.set_title(etc_var)
-    for passage in passages:
-        if conv.STEP in passage.dimensions:
+    waypoints = [np.array(m(lon, lat)) for lon, lat in zip(lons, lats)]
+    dists = [np.linalg.norm(x - y) for x, y in itertools.combinations(waypoints, 2)]
+    radius = 0.45 * np.min(dists)
+
+    for step, conditions in overlap_passages.iterator(conv.STEP):
+        lat = np.unique(conditions[conv.LAT].data)
+        if lat.size > 1:
+            raise ValueError("Expected a single lat")
+        lon = np.unique(conditions[conv.LON].data)
+        if lon.size > 1:
+            raise ValueError("Expected a single lon")
+        x, y = m(lon, lat)
+        wind = [objects.Wind(u, v) for u, v in zip(conditions[conv.UWND].data.flatten(),
+                                                   conditions[conv.VWND].data.flatten())]
+        speeds = np.array([w.speed for w in wind])
+        directions = np.array([w.dir for w in wind])
+        circle = WindCircle(x, y, speeds, directions, radius, ax=m.ax)
+
+    return m.ax
+
+def plot_passages(passages, etc_var=None):
+    fig = plt.figure(figsize=(16, 8))
+    # the area in which the map is ploted
+    map_axis = fig.add_axes([0.25, 0.05, 0.7, 0.9])
+    # the histogram axes
+    boat_speed_axis = fig.add_axes([0.04, 0.15, 0.18, 0.2])
+    boat_speed_axis.set_title("Boat Speed")
+    boat_speed_axis.set_ylim([0, 7])
+    direc_axis = fig.add_axes([0.04, 0.45, 0.18, 0.2])
+    direc_axis.set_title("Relative Wind Direction")
+    direc_axis.set_ylim([0, np.pi])
+    direc_axis.set_yticks([0, np.pi/2, np.pi])
+    direc_axis.set_yticklabels(['down', 'reach', 'up'])
+    wind_speed_axis = fig.add_axes([0.04, 0.75, 0.18, 0.2])
+    wind_speed_axis.set_title("Wind Speed")
+    # the color bar
+    cb_axis = fig.add_axes([0.97, 0.05, 0.01, 0.9])
+    # fill in the colorbar
+    cb = colorbar.ColorbarBase(cb_axis, cmap=beaufort_cm,
+                               norm=beaufort_norm,
+                               ticks=beaufort_bins,
+                               boundaries=beaufort_bins)
+
+    overlap_passages = objects.intersect_ensemble_passages(passages)
+    plot_passages_map(overlap_passages, ax=map_axis)
+
+    times = datelib.from_coards(passages[conv.TIME].data.flatten(),
+                                passages[conv.TIME].attributes[conv.UNITS])
+    times = filter(lambda x : not x is None, times)
+    units = min(times).strftime('days since %Y-%m-%d %H:00:00')
+    if max(np.array([coards.to_udunits(x, units) for x in times])) <= 2:
+        units = units.replace('days', 'hours')
+
+    for _, passage in passages.iterator(conv.ENSEMBLE):
+        if conv.NUM_STEPS in passage.variables:
             passage = passage.view(slice(0, passage[conv.NUM_STEPS].data), conv.STEP)
-        times = datelib.from_udvar(passage[conv.TIME])
-        time = np.array([coards.to_udunits(x[0], units) for x in times])
-        if max(time) <= 2:
-            # if there are less than 2 days in this passage use hours
-            time = time * 24
-            units = units.replace('days', 'hours')
-        ax2.plot(time, passage[conv.SPEED].data)
+        time = datelib.from_coards(passage[conv.TIME].data.flatten(), units)
+        time = np.array([coards.to_udunits(x, units) for x in time])
+        boat_speed_axis.plot(time, passage[conv.SPEED].data)
         wind = [objects.Wind(u, v) for u, v in
                 zip(passage[conv.UWND].data, passage[conv.VWND].data)]
         wind_speed = [x.speed for x in wind]
-        ax3.plot(time, wind_speed)
-        ax3.set_ylim([0, np.max(wind_speed) + 5])
+        wind_speed_axis.plot(time, wind_speed)
         def rel(x):
             if x < np.pi:
                 return x
             else:
                 return 2*np.pi - x
         rel_wind = [rel(np.abs(heading - w.dir)) for heading, w in zip(passage[conv.HEADING], wind)]
-        ax4.plot(time, rel_wind)
-        ax5.plot(time, passage[conv.MOTOR_ON].data)
-        ax5.set_ylim([-0.1, 1.1])
-    fig.suptitle('X axis shows %s' % units)
+        direc_axis.plot(time, rel_wind)
+    fig.suptitle('Time is in %s' % units)
     plt.show()
 
 def add_wind_contours(m, wx):
@@ -553,18 +503,6 @@ def plot_summaries(passages):
     fig.suptitle(earliest.strftime('starting x hours after %Y-%m-%d %H:%M'))
     plt.show()
 
-def plot_passage_map(passage, proj='lcc', pad=0.25):
-    start_lat = np.mean(passage[conv.LAT].data[0])
-    start_lon = np.mean(passage[conv.LON].data[0])
-    if conv.STEP in passage.dimensions:
-        end_lat = np.mean([x[conv.LAT].data[x[conv.NUM_STEPS].data - 1]
-                           for _, x in passage.iterator(conv.ENSEMBLE)])
-        end_lon = np.mean([x[conv.LON].data[x[conv.NUM_STEPS].data - 1]
-                           for _, x in passage.iterator(conv.ENSEMBLE)])
-    else:
-        end_lat = np.mean(passage[conv.LAT].data[-1])
-        end_lon = np.mean(passage[conv.LON].data[-1])
-
 def plot_map(ll, ur, proj='lcc', pad=0.25, ax=None):
     mid = objects.LatLon(0.5*(ll.lat + ur.lat), 0.5*(ll.lon + ur.lon))
 
@@ -593,13 +531,15 @@ def plot_map(ll, ur, proj='lcc', pad=0.25, ax=None):
     return m
 
 def plot_route(passage, proj='lcc'):
-    m = plot_map(passage, proj=proj)
-    lats = passage[conv.LAT].data
     lons = passage[conv.LON].data
+    lats = passage[conv.LAT].data
+    ll = objects.LatLon(np.min(lats), np.min(lons))
+    ur = objects.LatLon(np.max(lats), np.max(lons))
+    ur, ll = poseidon.ensure_corners(ur, ll)
+    m = plot_map(ll, ur, proj=proj)
     xvals, yvals = m(lons,lats)
     xvals = np.array(xvals)
     yvals = np.array(yvals)
-
     # draw colored markers.
     # use zorder=10 to make sure markers are drawn last.
     # (otherwise they are covered up when continents are filled)
@@ -611,7 +551,12 @@ def plot_routes(routes, colors = None, proj = 'lcc'):
     first_route = routes[0]
     fig = plt.figure()
 
-    m = plot_map(first_route, proj=proj)
+    lons = passage[conv.LON].data
+    lats = passage[conv.LAT].data
+    ll = objects.LatLon(np.min(lats), np.min(lons))
+    ur = objects.LatLon(np.max(lats), np.max(lons))
+    ur, ll = poseidon.ensure_corners(ur, ll)
+    m = plot_map(ll, ur, proj=proj)
 
     if colors is None:
         colors = ['g'] * len(routes)

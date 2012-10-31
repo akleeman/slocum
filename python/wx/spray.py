@@ -138,7 +138,6 @@ def trajectory(legs):
     """
     legs = list(legs)
     nlegs = len(legs)
-
     traj = core.Data()
     traj.create_coordinate(conv.STEP, np.arange(nlegs))
 
@@ -147,10 +146,14 @@ def trajectory(legs):
         traj.create_variable(var, dim = (conv.STEP,),
                              data=np.zeros((nlegs,)),
                              attributes=legs[0][var].attributes)
+
     for (it, step), leg in zip(traj.iterator(conv.STEP, views=True), legs):
         for var in variables:
             step[var].data[:] = np.asscalar(leg[var].data)
     return traj
+
+class OutOfDataException(Exception):
+    pass
 
 def passage(waypoints, start_date, weather, fast=False, accuracy=0.5):
     """
@@ -160,10 +163,9 @@ def passage(waypoints, start_date, weather, fast=False, accuracy=0.5):
         start location.
     start_date - the date the passage is started
     """
-
+    waypoints = copy.deepcopy(waypoints)
     def has_wind(obj):
         return conv.UWND in obj.variables and conv.VWND in obj.variables
-
     wind_data = [x for x in weather if has_wind(x)]
     #assert len(wind_data) == 1
     wind_data = wind_data[0]
@@ -173,6 +175,7 @@ def passage(waypoints, start_date, weather, fast=False, accuracy=0.5):
     dates = datelib.from_udvar(wind_data[conv.TIME])
     data_start = dates[0]
     data_end = dates[-1]
+    print "Forecast spans %s to %s" % (data_start, data_end)
     if start_date < data_start or start_date >= data_end:
         msg = "start date %s is outside the range of the data [%s, %s]"
         raise ValueError(msg % (start_date, data_start, data_end))
@@ -188,7 +191,6 @@ def passage(waypoints, start_date, weather, fast=False, accuracy=0.5):
                 prev_date = date
                 yield date, w
                 continue
-
             mid_date = prev_date + datetime.timedelta(seconds=0.5*datelib.seconds(date - prev_date))
             yield mid_date, w
             prev_date = date
@@ -211,114 +213,112 @@ def passage(waypoints, start_date, weather, fast=False, accuracy=0.5):
         waypoints = list(waypoints)
         here = waypoints.pop(0)
 
-        time_iter = iter_times()
+        all_times = list(iter_times())
+        time_iter = iter(all_times)
         fcst_time, wx = time_iter.next()
         now = start_date
         soon, next_wx = time_iter.next()
         dt = soon - now
 
-        obj = core.Data()
+        nan_obj = core.Data()
         units, init_time = datelib.to_udvar([now], units=data_units)
-        obj.create_coordinate(conv.TIME, init_time,
+        nan_obj.create_coordinate(conv.TIME, init_time,
                                attributes={'units':units})
 
         variables = [conv.UWND, conv.VWND, conv.LAT, conv.LON,
                      conv.BEARING, conv.HEADING, conv.SPEED, conv.DISTANCE,
                      conv.RELATIVE_WIND, conv.HOURS, conv.MOTOR_ON,
                      conv.WIND_SPEED]
-        [obj.create_variable(x, dim=(conv.TIME,), data=np.array([np.nan]))
+        [nan_obj.create_variable(x, dim=(conv.TIME,), data=np.array([np.nan]))
          for x in variables]
 
+        def get_next():
+            """ a wrapper around time_iter which throws an out of data exception"""
+            try:
+                return time_iter.next()
+            except StopIteration:
+                raise OutOfDataException("Ran out of data, final time: %s" % str(now))
+
         for destination in waypoints:
-            while not here == destination:
-                # interpolate the weather at the current lat lon
-                local_wx = wx.interpolate(lat=here.lat, lon=here.lon, fast=fast)
-                # fill with local weather
-                local_vars = local_wx.variables.iteritems()
-                obj = copy.deepcopy(obj)
-                [obj[k].data.put(0, np.asscalar(v.data)) for k, v in local_vars if k in obj.variables]
-                obj[conv.TIME].data[0] = datelib.to_udvar([now], units)[1]
-                obj[conv.HOURS].data[0] = datelib.hours(dt)
-                # determine the bearing (following a rhumbline) between here and the end
-                bearing = rhumbline_bearing(here, destination)
-                # TODO: actually compute the heading
-                heading = bearing
-                # get the wind and use that to compute the boat speed
-                wind = objects.Wind(np.asscalar(obj[conv.UWND].data),
-                                    np.asscalar(obj[conv.VWND].data))
-                speed = boat_speed(wind, bearing)
-                obj[conv.MOTOR_ON].data[0] = (wind.speed <= 5.)
-                speed = 5.5 if obj[conv.MOTOR_ON].data[0] else speed
-                distance = speed * datelib.hours(dt)
-                # given our speed how far can we go in one timestep?
-                remaining = rhumbline_distance(here, destination)
-                time_string = ("time: %s " % now)
-                if distance > max(0., remaining - accuracy):
-                    here = destination
-                    required_time = int(datelib.hours(dt) * datelib._seconds_in_hour * remaining / distance)
-                    obj[conv.HOURS].data[0] *= (remaining / distance)
-                    dt = datetime.timedelta(seconds=required_time)
-                    now = now + dt
-                    distance = remaining
-                else:
-                    # and once we know how far, where does that put us in terms of lat long
-                    here = rhumbline_path(here, bearing)(distance)
-                    dt = soon - now
-                    now, wx = soon, next_wx
-                    try:
-                        soon, next_wx = time_iter.next()
-                    except StopIteration:
-                        raise ValueError("Ran out of data, final time: %s" % str(now))
-                obj[conv.LAT].data[0] = here.lat
-                obj[conv.LON].data[0] = here.lon
-                obj[conv.DISTANCE].data[0] = distance
-                obj[conv.BEARING].data[0] = bearing
-                obj[conv.HEADING].data[0] = heading
-                obj[conv.SPEED].data[0] = speed
-                rel_wind = np.abs(heading - wind.dir)
-                if rel_wind > np.pi:
-                    rel_wind = 2.*np.pi - rel_wind
-                obj[conv.RELATIVE_WIND].data[0] = rel_wind
-                obj[conv.WIND_SPEED].data[0] = wind.speed
-                #print ('%s wind: %4s (%4.1f) @ %6.1f knots \t %6.1f miles in %4.1f hours @ %6.1f knots'
-                #             % (time_string, wind.readable, wind.dir, wind.speed, distance, datelib.hours(dt), speed))
-                yield obj
-                if remaining < accuracy:
-                    break
+            try:
+                while not here == destination:
+                    # interpolate the weather at the current lat lon
+                    local_wx = wx.interpolate(lat=here.lat, lon=here.lon, fast=fast)
+                    # fill with local weather
+                    local_vars = local_wx.variables.iteritems()
+                    obj = copy.deepcopy(nan_obj)
+                    [obj[k].data.put(0, np.asscalar(v.data)) for k, v in local_vars if k in obj.variables]
+                    obj[conv.TIME].data[0] = datelib.to_udvar([now], units)[1]
+                    obj[conv.HOURS].data[0] = datelib.hours(dt)
+                    # determine the bearing (following a rhumbline) between here and the end
+                    bearing = rhumbline_bearing(here, destination)
+                    # TODO: actually compute the heading
+                    heading = bearing
+                    # get the wind and use that to compute the boat speed
+                    wind = objects.Wind(np.asscalar(obj[conv.UWND].data),
+                                        np.asscalar(obj[conv.VWND].data))
+                    speed = boat_speed(wind, bearing)
+                    obj[conv.MOTOR_ON].data[0] = (wind.speed <= 5.)
+                    speed = 5.5 if obj[conv.MOTOR_ON].data[0] else speed
+                    distance = speed * datelib.hours(dt)
+                    # given our speed how far can we go in one timestep?
+                    remaining = rhumbline_distance(here, destination)
+                    time_string = ("time: %s " % now)
+                    if distance > max(0., remaining - accuracy):
+                        here = destination
+                        required_time = int(datelib.hours(dt) * datelib._seconds_in_hour * remaining / distance)
+                        obj[conv.HOURS].data[0] *= (remaining / distance)
+                        dt = datetime.timedelta(seconds=required_time)
+                        now = now + dt
+                        distance = remaining
+                        while now > soon:
+                            # no need to assign now since we know its past soon
+                            _, wx = soon, next_wx
+                            soon, next_wx = get_next()
+                    else:
+                        # and once we know how far, where does that put us in terms of lat long
+                        here = rhumbline_path(here, bearing)(distance)
+                        dt = soon - now
+                        now, wx = soon, next_wx
+                        soon, next_wx = get_next()
+                    obj[conv.LAT].data[0] = here.lat
+                    obj[conv.LON].data[0] = here.lon
+                    obj[conv.DISTANCE].data[0] = distance
+                    obj[conv.BEARING].data[0] = bearing
+                    obj[conv.HEADING].data[0] = heading
+                    obj[conv.SPEED].data[0] = speed
+                    rel_wind = np.abs(heading - wind.dir)
+                    if rel_wind > np.pi:
+                        rel_wind = 2.*np.pi - rel_wind
+                    obj[conv.RELATIVE_WIND].data[0] = rel_wind
+                    obj[conv.WIND_SPEED].data[0] = wind.speed
+                    #print ('%s wind: %4s (%4.1f) @ %6.1f knots \t %6.1f miles in %4.1f hours @ %6.1f knots'
+                    #             % (time_string, wind.readable, wind.dir, wind.speed, distance, datelib.hours(dt), speed))
+                    yield obj
+                    if remaining < accuracy:
+                        break
+            except OutOfDataException, e:
+                pos_only = copy.deepcopy(nan_obj)
+                pos_only[conv.LAT].data[0] = destination.lat
+                pos_only[conv.LON].data[0] = destination.lon
+                yield pos_only
 
-    if len(waypoints) == 1:
-        distance = rhumbline_distance(here, waypoints[0])
-        if distance < 200:
-            print "splitting up passage into 6 waypoints"
-            npoints = 6
-            bearing = rhumbline_bearing(here, waypoints[0])
-            dists = [(x+1.)/(npoints - 1.)*distance for x in np.arange(npoints - 2, 0, -1)]
-            [waypoints.insert(0, rhumbline_path(here, bearing)(d)) for d in dists]
-    return trajectory(legs(waypoints))
+    def iter_waypoints():
+        wps = copy.deepcopy(waypoints)
+        here = wps.pop(0)
+        next = wps.pop(0)
+        distance = rhumbline_distance(here, next)
+        yield here
+        while distance > 60:
+            bearing = rhumbline_bearing(here, next)
+            here = rhumbline_path(here, bearing)(60)
+            distance = rhumbline_distance(here, next)
+            yield here
 
-def normalize_ensemble_passages(passages):
-    passages = list(passages)
-    most_steps = max([x.dimensions[conv.STEP] for x in passages])
-    nensembles = len(passages)
-    def normalize(passages):
-        for i, psg in enumerate(passages):
-            obj = core.Data()
-            obj.create_coordinate(conv.STEP, np.arange(most_steps))
-            obj.create_coordinate(conv.ENSEMBLE, np.array([i]))
-            obj.create_variable(conv.NUM_STEPS,
-                                dim=(conv.ENSEMBLE,),
-                                data=np.array([psg.dimensions[conv.STEP]]))
-            variables = (var for var in psg.variables.keys()
-                         if not var in [conv.STEP, conv.ENSEMBLE, conv.NUM_STEPS])
-            nsteps = int(psg[conv.NUM_STEPS].data) if conv.NUM_STEPS in psg.variables else psg.dimensions[conv.STEP]
-            for var in variables:
-                obj.create_variable(var,
-                                    dim=(conv.STEP, conv.ENSEMBLE),
-                                    data=numpylib.nans((most_steps, 1)),
-                                    attributes=psg[var].attributes)
-                obj[var].data[:nsteps, 0] = psg[var].data[:nsteps].flatten()
-            yield obj
-    return objects.merge(normalize(passages), conv.ENSEMBLE)
+    waypoints = list(iter_waypoints())
+    #print '\n'.join(['%f, %f' % (x.lat, x.lon) for x in waypoints])
+    traj = trajectory(legs(waypoints))
+    return traj
 
 def ensemble_passage(waypoints, start_date, weather, *args, **kwdargs):
     passages = [passage(waypoints, start_date, [wx], *args, **kwdargs) for wx in weather]

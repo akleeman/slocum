@@ -76,6 +76,10 @@ logger = logging.getLogger(os.path.basename(__file__))
 def weather(opts, args):
     if opts.grib:
         return griblib.degrib(opts.grib)
+    if opts.fcst:
+        f = open(opts.fcst, 'r')
+        fcst = tinylib.from_beaufort(zlib.decompress(f.read()))
+        return [[y] for x, y in fcst.iterator(conv.ENSEMBLE)]
     if opts.download or opts.recent:
         ll_lat = min([x.lat for x in opts.waypoints])
         ll_lon = min([x.lon for x in opts.waypoints])
@@ -92,8 +96,8 @@ def handle_simulate(opts, args):
     wx = list(weather(opts, args))
     waypoints = opts.waypoints
     if len(wx) > 1:
-        passages = (list(spray.passage(waypoints, opts.start_date, ens, fast=opts.fast)) for ens in wx)
-        plotlib.plot_passages(list(passages))
+        passages = [spray.passage(waypoints, opts.start_date, ens, fast=opts.fast) for ens in wx]
+        plotlib.plot_passages(objects.normalize_ensemble_passages(passages))
     else:
         passage = list(spray.passage(waypoints, opts.start_date, wx, fast=opts.fast))
         plotlib.plot_passage(passage)
@@ -184,8 +188,12 @@ def handle_plot(opts, args):
     """
     Unpacks and plots an email issued forecast
     """
-    f = open(opts.grib, 'r')
+    if not opts.fcst:
+        raise ValueError("point to a windbreaker file with --fcst")
+    f = open(opts.fcst, 'r')
     fcst = tinylib.from_beaufort(zlib.decompress(f.read()))
+    mask = tinylib.rhumbline_slice(opts.waypoints[0], opts.waypoints[1], fcst['lat'].data, fcst['lon'].data)
+    tinylib.tiny_slice(fcst['wind_speed'].data, )
     plotlib.plot_wind(fcst)
 
 def handle_email(opts, args):
@@ -255,6 +263,8 @@ def main(opts=None, args=None):
     p.add_option("", "--fast", default=False, action="store_true")
     p.add_option("", "--grib", default=None, action="store",
                  help="A grib file containing forecasts")
+    p.add_option("", "--fcst", default=None, action="store",
+                 help="A windbreaker file containing tiny forecasts")
     p.add_option("", "--download", default=True, action="store_true",
                  help="Download forecasts from UCAR")
     p.add_option("", "--recent", default=False, action="store_true",
@@ -330,7 +340,7 @@ def main(opts=None, args=None):
         p.error("slocum completed exactly what you told it to do ... nothing.")
 
 if __name__ == "__main__":
-    import cProfile
-    cProfile.runctx('main()', globals(), locals(),
-                    filename=os.path.join(os.path.dirname(__file__), 'profile.prof'))
-    #sys.exit(main())
+#    import cProfile
+#    cProfile.runctx('main()', globals(), locals(),
+#                    filename=os.path.join(os.path.dirname(__file__), 'profile.prof'))
+    sys.exit(main())

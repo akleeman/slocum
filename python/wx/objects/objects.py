@@ -6,7 +6,9 @@ import cStringIO
 
 from bisect import bisect
 
-from wx.lib import pupynere, collections, iterlib
+import wx.objects.conventions as conv
+
+from wx.lib import pupynere, collections, iterlib, numpylib
 from wx.objects import core
 
 Course = collections.namedtuple('Course', 'loc speed bearing heading')
@@ -16,7 +18,7 @@ Data = core.Data
 Variable = core.Variable
 
 class Wind(object):
-    def __init__(self, u=None, v=None, speed=None, dir=None):
+    def __init__(self, u=None, v=None):
         self.u = u
         self.v = v
         self.speed = np.sqrt(np.power(u, 2.) + np.power(v, 2.))
@@ -24,6 +26,7 @@ class Wind(object):
         # we actually want to know where the wind is coming from not where
         # the wind is headed
         self.dir = np.arctan2(-u, -v)
+
         bins = np.arange(-np.pi, np.pi, step=np.pi/4)
         names = ['S', 'SE', 'E', 'NE', 'N', 'NW', 'W', 'SW']
         ind = bisect(bins, self.dir)
@@ -197,6 +200,57 @@ def merge(objects, dim):
                                     [obj[name].attributes for obj in objects]))
         object.__setattr__(m[name], 'attributes', attr_dict)
     return m
+
+def normalize_ensemble_passages(passages):
+    """
+    Takes a set of passages and merges them, creating an ensemble
+    dimension.
+    """
+    passages = list(passages)
+    most_steps = max([x.dimensions[conv.STEP] for x in passages])
+    nensembles = len(passages)
+    def normalize(passages):
+        for i, psg in enumerate(passages):
+            obj = core.Data()
+            obj.create_coordinate(conv.STEP, np.arange(most_steps))
+            obj.create_coordinate(conv.ENSEMBLE, np.array([i]))
+            nsteps = min([np.sum(np.isfinite(v)) for v in psg.variables.values()
+                          if conv.STEP in v.dimensions])
+            obj.create_variable(conv.NUM_STEPS,
+                                dim=(conv.ENSEMBLE,),
+                                data=np.array([nsteps]))
+            variables = (var for var in psg.variables.keys()
+                         if not var in [conv.STEP, conv.ENSEMBLE, conv.NUM_STEPS])
+            for var in variables:
+                obj.create_variable(var,
+                                    dim=(conv.STEP, conv.ENSEMBLE),
+                                    data=numpylib.nans((most_steps, 1)),
+                                    attributes=psg[var].attributes)
+                obj[var].data[:nsteps, 0] = psg[var].data[:nsteps].flatten()
+            yield obj
+    return merge(normalize(passages), conv.ENSEMBLE)
+
+def intersect_ensemble_passages(ensemble_passages):
+    """
+    Returns an ensemble passage object consisting of only the passages that intersect
+    """
+    def take_common(x, dim, common):
+        return x.take(np.sort([np.nonzero(x[dim].data == y)[0][0] for y in common]), conv.STEP)
+    passages = [y for x, y in ensemble_passages.iterator(conv.ENSEMBLE)]
+    iterlats = (x[conv.LAT].data[:x[conv.NUM_STEPS].data[0]].flatten() for x in passages)
+    common_lats = reduce(np.intersect1d, iterlats)
+    if not common_lats.size:
+        raise ValueError("passages have no overlapping lat lons")
+    # paired passages now consists of only similar lats
+    paired_passages = [take_common(x, conv.LAT, common_lats) for x in passages]
+    # find common longitudes
+    iterlons = (x[conv.LON].data[:x[conv.NUM_STEPS].data[0]].flatten() for x in paired_passages)
+    common_lons = reduce(np.intersect1d, iterlons)
+    if not len(common_lons):
+        raise ValueError("passages have no overlapping lat lons")
+    # paired passages now consists of similar lats and lons
+    paired_passages = [take_common(x, conv.LON, common_lons) for x in passages]
+    return normalize_ensemble_passages(paired_passages)
 
 #class Trajectory():
 #    path = {}

@@ -14,31 +14,34 @@ def seconds(timedelta):
 def hours(timedelta):
     return seconds(timedelta) / _seconds_in_hour
 
-def from_udvar(timevar):
-    """
-    Takes a time variable which is assumed to follow coards conventions
-    and returns a numpy vector containing all the datetimes represented
-    by the timevar.
-    """
-    if np.sum(timevar.data.shape != 1) != 1:
-        raise ValueError("Time variables must only have one dimension")
-    if conv.UNITS not in timevar.attributes:
-        raise ValueError("Time variables must include units")
-    out = np.empty(timevar.data.shape, dtype=object)
-
+def from_coards(times, units):
+    out = np.empty(times.shape, dtype=object)
     # unfortunately coards.py does not interpret months in the same way
     # as either nostra, cdo or ncdump.  it uses a number of seconds rather
     # than a relative timedelta.  the relativedelta from dateutil will do
     # the right thing for days and months -- it's also faster because the
     # value of origin is only parsed out once rather than N times in the
     # the loop
-    unit, origin = timevar.attributes[conv.UNITS].lower().split(' since ')
+    unit, origin = units.lower().split(' since ')
     origin = coards.parse_date(origin)
 
-    for (i, x) in np.ndenumerate(timevar.data):
-        out[i] = origin + relativedelta(**{unit: int(x)})
+    for (i, x) in np.ndenumerate(times):
+        if np.isnan(x):
+            out[i] = None
+        else:
+            out[i] = origin + relativedelta(**{unit: int(x)})
 
     return out
+
+def from_udvar(timevar):
+    """
+    Takes a time variable which is assumed to follow coards conventions
+    and returns a numpy vector containing all the datetimes represented
+    by the timevar.
+    """
+    if conv.UNITS not in timevar.attributes:
+        raise ValueError("Time variables must include units")
+    return from_coards(timevar.data, timevar.attributes[conv.UNITS])
 
 def to_udvar(dates, units=None):
     """
