@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
-from wx.lib import plotlib
+from sl.lib import plotlib
 
 def animate_route(passage, proj='lcc'):
     fig = plt.figure(figsize=(16, 8))

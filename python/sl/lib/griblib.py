@@ -9,9 +9,9 @@ import itertools
 
 from datetime import datetime, timedelta
 
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
-from wx.objects import core, units
+from sl.objects import core, units
 
 codes = {
 0 : ("Reserved",),

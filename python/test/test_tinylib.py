@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 
-from wx.lib import tinylib
+from sl.lib import tinylib
 
 def test_masked():
     # test packing 2 bit ints of odd length

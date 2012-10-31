@@ -19,9 +19,9 @@ from cPickle import HIGHEST_PROTOCOL
 from operator import mul, or_
 from cStringIO import StringIO
 
-from wx.lib import ncdflib, numpylib, datelib
-from wx.lib.collections import OrderedDict, FrozenOrderedDict
-import wx.objects.conventions as conv
+from sl.lib import ncdflib, numpylib, datelib
+from sl.lib.collections import OrderedDict, FrozenOrderedDict
+import sl.objects.conventions as conv
 
 ENSURE_VALID = True
 

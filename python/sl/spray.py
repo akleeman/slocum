@@ -16,10 +16,10 @@ import itertools
 
 import matplotlib.pyplot as plt
 
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
-from wx.lib import datelib, plotlib, numpylib
-from wx.objects import objects, core
+from sl.lib import datelib, plotlib, numpylib
+from sl.objects import objects, core
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -243,9 +243,9 @@ def passage(waypoints, start_date, weather, fast=False, accuracy=0.5):
             try:
                 while not here == destination:
                     # interpolate the weather at the current lat lon
-                    local_wx = wx.interpolate(lat=here.lat, lon=here.lon, fast=fast)
+                    local_wx = sl.interpolate(lat=here.lat, lon=here.lon, fast=fast)
                     # fill with local weather
-                    local_vars = local_wx.variables.iteritems()
+                    local_vars = local_sl.variables.iteritems()
                     obj = copy.deepcopy(nan_obj)
                     [obj[k].data.put(0, np.asscalar(v.data)) for k, v in local_vars if k in obj.variables]
                     obj[conv.TIME].data[0] = datelib.to_udvar([now], units)[1]

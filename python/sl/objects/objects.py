@@ -6,10 +6,10 @@ import cStringIO
 
 from bisect import bisect
 
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
-from wx.lib import pupynere, collections, iterlib, numpylib
-from wx.objects import core
+from sl.lib import pupynere, collections, iterlib, numpylib
+from sl.objects import core
 
 Course = collections.namedtuple('Course', 'loc speed bearing heading')
 Leg = collections.namedtuple('Leg', 'course time wind distance rel_wind_dir wx')

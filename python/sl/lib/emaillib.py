@@ -12,9 +12,9 @@ from email.mime import Multipart
 from optparse import OptionParser
 from cStringIO import StringIO
 
-from wx import poseidon
-from wx.lib import tinylib
-from wx.objects import objects
+from sl import poseidon
+from sl.lib import tinylib
+from sl.objects import objects
 import smtplib
 
 logger = logging.getLogger(os.path.basename(__file__))

@@ -9,11 +9,11 @@ from scipy import optimize
 
 import matplotlib.pyplot as plt
 
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
-from wx import poseidon, spray
-from wx.lib import pupynere, numpylib
-from wx.objects import objects, core
+from sl import poseidon, spray
+from sl.lib import pupynere, numpylib
+from sl.objects import objects, core
 
 def pack_ints(arr, req_bits = None):
     """

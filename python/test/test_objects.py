@@ -2,7 +2,7 @@ import os
 import numpy as np
 import unittest
 
-from wx.objects import objects
+from sl.objects import objects
 
 _data_dir = os.path.join(os.path.dirname(__file__), '../../data/')
 

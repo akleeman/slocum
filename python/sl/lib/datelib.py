@@ -4,7 +4,7 @@ import datetime
 
 from dateutil.relativedelta import relativedelta
 
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
 _seconds_in_hour = 3600.
 

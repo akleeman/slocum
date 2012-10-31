@@ -64,11 +64,11 @@ import tempfile
 from optparse import OptionParser
 from matplotlib import pyplot as plt
 
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
-from wx import poseidon, spray
-from wx.lib import plotlib, emaillib, griblib, datelib, tinylib
-from wx.objects import objects, core
+from sl import poseidon, spray
+from sl.lib import plotlib, emaillib, griblib, datelib, tinylib
+from sl.objects import objects, core
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(os.path.basename(__file__))

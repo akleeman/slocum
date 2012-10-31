@@ -2,7 +2,7 @@ import os
 import numpy as np
 import unittest
 
-from wx.objects import core
+from sl.objects import core
 
 class TestCore(unittest.TestCase):
 

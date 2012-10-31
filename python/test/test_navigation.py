@@ -1,8 +1,8 @@
 import numpy as np
 import unittest
 
-from wx import spray
-from wx.objects import objects
+from sl import spray
+from sl.objects import objects
 
 class TestSpray(unittest.TestCase):
 

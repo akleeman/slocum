@@ -18,8 +18,8 @@ import urlparse
 
 from BeautifulSoup import BeautifulSoup
 
-import wx.objects.conventions as conv
-from wx.objects import objects, units, core
+import sl.objects.conventions as conv
+from sl.objects import objects, units, core
 
 _data_dir = os.path.join(os.path.dirname(__file__), '../../data/')
 _sources = {'ccmp_daily':'ccmp/mean_wind_%Y%m%d_v11l30flk.nc',
@@ -280,7 +280,7 @@ def main():
     ll = objects.LatLon(30., -115.)
     ur = objects.LatLon(40., -125.)
     obj = gefs_subset(ll, ur)
-    from wx.lib import tinylib
+    from sl.lib import tinylib
 
     string = tinylib.tiny(obj, ['uwnd', 'vwnd'])
     new_obj = tinylib.huge(string)

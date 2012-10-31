@@ -5,7 +5,7 @@ import sys as _sys
 
 import numpy as np
 
-from wx.lib import numpylib as npl
+from sl.lib import numpylib as npl
 
 def intersect_dicts(d1, d2):
     """Find the intersection of two dictionaries.  Treats nan values as equal."""

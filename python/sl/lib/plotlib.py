@@ -16,11 +16,11 @@ from bisect import bisect
 from matplotlib import pylab, cm, colors, colorbar, patches, cbook
 from matplotlib.widgets import Button, RectangleSelector
 
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
-from wx.lib import datelib
-from wx.objects import objects
-from wx import poseidon
+from sl.lib import datelib
+from sl.objects import objects
+from sl import poseidon
 
 beaufort_colors = ['#a1eeff', # light blue
           '#42b1e5', # darker blue

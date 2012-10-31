@@ -1,8 +1,8 @@
 import re
 import coards
-import wx.objects.conventions as conv
+import sl.objects.conventions as conv
 
-from wx.objects import core
+from sl.objects import core
 
 _length = {'m':3.2808399,
            'ft':1.0}
