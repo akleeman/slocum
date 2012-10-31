@@ -177,9 +177,11 @@ def email_forecast(query, path=None):
         vars['U-component_of_wind_height_above_ground'] = conv.UWND
         vars['V-component_of_wind_height_above_ground'] = conv.VWND
     if 'rain' in query['vars'] or 'precip' in query['vars']:
-        vars['Total-Precipitation'] = conv.PRECIP
+        vars['Total_precipitation'] = conv.PRECIP
     if 'cloud' in query['vars']:
-        vars['Cloud-Cover'] = conv.CLOUD
+        vars['Total_cloud_cover'] = conv.CLOUD
+    if 'pressure' in query['vars']:
+        vars['Pressure'] = 'mslp'
     obj = gefs_subset(ll, ur, path=path, vars=vars)
     # the hours query is a bit complex since it
     # involves interpreting the '..' as slices
