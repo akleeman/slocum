@@ -13,12 +13,21 @@ from optparse import OptionParser
 from cStringIO import StringIO
 
 from sl import poseidon
-from sl.lib import tinylib
+from sl.lib import tinylib, datelib
 from sl.objects import objects
 import smtplib
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
+
+_windbreaker_email = 'wx@saltbreaker.com'
+
+def clean_email_queue(queue_dir):
+    """
+    Removes any unprocessed emails if they are old
+    """
+    emails = [os.path.join(queue_dir, f) for f in os.listdir(queue_dir) if f.endswith('mime')]
+    datelib.remove_old_files(emails, days_old=2)
 
 def args_from_email(email):
     body = get_body(email)
@@ -41,7 +50,7 @@ def create_email(to, fr, body, subject=None, attachments=None):
         to = ','.join(to)
     msg['To'] = to
     msg.preamble = body
-
+    #msg.set_payload(body)
     if attachments:
         for attach_name, attach in attachments.iteritems():
             part = mime.base.MIMEBase('application', "octet-stream")
@@ -58,7 +67,7 @@ def send_email(mime_email):
     fr = mime_email['From']
     s = smtplib.SMTP('localhost')
     server = smtplib.SMTP('mail.saltbreaker.com', 26)
-    server.login('wx@saltbreaker.com', 'w3ath3r')
+    server.login(_windbreaker_email, 'w3ath3r')
     server.sendmail(fr, to, mime_email.as_string())
     s.quit()
 
@@ -80,7 +89,15 @@ def get_body(email):
 
     return filter(len, get_body(msg))
 
-def wind_breaker(mime_text, ncdf_weather=None):
+def send_error(to, body, fr = None):
+    """
+    Sends a simple email and logs at the same time
+    """
+    logger.debug(body)
+    fr = fr or _windbreaker_email
+    send_email(create_email(to, fr, body))
+
+def wind_breaker(mime_text, ncdf_weather=None, catchable_exceptions=None):
     """
     Takes a mime_text email that contains one or several saildoc-like
     requests and replies to the sender with emails containing the
@@ -90,39 +107,65 @@ def wind_breaker(mime_text, ncdf_weather=None):
     email_body = get_body(mime_text)
     logger.debug('Extracted email body')
     if len(email_body) > 1:
-        raise ValueError("expected a single email body")
+        send_error(sender, "Your email contains more than one body")
+        return False
     sender = get_sender(mime_text)
     # Turns a query string into a dict of params
-    queries = list(parse_saildocs(email_body[0]))
+    try:
+        queries = list(parse_saildocs(email_body[0]))
+    except catchable_exceptions, e:
+        send_error(sender,
+                   'Failed to interpret your forecast requests')
+        return False
+    # if there are no queries let the sender know
     if len(queries) == 0:
-        logger.debug('Email did not contain any queries')
-        # if there are no queries let the sender know
-        send_email(create_email(sender, 'wx@saltbreaker.com',
-                                'We were unable to find any forecast requests in your recent email.'))
-    # fore each query we send a seperate email
+        send_error(sender,
+                   'We were unable to find any forecast requests in your recent email.')
+        return False
+    success = True
+    # for each query we send a seperate email
     for query in queries:
-        logger.debug('Processing query')
+        logger.debug('Processing query %s', yaml.dump(query))
         # Aquires a forecast corresponding to a query
-        obj = poseidon.email_forecast(query, path=ncdf_weather)
+        try:
+            obj = poseidon.email_forecast(query, path=ncdf_weather)
+            logger.debug('Obtained the required forecast')
+        except catchable_exceptions, e:
+            send_error(sender,
+                       'Failure getting your forecast from NOAA.')
+            success = False
+            continue
         # could use other extensions:
         # .grb, .grib  < 30kBytes
         # .bz2         < 5kBytes
         # .fcst        < 30kBytes
         # .gfcst       < 15kBytes
-        logger.debug('Obtained the required forecast')
-        tiny_fcst = tinylib.to_beaufort(obj, query['start'], query['end'])
-        forecast_attachment = StringIO(zlib.compress(tiny_fcst, 9))
-        logger.debug('Tinified the forecast')
+        try:
+            tiny_fcst = tinylib.to_beaufort(obj, query['start'], query['end'])
+            compressed_forecast = zlib.compress(tiny_fcst, 9)
+            logger.debug('Tinified the forecast')
+        except catchable_exceptions, e:
+            send_error(sender, "Failure compressing your email")
+            success = False
+            continue
+        logger.debug("Compressed Size: %d" % len(compressed_forecast))
+        # Make sure the forecast file isn't too large for sailmail
+        if 'sailmail' in sender and len(compressed_forecast) > 25000:
+            error_msg = ("Requested forecast was too large for sailmail! %d"
+                         % len(compressed_forecast))
+            send_error(sender, error_msg)
+            success = False
+            continue
+        forecast_attachment = StringIO(compressed_forecast)
         # creates the new mime email
-        weather_email = create_email(sender, 'wx@saltbreaker.com',
-                                      'This forecast has been brought to you by your friends on Saltbreaker.',
+        weather_email = create_email(sender, _windbreaker_email,
+                                      'This forecast brought to you by your friends on Saltbreaker.',
                                       attachments={'windbreaker.fcst': forecast_attachment})
         logger.debug('Sending email to %s' % sender)
         send_email(weather_email)
         logger.debug('Email sent.')
-#        except:
-#            send_email(create_email(sender, 'wx@saltbreaker.com',
-#                                    'Failure processing your query\n\n%s' % yaml.dump(query)))
+    return success
+
 
 def parse_saildocs(email_body):
     """

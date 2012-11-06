@@ -1,12 +1,30 @@
+import os
 import coards
 import numpy as np
+import logging
 import datetime
 
 from dateutil.relativedelta import relativedelta
 
 import sl.objects.conventions as conv
 
+logger = logging.getLogger(os.path.basename(__file__))
+logger.setLevel(logging.DEBUG)
+
 _seconds_in_hour = 3600.
+
+def remove_old_files(files, days_old=3):
+    """
+    Removes any file in list if the file was created more than 'days_old' days ago
+    """
+    files = list(files)
+    remove_if_before = datetime.datetime.now() - datetime.timedelta(days=days_old)
+    created = map(datetime.datetime.fromtimestamp, map(os.path.getctime, files))
+    for f, t in zip(files, created):
+        if t < remove_if_before:
+            logger.debug('removing %d day old file %s' %
+                          ((datetime.datetime.now() - t).days, f))
+            os.remove(f)
 
 def seconds(timedelta):
     return float(timedelta.days * 24 * _seconds_in_hour + timedelta.seconds)

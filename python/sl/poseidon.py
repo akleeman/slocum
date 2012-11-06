@@ -7,6 +7,7 @@ from __future__ import with_statement
 
 import os
 import re
+import copy
 import uuid
 import numpy as np
 import hashlib
@@ -20,6 +21,10 @@ from BeautifulSoup import BeautifulSoup
 
 import sl.objects.conventions as conv
 from sl.objects import objects, units, core
+from sl.lib import datelib
+
+logger = logging.getLogger(os.path.basename(__file__))
+logger.setLevel(logging.DEBUG)
 
 _data_dir = os.path.join(os.path.dirname(__file__), '../../data/')
 _sources = {'ccmp_daily':'ccmp/mean_wind_%Y%m%d_v11l30flk.nc',
@@ -28,6 +33,14 @@ _sources = {'ccmp_daily':'ccmp/mean_wind_%Y%m%d_v11l30flk.nc',
 }
 _ibtracs = 'ibtracs/Allstorms.ibtracs_wmo.v03r02.nc'
 _storms = 'historical_storms.nc'
+
+def clean_data_dir(days=3):
+    dirs = ['gefs', 'nww3']
+    remove_if_before = datetime.datetime.now() - datetime.timedelta(days=3)
+    for d in dirs:
+        fcst_dir = os.path.join(_data_dir, d)
+        fcst_files = [os.path.join(fcst_dir, f) for f in os.listdir(fcst_dir)]
+        datelib.remove_old_files(fcst_files)
 
 def ncdf_subset(url, ll, ur, vars, dir=None, path=None):
     """
@@ -45,18 +58,18 @@ def ncdf_subset(url, ll, ur, vars, dir=None, path=None):
     full_query = urllib.unquote(urllib.urlencode(query))
     # here we have the query for the actual dataset
     url = "%s?%s" % (url, full_query)
-    logging.warn(url)
+    logger.warn(url)
 
     encoded_name = "%s.nc" % str(uuid.UUID(bytes=hashlib.md5(url).digest()))
     dir = dir or 'ncdf_subset'
     path = path or os.path.join(_data_dir, dir, encoded_name)
     if not os.path.exists(path):
-        logging.info("dumping forecast to: %s" % path)
+        logger.info("dumping forecast to: %s" % path)
         urlf = urllib2.urlopen(url)
         with open(path, 'wb') as f:
             f.write(urlf.read())
 
-    logging.warn(path)
+    logger.warn(path)
     obj = objects.Data(ncdf=open(path, 'r'))
 
     if 'ens' in obj.variables and obj['ens'].ndim != 1:

@@ -19,7 +19,7 @@ from matplotlib.widgets import Button, RectangleSelector
 import sl.objects.conventions as conv
 
 from sl.lib import datelib
-from sl.objects import objects
+from sl.objects import objects, core
 from sl import poseidon
 
 beaufort_colors = ['#a1eeff', # light blue
@@ -39,10 +39,13 @@ beaufort_colors = ['#a1eeff', # light blue
 beaufort_cm = colors.ListedColormap(beaufort_colors, 'beaufort_map')
 beaufort_cm.set_over('0.25')
 beaufort_cm.set_under('0.75')
-
 beaufort_bins = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55.])
 beaufort_norm = colors.BoundaryNorm(beaufort_bins, beaufort_cm.N)
 
+direction_colors = ['blue', 'green', 'yellow', 'orange', 'red']
+direction_cm = colors.ListedColormap(direction_colors, 'wind_dir_map')
+direction_bins = np.linspace(0., np.pi, 5)
+direction_norm = colors.BoundaryNorm(direction_bins, direction_cm.N)
 
 def wind_hist(arr, ax=None):
     vals, bins = np.histogram(arr, bins=beaufort_bins, normed=True)
@@ -148,17 +151,20 @@ def plot_wind(fcst, **kwdargs):
     bprev = Button(prev_ax, '<')
     bprev.on_clicked(callback.prev)
 
-    wind_hist(fcst['wind_speed'].data.flatten(), speed_axis)
+    wind_hist(fcst.take([callback.ind], conv.TIME)['wind_speed'].data.flatten(), speed_axis)
     speed_axis.set_title("Wind distribution")
     def show_hist(event):
         if event.inaxes:
             speed_axis.cla()
             lon, lat = m(event.xdata, event.ydata, inverse=True)
-            fcst_lats = np.mod(fcst['lat'].data + 90, 180) - 90
-            lat_ind = np.argmin(np.abs(fcst_lats - np.mod(lat + 90, 180) - 90))
-            grid = fcst.take([lat_ind], 'lat')
+            f = fcst.take([callback.ind], conv.TIME)
+            f.squeeze(conv.TIME)
+            fcst_lats = np.mod(f['lat'].data + 90, 180) - 90
+            requested_lat = np.mod(lat + 90, 180) - 90
+            lat_ind = np.argmin(np.abs(fcst_lats - requested_lat))
+            grid = f.take([lat_ind], 'lat')
             grid.squeeze('lat')
-            fcst_lons = np.mod(fcst['lon'].data, 360)
+            fcst_lons = np.mod(f['lon'].data, 360)
             lon_ind = np.argmin(np.abs(fcst_lons - np.mod(lon, 360)))
             grid = grid.take([lon_ind], 'lon')
             grid.squeeze('lon')
@@ -431,24 +437,61 @@ def plot_passages(passages, etc_var=None):
     fig.suptitle('Time is in %s' % units)
     plt.show()
 
-def add_wind_contours(m, wx):
-        wind_speed = np.sqrt(np.power(wx['uwnd'].data, 2.) + np.power(wx['vwnd'].data, 2.))
-        levels = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60]
-        lines = m.contour(xx, yy, speed,
-                          colors='k',
-                          zorder=7,
-                          levels=levels)
-        filled = m.contourf(xx, yy, speed,
-                            zorder=7,
-                            alpha=0.5,
-                            levels=lines.levels,
-                            cmap=plt.cm.jet,
-                            extend='both')
-        plt.colorbar(filled, drawedges=True)
-        plt.draw()
-
 def plot_passage(passage):
     plot_passages([passage])
+
+def plot_when(date_passages):
+
+    fig = plt.figure()
+    prob_axis = fig.add_axes([0.05, 0.05, 0.8, 0.4])
+    beaufort_bar_axis = fig.add_axes([0.90, 0.05, 0.01, 0.4])
+    direction_axis = fig.add_axes([0.05, 0.5, 0.8, 0.4])
+    direction_bar_axis = fig.add_axes([0.90, 0.5, 0.01, 0.4])
+    # fill in the colorbar
+    colorbar.ColorbarBase(beaufort_bar_axis, cmap=beaufort_cm,
+                               norm=beaufort_norm,
+                               ticks=beaufort_bins,
+                               boundaries=beaufort_bins)
+    direction_bar = colorbar.ColorbarBase(direction_bar_axis, cmap=direction_cm,
+                               norm=direction_norm,
+                               ticks=direction_bins,
+                               boundaries=direction_bins)
+    direction_bar.set_ticklabels(['down', 'broad', 'reach', 'close', 'beat'])
+    all_dates = [datelib.from_coards(x[conv.TIME].data.flatten(),
+                                     x[conv.TIME].attributes[conv.UNITS]) for x in date_passages]
+    start_dates = [min(filter(lambda x : not x is None, x)) for x in all_dates]
+    units = min(start_dates).strftime('days since %Y-%m-%d %H:00:00')
+    if max(np.array([coards.to_udunits(x, units) for x in start_dates])) <= 2:
+        units = units.replace('days', 'hours')
+    times = np.array([coards.to_udunits(x, units) for x in start_dates])
+
+    # plot the percentage of wind exceedence
+    def iter_probs():
+        for passages in date_passages:
+            speed = passages['wind_speed'].data
+            valid_speed = speed[np.isfinite(speed)]
+            sums = np.array([np.sum(valid_speed >= x) for x in beaufort_bins])
+            yield sums / float(valid_speed.size)
+    # drop the first one since wind is always > 0
+    probs = np.array(list(iter_probs()))[:, 1:].T
+    for date_probs, color in zip(probs, beaufort_colors):
+        prob_axis.fill_between(times, date_probs, color=color)
+    prob_axis.set_xlim([0, max(times)])
+
+    # plot the precentage of direction exceedence
+    def iter_direction_probs():
+        for passages in date_passages:
+            direction = passages['rel_wind'].data
+            valid_direction = direction[np.isfinite(direction)]
+            sums = np.array([np.sum(valid_direction >= x) for x in direction_bins])
+            yield sums / float(valid_direction.size)
+
+    direction_probs = np.array(list(iter_direction_probs())).T
+    for dir_probs, color in zip(direction_probs, direction_colors):
+        direction_axis.fill_between(times, dir_probs, color=color)
+    direction_axis.set_xlim([0, max(times)])
+    plt.show()
+    import pdb; pdb.set_trace()
 
 def plot_summaries(passages):
 

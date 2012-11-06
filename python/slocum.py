@@ -72,6 +72,7 @@ from sl.objects import objects, core
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(os.path.basename(__file__))
+logger.setLevel(logging.DEBUG)
 
 def weather(opts, args):
     if opts.grib:
@@ -104,30 +105,40 @@ def handle_simulate(opts, args):
     return 0
 
 def handle_when(opts, args):
+
     wx = list(weather(opts, args))
-    if opts.ensemble:
-        wx = [gfs for gfs, nww3 in wx]
-    else:
-        wx = [weather(opts, args).next()[0]]
     waypoints = opts.waypoints
+
+    ndays = (opts.start_date - opts.end_date).days
+    if ndays > 5:
+        delta = datetime.timedelta(days=1)
+    elif ndays >2:
+        delta = datetime.timedelta(seconds=12*60*60)
+    else:
+        delta = datetime.timedelta(seconds=6*60*60)
+
+    def iterdates():
+        current_date = opts.start_date
+        while current_date < opts.end_date:
+            yield current_date
+            current_date += delta
+
     def simulate(start_date):
-        return spray.ensemble_passage(waypoints, start_date, weather=wx, fast=False)
+        if len(wx) > 1:
+            passages = [spray.passage(waypoints, start_date, ens, fast=opts.fast) for ens in wx]
+            return objects.normalize_ensemble_passages(passages)
+        else:
+            return list(spray.passage(waypoints, start_date, wx, fast=opts.fast))
+        return 0
 
-    start_dates = [opts.start_date + datetime.timedelta(seconds=i*12*3600) for i in xrange(8)]
-    iterroutes = [(waypoints, simulate(d)) for d in start_dates]
-    optimal_passages = spray.optimal_passage(iterroutes)
-    print "best departure", min(datelib.from_udvar(optimal_passages[conv.TIME]))
-
-    passages = spray.normalize_ensemble_passages([x[1] for x in iterroutes])
-    summaries = ((sd, spray.summarize_passage(p)) for sd, (_, p) in
-                 zip(start_dates, passages.iterator(conv.ENSEMBLE)))
-    sd, summary = summaries.next()
-    keys = summary.keys()
-    print '%30s' % 'start_date', '\t'.join('%10s' % k for k in keys)
-    print '%30s' % sd, '\t'.join('%10s' % summary[k] for k in keys)
-    for sd, summary in summaries:
-        print '%30s' % sd, '\t'.join('%10s' % summary[k] for k in keys)
-    plotlib.plot_passages(passages)
+    import base64
+#    f = open('/home/kleeman/slocum/data/passages.dump', 'r')
+#    all_passages = [core.Data(base64.b64decode(x)) for x in f.read().split(',')]
+    all_passages = [simulate(date) for date in iterdates()]
+    f = open('/home/kleeman/slocum/data/passages.dump', 'w')
+    f.write(','.join([base64.b64encode(x.dumps()) for x in all_passages]))
+    f.close()
+    plotlib.plot_when(all_passages)
     return 0
 
 def handle_optimal_routes(opts, args):
@@ -208,10 +219,16 @@ def handle_email_queue(opts, args):
     Processes all MIME e-mails that have been queued up
     and which are expected to reside in --queue-directory
     """
+    # remove any old forecasts so the data directory
+    # doesn't get too large
     if not opts.queue_directory:
         raise ValueError("expected --queue_directory")
     if not os.path.isdir(opts.queue_directory):
         raise ValueError("%s is not a directory" % opts.queue_directory)
+    # remove old emails
+    emaillib.clean_email_queue(opts.queue_directory)
+    # clean out the forecast data directory
+    poseidon.clean_data_dir()
     processed_dir = os.path.join(opts.queue_directory, 'processed')
     if not os.path.exists(processed_dir):
         os.mkdir(processed_dir)
@@ -223,11 +240,21 @@ def handle_email_queue(opts, args):
     for fn in emails:
         full_path = os.path.join(opts.queue_directory, fn)
         logger.debug("processing %s" % full_path)
-        f = open(full_path, 'r')
-        emaillib.wind_breaker(f.read(), opts.grib)
-        f.close()
-        os.rename(full_path, os.path.join(processed_dir, fn))
-
+        try:
+            f = open(full_path, 'r')
+            success = emaillib.wind_breaker(f.read(), opts.grib, opts.exceptions)
+            f.close()
+        except opts.exceptions, e:
+            logger.debug(e)
+            success = False
+        # if processing the email failed in any way we move it to
+        # the failed directory otherwise move to processed
+        if not success:
+            logger.debug("moving %s to failed" % full_path)
+            os.rename(full_path, os.path.join(failed_dir, fn))
+        else:
+            logger.debug("moving %s to processed" % full_path)
+            os.rename(full_path, os.path.join(processed_dir, fn))
     logger.debug("queue processing complete.")
 
 def main(opts=None, args=None):
@@ -251,6 +278,7 @@ def main(opts=None, args=None):
     p.add_option("", "--input", default=None, action="store")
     p.add_option("", "--queue-directory", default=None, action="store")
     p.add_option("", "--start-date", default=None, action="store")
+    p.add_option("", "--end-date", default=None, action="store")
     p.add_option("", "--email", default=False, action="store_true")
     p.add_option("", "--email-queue", default=False, action="store_true")
     p.add_option("", "--plot", default=False, action="store_true")
@@ -274,9 +302,13 @@ def main(opts=None, args=None):
                  help="The grid size for route optimization")
     p.add_option("", "--route-file", default=None, action="store",
                  help="File to store iterated optimal routes in.")
+    p.add_option("", "--fail-hard", default=False, action="store_true",
+                 help="Bypasses graceful error handling")
 
     core.ENSURE_VALID = False
     opts, args = p.parse_args()
+
+    opts.exceptions = None if opts.fail_hard else Exception
 
     opts.input = open(opts.input, 'r') if opts.input else sys.stdin
 
@@ -317,9 +349,15 @@ def main(opts=None, args=None):
             opts.start_date = datetime.datetime.strptime(opts.start_date, '%Y-%m-%dT%H')
     else:
         opts.start_date = datetime.datetime.now()
+    utc = pytz.timezone('UTC')
+    opts.start_date = utc.localize(opts.start_date)
 
-    eastern = pytz.timezone('US/Pacific')
-    opts.start_date = eastern.localize(opts.start_date)
+    if opts.end_date:
+        try:
+            opts.end_date = datetime.datetime.strptime(opts.end_date, '%Y-%m-%d')
+        except:
+            opts.end_date = datetime.datetime.strptime(opts.end_date, '%Y-%m-%dT%H')
+        opts.end_date = utc.localize(opts.end_date)
 
     if opts.simulate:
         handle_simulate(opts, args)
