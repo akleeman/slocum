@@ -9,6 +9,7 @@ import itertools
 
 from email import Parser, mime, encoders
 from email.mime import Multipart
+from email.mime.text import MIMEText
 from optparse import OptionParser
 from cStringIO import StringIO
 
