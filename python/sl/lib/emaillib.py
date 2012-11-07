@@ -49,7 +49,8 @@ def create_email(to, fr, body, subject=None, attachments=None):
     if type(to) == type(list()):
         to = ','.join(to)
     msg['To'] = to
-    msg.preamble = body
+    body = MIMEText(body, 'plain')
+    msg.attach(body)
     #msg.set_payload(body)
     if attachments:
         for attach_name, attach in attachments.iteritems():
