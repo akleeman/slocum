@@ -235,10 +235,14 @@ def handle_email_queue(opts, args):
     failed_dir = os.path.join(opts.queue_directory, 'failed')
     if not os.path.exists(failed_dir):
         os.mkdir(failed_dir)
+    processing_dir = os.path.join(opts.queue_directory, 'processing')
+    if not os.path.exists(processing_dir):
+        os.mkdir(processing_dir)
     emails = [f for f in os.listdir(opts.queue_directory) if f.endswith('.mime')]
     logger.debug("processing %d emails from %s" % (len(emails), opts.queue_directory))
     for fn in emails:
-        full_path = os.path.join(opts.queue_directory, fn)
+        full_path = os.path.join(processing_dir, fn)
+        os.rename(os.path.join(opts.queue_directory, fn), full_path)
         logger.debug("processing %s" % full_path)
         try:
             f = open(full_path, 'r')
