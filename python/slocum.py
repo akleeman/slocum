@@ -212,54 +212,21 @@ def handle_email(opts, args):
     a saildocs-like request and replying to the sender with
     an packed ensemble forecast.
     """
-    emaillib.wind_breaker(opts.input.read(), opts.grib)
+    opts.output = open(opts.output, 'w') if opts.output else None
+    emaillib.wind_breaker(opts.input.read(), opts.grib, opts.output)
 
 def handle_email_queue(opts, args):
     """
     Processes all MIME e-mails that have been queued up
     and which are expected to reside in --queue-directory
     """
-    # remove any old forecasts so the data directory
-    # doesn't get too large
     if not opts.queue_directory:
         raise ValueError("expected --queue_directory")
-    if not os.path.isdir(opts.queue_directory):
-        raise ValueError("%s is not a directory" % opts.queue_directory)
-    # remove old emails
-    emaillib.clean_email_queue(opts.queue_directory)
-    # clean out the forecast data directory
-    poseidon.clean_data_dir()
-    processed_dir = os.path.join(opts.queue_directory, 'processed')
-    if not os.path.exists(processed_dir):
-        os.mkdir(processed_dir)
-    failed_dir = os.path.join(opts.queue_directory, 'failed')
-    if not os.path.exists(failed_dir):
-        os.mkdir(failed_dir)
-    processing_dir = os.path.join(opts.queue_directory, 'processing')
-    if not os.path.exists(processing_dir):
-        os.mkdir(processing_dir)
-    emails = [f for f in os.listdir(opts.queue_directory) if f.endswith('.mime')]
-    logger.debug("processing %d emails from %s" % (len(emails), opts.queue_directory))
-    for fn in emails:
-        full_path = os.path.join(processing_dir, fn)
-        os.rename(os.path.join(opts.queue_directory, fn), full_path)
-        logger.debug("processing %s" % full_path)
-        try:
-            f = open(full_path, 'r')
-            success = emaillib.wind_breaker(f.read(), opts.grib, opts.exceptions)
-            f.close()
-        except opts.exceptions, e:
-            logger.debug(e)
-            success = False
-        # if processing the email failed in any way we move it to
-        # the failed directory otherwise move to processed
-        if not success:
-            logger.debug("moving %s to failed" % full_path)
-            os.rename(full_path, os.path.join(failed_dir, fn))
-        else:
-            logger.debug("moving %s to processed" % full_path)
-            os.rename(full_path, os.path.join(processed_dir, fn))
-    logger.debug("queue processing complete.")
+    opts.output = open(opts.output, 'w') if opts.output else None
+    emaillib.windbreaker_queue(opts.queue_directory,
+                               ncdf_weather=opts.grib,
+                               catchable_exceptions=opts.exceptions,
+                               output=opts.output)
 
 def main(opts=None, args=None):
     p = OptionParser(usage="""%%prog [options]
@@ -280,6 +247,7 @@ def main(opts=None, args=None):
     p.add_option("", "--waypoints", default=None, action="store",
         help="lat,lon:lat,lon:lat,lon")
     p.add_option("", "--input", default=None, action="store")
+    p.add_option("", "--output", default=None, action="store")
     p.add_option("", "--queue-directory", default=None, action="store")
     p.add_option("", "--start-date", default=None, action="store")
     p.add_option("", "--end-date", default=None, action="store")

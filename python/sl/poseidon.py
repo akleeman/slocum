@@ -181,6 +181,29 @@ def ensure_corners(ur, ll, expand=True):
         ll.lon -= 1
     return ur, ll
 
+def parse_saildocs_hours(hours_str):
+    # the hours query is a bit complex since it
+    # involves interpreting the '..' as slices
+    prev = 0
+    for hr in hours_str.split(','):
+        if '..' in hr:
+            low, high = map(float, hr.split('..'))
+            diff = low - prev
+            if np.mod((high - low), diff):
+                # the step size will not be integer valued
+                # not sure how to handle that so for now just
+                # yield the low and high value
+                hours = [low, high]
+            else:
+                hours = np.linspace(low, high,
+                                    num = ((high - low) / diff) + 1,
+                                    endpoint=True)
+        else:
+            hours = map(float, [hr])
+        for x in hours:
+            prev = x
+            yield x
+
 def email_forecast(query, path=None):
     ll = objects.LatLon(query['lower'], query['left'])
     ur = objects.LatLon(query['upper'], query['right'])
@@ -196,37 +219,36 @@ def email_forecast(query, path=None):
     if 'pressure' in query['vars']:
         vars['Pressure'] = 'mslp'
     obj = gefs_subset(ll, ur, path=path, vars=vars)
-    # the hours query is a bit complex since it
-    # involves interpreting the '..' as slices
-    all_inds = np.arange(obj.dimensions['time'])
-    def time_ind_generator(hours_str):
-        """Parses a saildocs string of desired hours"""
-        for hr in hours_str.split(','):
-            if '..' in hr:
-                low, high = map(float, hr.split('..'))
-                low_ind = np.nonzero(obj['time'].data == low)[0][0]
-                high_ind = np.nonzero(obj['time'].data == high)[0][0]
-                for x in all_inds[low_ind:(high_ind + 1)]:
-                    yield x
-            else:
-                yield np.nonzero(obj['time'].data == float(hr))[0][0]
-    time_inds = list(time_ind_generator(query['hours']))
-    obj = obj.take(time_inds, 'time')
+    iter_hours = parse_saildocs_hours(query['hours'])
 
+    def time_inds(hours):
+        """determines which indices extract the required hours"""
+        for hr in hours:
+            inds = np.nonzero(obj['time'].data == float(hr))
+            if len(inds) == 1 and inds[0].size == 1:
+                # only yield an hour index if we know it exists
+                yield inds[0][0]
+
+    time_inds = list(time_inds(iter_hours))
+    obj = obj.take(time_inds, 'time')
     lats = np.linspace(ll.lat, ur.lat,
-                       num = (ur.lat - ll.lat) / query['grid_delta'] + 1,
+                       num = (ur.lat - ll.lat) + 1,
                        endpoint=True)
+    lats = lats[::query['grid_delta']]
     lons = np.linspace(ll.lon, ur.lon,
-                       num = (ur.lon - ll.lon) / query['grid_delta'] + 1,
+                       num = (ur.lon - ll.lon) + 1,
                        endpoint=True)
-    lat_inds = np.concatenate([np.nonzero(obj['lat'].data == x)[0] for x in lats])
+    lons = lons[::query['grid_delta']]
+    lat_inds = np.concatenate([np.nonzero(obj[conv.LAT].data == x)[0] for x in lats])
     if not lat_inds.size:
         raise ValueError("forecast lats don't overlap with the requested lats")
-    lon_inds = np.concatenate([np.nonzero(obj['lon'].data == x)[0] for x in lons])
+    lon_inds = np.concatenate([np.nonzero(obj[conv.LON].data == x)[0] for x in lons])
     if not lon_inds.size:
         raise ValueError("forecast lons don't overlap with the requested lons")
-    obj = obj.take(lat_inds, 'lat')
-    obj = obj.take(lon_inds, 'lon')
+    obj = obj.take(lat_inds, conv.LAT)
+    obj = obj.take(lon_inds, conv.LON)
+    if 'ensembles' in query:
+        obj = obj.take(np.arange(query['ensembles']), conv.ENSEMBLE)
     return obj
 
 def forecast_weather(start_date, ur, ll, recent=False):

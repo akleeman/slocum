@@ -241,6 +241,11 @@ class WindMap(object):
 
         fc_time = datelib.from_udvar(fcst[conv.TIME])[0]
         self.axis.set_title(fc_time.strftime('%A %B %d at %H:%M GMT'))
+        if conv.PRECIP in fcst.variables:
+            pp = np.sum(fcst[conv.PRECIP].data == 0.25, axis=0).astype('float')
+            pp /= float(fcst[conv.PRECIP].data.shape[0])
+            pp = pp.squeeze()
+            self.precip_pcolor = self.axis.pcolor(self.x, self.y, pp, cmap=cm.Greens, alpha=0.5)
         self.circles = list(iter_circles())
 
     def update(self, fcst):
@@ -264,6 +269,12 @@ class WindMap(object):
         for wind_circle, point_forecast in zip(self.circles, iter_point()):
             wind_circle.update(point_forecast['wind_speed'].data,
                                point_forecast['wind_dir'].data)
+        if conv.PRECIP in fcst.variables:
+            pp = np.sum(fcst[conv.PRECIP].data > 0., axis=0).astype('float')
+            pp /= float(fcst[conv.PRECIP].data.shape[0])
+            pp = pp.squeeze()
+            self.precip_pcolor.set_visible(False)
+            self.precip_pcolor = self.axis.pcolor(self.x, self.y, pp, cmap=cm.Greens, alpha=0.5)
 
     def draw(self):
         [wind_circle.draw() for wind_circle in self.circles]

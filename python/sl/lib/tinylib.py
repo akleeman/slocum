@@ -13,6 +13,12 @@ from sl import poseidon, spray
 from sl.lib import pupynere, numpylib
 from sl.objects import objects, core
 
+def quantile(arr, q):
+    if not arr.ndim == 1:
+        raise ValueError("quantile expects a 1d array")
+    arr = np.sort(arr)
+
+
 def pack_ints(arr, req_bits = None):
     """
     Takes an arry of integers
@@ -126,7 +132,7 @@ def tiny_unmasked(arr, bits=None, divs=None):
 def tiny_bool(arr, mask=None):
     if not arr.dtype == 'bool':
         raise ValueError("expected a boolean valued array")
-    return tiny_array(arr, bits=1, divs=np.array([0., 1.e-6, np.inf]), mask=mask)
+    return tiny_array(arr, bits=1, divs=np.array([0., 1.]), mask=mask)
 
 def expand_bool(packed_array, bits, shape, divs, dtype=None, masked=False, mask=None, **kwdargs):
     if masked:
@@ -154,8 +160,13 @@ def expand_unmasked(packed_array, bits, shape, divs, dtype=None, **kwdargs):
     recovered = expand_array(**tiny)
     """
     dtype = dtype or divs.dtype
-    bins = unpack_ints(packed_array, bits, shape)
-    return divs[bins].astype(dtype).reshape(shape)
+    ndivs = divs.size
+    lower_bins = unpack_ints(packed_array, bits, shape)
+    if dtype == np.dtype('bool'):
+        return lower_bins.astype('bool')
+    upper_bins = np.minimum(lower_bins + 1, ndivs - 1)
+    averages = 0.5 * (divs[lower_bins] + divs[upper_bins])
+    return averages.astype(dtype).reshape(shape)
 
 def tiny_masked(arr, mask=None, bits=None, divs=None):
     if mask is None:
@@ -198,9 +209,9 @@ def rhumbline_slice(start, end, lats, lons, max_dist=180):
     mask = np.array(list(iter_distances())).reshape(grid_lon.shape)
     return mask
 
-_cloud_scale = np.array([0., np.inf])
-_precip_scale = np.array([0., 1e-2, 0.25, np.inf])
-_beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., np.inf])
+_binary_scale = np.array([0., 1.])
+_precip_scale = np.array([0., 1e-2, 0.25, 10.])
+_beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., 75.])
 def to_beaufort(obj, start=None, end=None):
     if (start is None and end) or (start and end is None):
         raise ValueError("expected both start and end or neither")
@@ -251,18 +262,26 @@ def to_beaufort(obj, start=None, end=None):
     encoded_variables[conv.WIND_DIR] = tiny_direction
 
     if conv.PRECIP in obj.variables:
-        tiny_precip = tiny_array(obj[conv.PRECIP], bits=2, divs=_precip_scale, mask=mask)
+        is_rainy = obj[conv.PRECIP].data > 2. # greater than 2 mm of rain
+        tiny_precip = tiny_bool(is_rainy, mask=mask)
         tiny_precip['encoded_array'] = tiny_precip.pop('packed_array').tostring()
         tiny_precip['attributes'] = dict(obj[conv.PRECIP].attributes)
         tiny_precip['dims'] = dims
         encoded_variables[conv.PRECIP] = tiny_precip
 
     if conv.CLOUD in obj.variables:
-        tiny_cloud = tiny_array(obj[conv.CLOUD], bits=1, divs=_cloud_scale, mask=mask)
+        tiny_cloud = tiny_array(obj[conv.CLOUD].data, bits=4, mask=mask)
         tiny_cloud['encoded_array'] = tiny_cloud.pop('packed_array').tostring()
-        tiny_cloud['attributes'] = dict(obj[conv.cloud].attributes)
+        tiny_cloud['attributes'] = dict(obj[conv.CLOUD].attributes)
         tiny_cloud['dims'] = dims
         encoded_variables[conv.CLOUD] = tiny_cloud
+
+    if conv.PRESSURE in obj.variables:
+        tiny_pres = tiny_array(obj[conv.PRESSURE].data, bits=4, mask=mask)
+        tiny_pres['encoded_array'] = tiny_pres.pop('packed_array').tostring()
+        tiny_pres['attributes'] = dict(obj[conv.PRESSURE].attributes)
+        tiny_pres['dims'] = dims
+        encoded_variables[conv.PRESSURE] = tiny_pres
 
     info = {}
     info['dimensions'] = dims
@@ -270,6 +289,9 @@ def to_beaufort(obj, start=None, end=None):
     info['variables'] = encoded_variables
     info['start'] = start or ''
     info['end'] = end or ''
+
+    for k, v in encoded_variables.iteritems():
+        print '%10d\t%s' % (len(v['encoded_array']), k)
     return yaml.dump(info)
 
 def from_beaufort(yaml_dump):
