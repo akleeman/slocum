@@ -1957,9 +1957,9 @@ class Data(object):
             # former have a copy() method, while the latter are
             # immutable
             if hasattr(self.attributes[attr], 'copy'):
-                obj.set_attribute(attr, self.attributes[attr].copy())
+                obj.attributes.__setattr__(attr, self.attributes[attr].copy())
             else:
-                obj.set_attribute(attr, self.attributes[attr])
+                obj.attributes.__setattr__(attr, self.attributes[attr])
         return obj
 
 class Variable(object):

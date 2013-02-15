@@ -201,8 +201,9 @@ def handle_plot(opts, args):
     """
     if not opts.fcst:
         raise ValueError("point to a windbreaker file with --fcst")
-    f = open(opts.fcst, 'r')
-    unzipped = zlib.decompress(f.read())
+    #f = open(opts.fcst, 'r')
+    #unzipped = zlib.decompress(f.read())
+    unzipped = open(opts.fcst, 'r')
     fcst = tinylib.from_beaufort(unzipped)
     plotlib.plot_wind(fcst)
 
@@ -213,7 +214,7 @@ def handle_email(opts, args):
     an packed ensemble forecast.
     """
     opts.output = open(opts.output, 'w') if opts.output else None
-    emaillib.wind_breaker(opts.input.read(), opts.grib, opts.output)
+    emaillib.windbreaker(opts.input.read(), opts.grib, opts.output)
 
 def handle_email_queue(opts, args):
     """

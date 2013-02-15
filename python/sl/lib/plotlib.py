@@ -49,7 +49,9 @@ direction_norm = colors.BoundaryNorm(direction_bins, direction_cm.N)
 
 def wind_hist(arr, ax=None):
     vals, bins = np.histogram(arr, bins=beaufort_bins, normed=True)
-    hist_ret = ax.fill_between(beaufort_bins[1:], vals, color='r')
+    hist_ret = ax.fill_between(beaufort_bins.repeat(2)[1:-1],
+                               vals.repeat(2), color='r')
+    ax.set_xlim([0, np.max(beaufort_bins)])
     return hist_ret
 
 def axis_figure(axis=None, figure=None):
@@ -74,15 +76,14 @@ class ButtonIndex(object):
         self.drawfunc = drawfunc
 
     def draw(self):
-        i = self.ind % self.n
-        self.drawfunc(i)
+        self.drawfunc(self.ind)
 
     def next(self, event):
-        self.ind += 1
+        self.ind = (self.ind + 1) % self.n
         self.draw()
 
     def prev(self, event):
-        self.ind -= 1
+        self.ind = (self.ind - 1) % self.n
         self.draw()
 
 def frame_off(axis):
@@ -107,12 +108,19 @@ def plot_wind(fcst, **kwdargs):
 
     info_axis.set_axis_bgcolor(fig.get_facecolor())
     frame_off(info_axis)
+
+    direc_axis.set_axis_bgcolor(fig.get_facecolor())
+    win = direc_axis.get_window_extent()
+    direc_axis.set_ylim([-1, 1])
+    range = (win.xmax - win.xmin) / float(win.ymax - win.ymin)
+    direc_axis.set_xlim([-range, range])
+    frame_off(direc_axis)
     # fill in the colorbar
     cb = colorbar.ColorbarBase(cb_axis, cmap=beaufort_cm,
                                norm=beaufort_norm,
                                ticks=beaufort_bins,
                                boundaries=beaufort_bins)
-
+    import pdb; pdb.set_trace()
     original_forecast = copy.deepcopy(fcst)
 
     def draw_map(f, map_axis):
@@ -151,7 +159,11 @@ def plot_wind(fcst, **kwdargs):
     bprev = Button(prev_ax, '<')
     bprev.on_clicked(callback.prev)
 
-    wind_hist(fcst.take([callback.ind], conv.TIME)['wind_speed'].data.flatten(), speed_axis)
+    fc = fcst.take([callback.ind], conv.TIME)
+    wind_hist(fc['wind_speed'].data.flatten(), speed_axis)
+    indiv_circle = WindCircle(0., 0., np.zeros(fc.dimensions[conv.ENSEMBLE]),
+                                      np.zeros(fc.dimensions[conv.ENSEMBLE]),
+                                      radius=1, ax=direc_axis)
     speed_axis.set_title("Wind distribution")
     def show_hist(event):
         if event.inaxes:
@@ -168,11 +180,15 @@ def plot_wind(fcst, **kwdargs):
             lon_ind = np.argmin(np.abs(fcst_lons - np.mod(lon, 360)))
             grid = grid.take([lon_ind], 'lon')
             grid.squeeze('lon')
-            wind_hist(grid['wind_speed'].data.flatten(), speed_axis)
+            speeds = grid['wind_speed'].data.flatten()
+            directions = grid['wind_dir'].data.flatten()
+            wind_hist(speeds, speed_axis)
             speed_axis.set_title('Wind distribution at %d, %d' %
                                 (grid['lat'].data[0], grid['lon'].data[0]))
             speed_axis.set_ylim([0, speed_axis.get_ylim()[1]])
             speed_axis.set_yticks([])
+            indiv_circle.update(speeds, directions)
+            indiv_circle.draw()
             plt.draw()
     plt.connect('button_press_event', show_hist)
 
@@ -206,7 +222,7 @@ def plot_wind(fcst, **kwdargs):
 
     toggle_selector.RS = RectangleSelector(map_axis, line_select_callback,
                                            drawtype='box', useblit=True,
-                                           button=[1,3], # don't use middle button
+                                           #button=[1,3], # don't use middle button
                                            minspanx=5, minspany=5,
                                            spancoords='data')
 

@@ -87,7 +87,6 @@ def rhumbline_bearing(a, b):
     b = b.as_rad()
     delta_lon = b.lon - a.lon
     stretched_lat = np.log(np.tan(b.lat/2.+np.pi/4.)/np.tan(a.lat/2.+np.pi/4.))
-
     return np.arctan2(delta_lon, stretched_lat)
 
 def rhumbline_distance(a, b):

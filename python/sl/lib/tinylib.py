@@ -209,8 +209,6 @@ def rhumbline_slice(start, end, lats, lons, max_dist=180):
     mask = np.array(list(iter_distances())).reshape(grid_lon.shape)
     return mask
 
-_binary_scale = np.array([0., 1.])
-_precip_scale = np.array([0., 1e-2, 0.25, 10.])
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., 75.])
 def to_beaufort(obj, start=None, end=None):
     if (start is None and end) or (start and end is None):
@@ -386,7 +384,7 @@ def test():
     ur = objects.LatLon(11, 280)
     ll = objects.LatLon(-2, 267)
 
-    gefs = poseidon.gefs_subset(ur=ur, ll=ll, path='/home/kleeman/slocum/data/gefs/1700c04d-7141-037f-b752-28146e346bde.nc')
+    gefs = poseidon.gefs_subset(ur=ur, ll=ll, path='/home/kleeman/slocum/data/gefs/abed8fee-7f77-cda2-e4ab-7b7129473c29.nc')
     ret = to_beaufort(gefs)
     f = open('/home/kleeman/Desktop/beaufort.yaml', 'w')
     f.write(ret)
@@ -394,7 +392,7 @@ def test():
 
     f = open('/home/kleeman/Desktop/beaufort.yaml', 'r')
     reconstructed = from_beaufort(f.read())
-
+    import pdb; pdb.set_trace()
     np.random.seed(1982)
     tmp = np.random.normal(size=(101,))
     ret, divs = tiny_array(tmp.copy())
