@@ -1,0 +1,18 @@
+# Must got first
+simplejson
+
+# The order of these do not matter
+BeautifulSoup
+email
+ftplib
+itertools
+coards
+pygrib
+numpy
+ipython
+PyYAML
+scipy
+matplotlib
+
+basemap
+

@@ -1,0 +1,346 @@
+#! /bin/bash -x
+
+# Don't accidentally touch system packages
+export PIP_DOWNLOAD_CACHE=~/.pip/download_cache
+export PIP_REQUIRE_VIRTUALENV=true
+
+DEST=false
+PYTHON_INTERPRETER=$(which python)
+REQUIREMENTS=requirements.txt
+DIR=$(cd "$(dirname "$0")"; pwd)/..
+
+# Exit status
+PIP_INSTALL_ERROR=2
+USAGE_ERROR=1
+VENV_CREATE_ERROR=2
+
+function usage {
+    THIS=$(basename $0)
+
+    echo "Usage: $THIS -d [dest]"
+    echo
+    echo "Arguments available:
+    -d  Where to create the virtualenv
+    -p  Python intepreter to use
+    -r  Requirements file to consume
+
+    Examples:
+
+    user# $THIS -d ~/venv/
+    user# $THIS -d ~/venv/ -r requirements_minimal.txt
+    user# $THIS -p /usr/bin/python2.7 -d ~/venv/
+    "
+
+    exit $USAGE_ERROR
+}
+
+function activate_virtualenv {
+    pushd $DEST > /dev/null
+    . bin/activate
+
+    # Validate activation
+    if python -c 'import virtualenv' 2>&1 | grep -q 'No module'; then
+        echo "Virtualenv successfully activated (temporarily)"
+    else
+        echo "Unable to activate the env, please try manually"
+        exit 1
+    fi
+
+    # Link the python version for this virtualenv
+    cd ..
+    if [ -h python ]; then
+        rm -f python
+    fi
+    ln -s python$(python_version) python
+
+    popd > /dev/null
+}
+
+function analyze_package_changes {
+    pushd $DEST > /dev/null
+    changes=$(diff -u $REQUIREMENTS{.previous,} 2> /dev/null)
+    if [ "$changes" != '' ]; then
+        echo
+        echo "Package changes introduced:"
+        echo "$changes"
+    else
+        echo
+        echo "No virtualenv changes made to $DEST"
+    fi
+    popd > /dev/null
+}
+
+function checksum {
+    f=$1
+    if [ "$(os_type)" == 'Linux' ]; then
+        md5sum $f | awk '{print $1}'
+    else
+        md5 $f | awk '{print $4}'
+    fi
+}
+
+function collect_input {
+    while getopts "d:hp:r:" options; do
+        case $options in
+            d ) DEST=$OPTARG;;
+            p ) PYTHON_INTERPRETER=$OPTARG;;
+            r ) REQUIREMENTS=$OPTARG;;
+            * ) usage
+            ;;
+        esac
+    done
+
+    if [ "$DEST" == '' ]; then
+        echo "Please specify the virtualenv destination using: -d"
+        usage
+    fi
+
+    if [ ! -x $PYTHON_INTERPRETER ]; then
+        echo "The specified python vm does not exit: $PYTHON_INTERPRETER"
+        echo "If using ant, consider: -Dpython.interpreter=/usr/bin/python2.5"
+        usage
+    fi
+
+    # We need each virtualenv to be python version specific
+    if [ "$DEST" == false ]; then
+        echo "Virtualenv destination dir has not been specified"
+        usage
+    else
+        DEST="${DEST}/python$(python_version)"
+
+    fi
+}
+
+function compile_blas {
+    md5=5e99e975f7a1e3ea6abcad7c6e7e42e6
+    required=libfblas.a
+    tmp_dir=~/.pip/blas
+    unpacked=BLAS
+
+    mkdir -p $tmp_dir
+    pushd $tmp_dir > /dev/null
+
+    if [ ! -f $tmp_dir/$unpacked/$required ]; then
+        curl -O http://www.netlib.org/blas/blas.tgz
+
+        # We are unable to find any blas version numbers, so currently
+        # hard coding a checksum of the "version" we're using
+#        if [ "$(checksum blas.tgz)" != $md5 ]; then
+#            echo "Downloaded blas.tgz is not the version we need!"
+#            exit 1
+#        fi
+
+        tar -xzf blas.tgz
+        cd $unpacked
+        gfortran -O3 -std=legacy -m64 -fno-second-underscore -fPIC -c *.f
+        ar r $required *.o
+        ranlib $required
+        rm -rf *.o
+        cd ..
+    fi
+
+    export BLAS=$tmp_dir/$unpacked/$required
+    echo "BLAS exported as: $BLAS"
+    popd > /dev/null
+}
+
+function compile_lapack {
+    version='3.3.1'
+    required=libflapack.a
+    tmp_dir=~/.pip/lapack
+    unpacked=lapack-${version}
+
+    mkdir -p $tmp_dir
+    pushd $tmp_dir > /dev/null
+
+    if [ ! -f $tmp_dir/$unpacked/$required ]; then
+        curl -O http://www.netlib.org/lapack/lapack-${version}.tgz
+        tar -xzf lapack-${version}.tgz
+        cd $unpacked
+
+        # Create the make file
+        if [ "$(os_type)" == 'Linux' ]; then
+            cp INSTALL/make.inc.gfortran make.inc
+            sed -i -e 's|-O2|-O2 -m64 -fPIC|g' make.inc
+            sed -i -e 's|-O0|-m64 -fPIC|g' make.inc
+            os_name=LINUX
+        else
+            cp make.inc.example make.inc
+            sed -i -e 's|_LINUX|_DARWIN|g' make.inc
+            echo "" >> make.inc
+            echo ".SUFFIXES : .f .o" >> make.inc
+            echo "" >> make.inc
+            os_name=DARWIN
+        fi
+
+        make lapacklib
+        make clean
+
+        # Note this logic needs to change when we upgrade to a newer
+        # version of lapack.  Specifically it doesn't appear to
+        # generate a file with the os name in it.  Be warned!
+        cp lapack_${os_name}.a $required
+        cd ..
+    fi
+
+    export LAPACK=$tmp_dir/$unpacked/$required
+    echo "LAPACK exported as: $LAPACK"
+    popd > /dev/null
+}
+
+function create_virtualenv {
+    virtualenv --distribute --no-site-packages -p $PYTHON_INTERPRETER $DEST
+    if [ "$?" != 0 ]; then
+        echo "Creation of virtual environment failed"
+        exit $VENV_CREATE_ERROR
+    fi
+}
+
+function export_geos_location {
+    dirs="/usr/include /usr/local/include"
+    for d in $dirs; do
+        if [ -f "$d/geos_c.h" ]; then
+            export GEOS_DIR=$(dirname $d)
+            break
+        fi
+    done
+}
+
+function install_packages {
+    exit_status=0
+    pushd $DEST > /dev/null
+    pip freeze > $REQUIREMENTS.previous
+
+    # Entries in the requirements file get sorted by pip, thus order
+    # of installation cannot be controlled.  In our case some packages
+    # depend on eachother - thus the order matters.  If this were not
+    # the case we'd use the standard pip install -r requirements.txt
+    IFS=$'\n'
+    for line in $(requirements); do
+        cmd="pip --timeout=180 install $line"
+        echo "Running: $cmd"
+
+        # Do the install for realz
+        eval $cmd
+        if [ "$?" != 0 ]; then
+            echo "Incomplete installation of $line"
+            exit $PIP_INSTALL_ERROR
+            break
+        fi
+    done
+
+    # A non zero exit status in the above while loop gets lost, catch
+    # it and make sure we exit this function properly.
+    if [ "$?" != 0 ]; then
+        exit_status=$PIP_INSTALL_ERROR
+    else
+        echo
+        echo "Resulting version of packages in $DEST:"
+        pip freeze | tee "$REQUIREMENTS"
+    fi
+
+    popd > /dev/null
+}
+
+function monkey_patch {
+    if [ $(python_version) == 2.7 ]; then
+        mkdir -p $VIRTUAL_ENV/local
+        for d in lib include; do
+            dest=$VIRTUAL_ENV/local/$d
+            if [ ! -d $dest ]; then
+                ln -s $VIRTUAL_ENV/$d $VIRTUAL_ENV/local/$d
+            fi
+        done
+
+        # https://github.com/pypa/virtualenv/issues/118
+        echo "Python-2.7 detected, monkey patched virtual environment"
+    fi
+}
+
+function set_env_vars {
+    if [ "$(os_type)" == 'Darwin' ]; then
+        export ARCHFLAGS="-arch x86_64"
+        export FFLAGS="-ff2c $ARCHFLAGS"
+
+        PREFIX=/Developer/SDKs/MacOSX10.6.sdk/usr/X11
+        if [ -f /usr/bin/g++-4.2 ]; then
+            export CXX=g++-4.2
+            export CC=gcc-4.2
+            export FC=gfortran-4.2
+            export CFLAGS="-L/usr/lib/gcc/i686-apple-darwin10/4.2.1/x86_64"
+            export LIBRARY_PATH="/usr/lib/gcc/i686-apple-darwin10/4.2.1/x86_64"
+        elif [ -f /usr/bin/g++-4.0 ]; then
+            export CXX=g++-4.0
+            export CC=gcc-4.0
+            export FC=gfortran-4.0
+            export CFLAGS="-L/usr/lib/gcc/i686-apple-darwin10/4.0.1/x86_64"
+            export LIBRARY_PATH="/usr/lib/gcc/i686-apple-darwin10/4.0.1/x86_64"
+        else
+            echo "Unable to find a supported gcc version, do you have Xcode?"
+            exit 1
+        fi
+
+        if [ -d $PREFIX ]; then
+            export CFLAGS="-L$PREFIX/lib $CFLAGS"
+            export CFLAGS="$CFLAGS -I$PREFIX/include"
+            export CFLAGS="$CFLAGS -I$PREFIX/include/freetype2"
+        fi
+    else
+        export CFLAGS="-I/usr/include/gdal"
+
+    fi
+}
+
+function os_type {
+    uname -s | sed -e 's|GNU||g'
+}
+
+function python_version {
+    echo $($PYTHON_INTERPRETER --version 2>&1 | grep -o -E '[0-9.]+' | cut -c 1-3)
+}
+
+function requirements {
+    grep -E '^[^ #]+' $DIR/venv/$REQUIREMENTS
+}
+
+function sanity_check {
+    if [ ${VIRTUAL_ENV:-''} != '' ]; then
+        echo "Please deactivate the currently active env first: $VIRTUAL_ENV"
+        usage
+    elif [ "$(which virtualenv)" == '' ]; then
+        echo "Your environment looks to be missing virtualenv"
+        usage
+    elif [ ! -f "$DIR/venv/$REQUIREMENTS" ] ; then
+        echo "Unable to find requirements file: $REQUIREMENTS"
+        usage
+    fi
+}
+
+#function install_sitecustomize {
+#    mkdir -p $VIRTUAL_ENV/lib/python$(python_version)/site-packages
+#    cp $DIR/python/sitecustomize/wbpath.py $VIRTUAL_ENV/lib/python$(python_version)/site-packages/
+#    cp $DIR/python/sitecustomize/wbpath.pth $VIRTUAL_ENV/lib/python$(python_version)/site-packages/
+#    rm -f $VIRTUAL_ENV/lib/python$(python_version)/site-packages/wbpath.pyc
+#}
+
+function main {
+    collect_input $@
+    sanity_check
+    create_virtualenv
+    activate_virtualenv
+    monkey_patch
+    set_env_vars
+    export_geos_location
+
+    # Dependencies of scipy
+    compile_blas
+    compile_lapack
+
+    # The rest is straight forward
+#    install_sitecustomize
+    install_packages
+    analyze_package_changes
+}
+
+time main $@
+exit 0
