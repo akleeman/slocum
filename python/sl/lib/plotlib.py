@@ -13,7 +13,7 @@ except:
     logging.debug("not loading basemap")
 
 from bisect import bisect
-from matplotlib import pylab, cm, colors, colorbar, patches, cbook
+from matplotlib import pylab, cm, colors, colorbar, patches
 from matplotlib.widgets import Button, RectangleSelector
 
 import sl.objects.conventions as conv
@@ -22,18 +22,18 @@ from sl.lib import datelib
 from sl.objects import objects, core
 from sl import poseidon
 
-beaufort_colors = ['#a1eeff', # light blue
-          '#42b1e5', # darker blue
-          '#60fd4b', # green
-          '#1cea00', # yellow-green
-          '#fbef36', # yellow
-          '#fbc136', # orange
-          '#ff4f02', # red
-          '#ff0e02', # darker-red
-          '#ff00c0', # red-purple
-          '#d925ac', # purple
-          '#b30d8a', # dark purple
-          #'#000000', # black
+beaufort_colors = ['#a1eeff',# light blue
+          '#42b1e5',# darker blue
+          '#60fd4b',# green
+          '#1cea00',# yellow-green
+          '#fbef36',# yellow
+          '#fbc136',# orange
+          '#ff4f02',# red
+          '#ff0e02',# darker-red
+          '#ff00c0',# red-purple
+          '#d925ac',# purple
+          '#b30d8a',# dark purple
+          # '#000000', # black
           ]
 
 beaufort_cm = colors.ListedColormap(beaufort_colors, 'beaufort_map')
@@ -91,6 +91,22 @@ def frame_off(axis):
     axis.set_xticks([])
     axis.set_yticks([])
 
+def draw_map(f, map_axis):
+    lons = f[conv.LON].data
+    lats = f[conv.LAT].data
+    ll = objects.LatLon(min(lats), min(lons))
+    ur = objects.LatLon(max(lats), max(lons))
+    bmap = plot_map(ll, ur, ax=map_axis)
+    bmap.fillcontinents(color='green', lake_color='white')
+    bmap.drawparallels(lats, zorder=5)
+    bmap.drawmeridians(lons, zorder=5)
+    x, y = bmap(*pylab.meshgrid(lons, lats))
+    map_axis.set_xticks(x[-1, :])
+    map_axis.set_xticklabels(['%.0fE' % z for z in lons])
+    map_axis.set_yticks(y[:, 0])
+    map_axis.set_yticklabels(['%.0fN' % z for z in lats])
+    return bmap
+
 def plot_wind(fcst, **kwdargs):
     fig = plt.figure(figsize=(16, 8))
     # the area in which the map is ploted
@@ -120,24 +136,6 @@ def plot_wind(fcst, **kwdargs):
                                norm=beaufort_norm,
                                ticks=beaufort_bins,
                                boundaries=beaufort_bins)
-    import pdb; pdb.set_trace()
-    original_forecast = copy.deepcopy(fcst)
-
-    def draw_map(f, map_axis):
-        lons = f[conv.LON].data
-        lats = f[conv.LAT].data
-        ll = objects.LatLon(min(lats), min(lons))
-        ur = objects.LatLon(max(lats), max(lons))
-        map = plot_map(ll, ur, ax=map_axis)
-        map.fillcontinents(color='green',lake_color='white')
-        map.drawparallels(lats, zorder=5)
-        map.drawmeridians(lons, zorder=5)
-        x, y = map(*pylab.meshgrid(lons,lats))
-        map_axis.set_xticks(x[-1, :])
-        map_axis.set_xticklabels(['%.0fE' % z for z in lons])
-        map_axis.set_yticks(y[:, 0])
-        map_axis.set_yticklabels(['%.0fN' % z for z in lats])
-        return map
 
     m = draw_map(fcst, map_axis)
 
@@ -222,7 +220,7 @@ def plot_wind(fcst, **kwdargs):
 
     toggle_selector.RS = RectangleSelector(map_axis, line_select_callback,
                                            drawtype='box', useblit=True,
-                                           #button=[1,3], # don't use middle button
+                                           # button=[1,3], # don't use middle button
                                            minspanx=5, minspany=5,
                                            spancoords='data')
 
@@ -232,14 +230,14 @@ def plot_wind(fcst, **kwdargs):
 
 class WindMap(object):
 
-    def __init__(self, fcst, base_map, scale = 1):
+    def __init__(self, fcst, base_map, scale=1):
         # This checks to make sure the time dim is length one
         fcst.squeeze(conv.TIME)
         self.base_map = base_map
         self.axis = base_map.ax
         lons = fcst['lon'].data
         lats = fcst['lat'].data
-        self.x, self.y = base_map(*pylab.meshgrid(lons,lats))
+        self.x, self.y = base_map(*pylab.meshgrid(lons, lats))
         self.radius = scale * 0.45 * np.min(np.abs(np.diff(self.x)))
         self.axis.set_ylim([np.min(self.y) - self.radius, np.max(self.y) + self.radius])
         self.axis.set_xlim([np.min(self.x) - self.radius, np.max(self.x) + self.radius])
@@ -269,15 +267,15 @@ class WindMap(object):
         fcst.squeeze(conv.TIME)
         lons = fcst['lon'].data
         lats = fcst['lat'].data
-        x, y = self.base_map(*pylab.meshgrid(lons,lats))
+        x, y = self.base_map(*pylab.meshgrid(lons, lats))
         if not np.all(self.x == x) or not np.all(self.y == y):
             raise ValueError("expected lat lons to be the same")
 
         def iter_point():
             for lat, flat in fcst.iterator('lat'):
-                flat.squeeze('lat')
+                flat = flat.squeeze('lat')
                 for lon, fpoint in flat.iterator('lon'):
-                    fpoint.squeeze('lon')
+                    fpoint = fpoint.squeeze('lon')
                     yield fpoint
 
         fc_time = datelib.from_udvar(fcst[conv.TIME])[0]
@@ -285,6 +283,7 @@ class WindMap(object):
         for wind_circle, point_forecast in zip(self.circles, iter_point()):
             wind_circle.update(point_forecast['wind_speed'].data,
                                point_forecast['wind_dir'].data)
+
         if conv.PRECIP in fcst.variables:
             pp = np.sum(fcst[conv.PRECIP].data > 0., axis=0).astype('float')
             pp /= float(fcst[conv.PRECIP].data.shape[0])
@@ -359,11 +358,11 @@ def wind(x, y, wind_speed, wind_dir, ax=None, fig=None, scale=1.):
 def make_pretty(m, ocean_color='#dcdcdc'):
     # map with continents drawn and filled.
     m.drawcoastlines()
-    m.drawlsmask(land_color='green',ocean_color=ocean_color,lakes=True)
+    m.drawlsmask(land_color='green', ocean_color=ocean_color, lakes=True)
     m.drawcountries()
     # draw parallels and meridians.
-    m.drawparallels(np.arange(-90.,120.,30.))
-    m.drawmeridians(np.arange(0.,420.,60.))
+    m.drawparallels(np.arange(-90., 120., 30.))
+    m.drawmeridians(np.arange(0., 420., 60.))
     m.drawmapboundary(fill_color='aqua')
 
 def plot_passages_map(overlap_passages, ax=None):
@@ -380,12 +379,12 @@ def plot_passages_map(overlap_passages, ax=None):
     m = plot_map(ll, ur, ax=ax)
     m.drawcoastlines()
     m.drawcountries()
-    m.fillcontinents(color='green',lake_color='white')
+    m.fillcontinents(color='green', lake_color='white')
     grid_lats = np.linspace(ll.lat, ur.lat, 5, endpoint=True)
     m.drawparallels(grid_lats, zorder=5)
     grid_lons = np.linspace(ll.lon, ur.lon, 5, endpoint=True)
     m.drawmeridians(grid_lons, zorder=5)
-    x, y = m(*pylab.meshgrid(grid_lons,grid_lats))
+    x, y = m(*pylab.meshgrid(grid_lons, grid_lats))
     m.ax.set_xticks(x[-1, :])
     m.ax.set_xticklabels(['%.1fE' % z for z in grid_lons])
     m.ax.set_yticks(y[:, 0])
@@ -422,7 +421,7 @@ def plot_passages(passages, etc_var=None):
     direc_axis = fig.add_axes([0.04, 0.45, 0.18, 0.2])
     direc_axis.set_title("Relative Wind Direction")
     direc_axis.set_ylim([0, np.pi])
-    direc_axis.set_yticks([0, np.pi/2, np.pi])
+    direc_axis.set_yticks([0, np.pi / 2, np.pi])
     direc_axis.set_yticklabels(['down', 'reach', 'up'])
     wind_speed_axis = fig.add_axes([0.04, 0.75, 0.18, 0.2])
     wind_speed_axis.set_title("Wind Speed")
@@ -458,7 +457,7 @@ def plot_passages(passages, etc_var=None):
             if x < np.pi:
                 return x
             else:
-                return 2*np.pi - x
+                return 2 * np.pi - x
         rel_wind = [rel(np.abs(heading - w.dir)) for heading, w in zip(passage[conv.HEADING], wind)]
         direc_axis.plot(time, rel_wind)
     fig.suptitle('Time is in %s' % units)
@@ -544,7 +543,7 @@ def plot_summaries(passages):
     earliest = min(starts)
     hours = [datelib.hours(x - earliest) for x in starts]
 
-    height = 0.75*np.min(np.diff(hours))
+    height = 0.75 * np.min(np.diff(hours))
 
     upwind = summaries['upwind_hours']
     reach = summaries['reach_hours']
@@ -555,7 +554,7 @@ def plot_summaries(passages):
     ax1 = fig.add_subplot(2, 2, 1)
     ax1.barh(hours, upwind, height=height, color='r', align='center')
     ax1.barh(hours, reach, height=height, left=upwind, color='y', align='center')
-    ax1.barh(hours, downwind, height=height, left=upwind+reach, color='g', align='center')
+    ax1.barh(hours, downwind, height=height, left=upwind + reach, color='g', align='center')
     ax1.set_title('Relative Wind Direction [r=up, y=reach, g=down]')
 
     ax2 = fig.add_subplot(2, 2, 2)
@@ -574,15 +573,15 @@ def plot_summaries(passages):
     plt.show()
 
 def plot_map(ll, ur, proj='lcc', pad=0.25, ax=None):
-    mid = objects.LatLon(0.5*(ll.lat + ur.lat), 0.5*(ll.lon + ur.lon))
+    mid = objects.LatLon(0.5 * (ll.lat + ur.lat), 0.5 * (ll.lon + ur.lon))
 
     lat_deg = max(np.abs(ll.lat - ur.lat), 2)
     lon_deg = max(np.abs(ll.lon - ur.lon), 2)
 
-    llcrnrlon=min(ll.lon, ur.lon) - pad * lon_deg
-    llcrnrlat=min(ll.lat, ur.lat) - pad * lat_deg
-    urcrnrlon=max(ll.lon, ur.lon) + pad * lon_deg
-    urcrnrlat=max(ll.lat, ur.lat) + pad * lat_deg
+    llcrnrlon = min(ll.lon, ur.lon) - pad * lon_deg
+    llcrnrlat = min(ll.lat, ur.lat) - pad * lat_deg
+    urcrnrlon = max(ll.lon, ur.lon) + pad * lon_deg
+    urcrnrlat = max(ll.lat, ur.lat) + pad * lat_deg
 
     m = Basemap(projection=proj,
                 lon_0=mid.lon,
@@ -591,7 +590,7 @@ def plot_map(ll, ur, proj='lcc', pad=0.25, ax=None):
                 llcrnrlat=llcrnrlat,
                 urcrnrlon=urcrnrlon,
                 urcrnrlat=urcrnrlat,
-                rsphere=(6378137.00,6356752.3142),
+                rsphere=(6378137.00, 6356752.3142),
                 area_thresh=1000.,
                 width=np.abs(ll.lon - ur.lon),
                 height=np.abs(ll.lat - ur.lat),
@@ -607,7 +606,7 @@ def plot_route(passage, proj='lcc'):
     ur = objects.LatLon(np.max(lats), np.max(lons))
     ur, ll = poseidon.ensure_corners(ur, ll)
     m = plot_map(ll, ur, proj=proj)
-    xvals, yvals = m(lons,lats)
+    xvals, yvals = m(lons, lats)
     xvals = np.array(xvals)
     yvals = np.array(yvals)
     # draw colored markers.
@@ -617,7 +616,7 @@ def plot_route(passage, proj='lcc'):
     m.barbs(xvals, yvals, passage[conv.UWND].data, passage[conv.VWND].data, zorder=9)
     return m
 
-def plot_routes(routes, colors = None, proj = 'lcc'):
+def plot_routes(routes, colors=None, proj='lcc'):
     first_route = routes[0]
     fig = plt.figure()
 
@@ -639,7 +638,7 @@ def plot_routes(routes, colors = None, proj = 'lcc'):
     for route, color in zip(routes, colors):
         lats = route[conv.LAT].data
         lons = route[conv.LON].data
-        xvals, yvals = m(lons,lats)
+        xvals, yvals = m(lons, lats)
         xvals = np.array(xvals)
         yvals = np.array(yvals)
 
@@ -655,10 +654,10 @@ def plot_field(m, obj, var, **kwdargs):
     lats = obj['lat'].data
     lons = obj['lon'].data
 
-    x, y = m(*pylab.meshgrid(lons,lats))
+    x, y = m(*pylab.meshgrid(lons, lats))
     p = m.imshow(obj[var].data,
-                 interpolation = 'gaussian',
-                 extent = (np.min(x), np.max(x), np.min(y), np.max(y)),
+                 interpolation='gaussian',
+                 extent=(np.min(x), np.max(x), np.min(y), np.max(y)),
                  **kwdargs)
     return p
 
@@ -670,7 +669,7 @@ def plot_barbs(m, obj, uvar, vvar, cmap=None):
     lats = obj['lat'].data
     lons = obj['lon'].data
 
-    x, y = m(*pylab.meshgrid(lons,lats))
+    x, y = m(*pylab.meshgrid(lons, lats))
     U = obj[uvar].data
     V = obj[vvar].data
     return m.barbs(x, y, U, V, flip_barb=False, length=7, cmap=cmap, pivot='middle')
@@ -683,12 +682,12 @@ def plot_quiver(m, obj, uvar, vvar, **kwdargs):
     lats = obj['lat'].data
     lons = obj['lon'].data
 
-    x, y = m(*pylab.meshgrid(lons,lats))
+    x, y = m(*pylab.meshgrid(lons, lats))
     U = obj[uvar].data
     V = obj[vvar].data
     Q = m.quiver(x, y, U, V,
-                pivot='mid', color='r', units='dots' )
-    #qk = quiverkey(Q, 0.5, 0.03, 1, r'$1 \frac{m}{s}$', fontproperties={'weight': 'bold'})
+                pivot='mid', color='r', units='dots')
+    # qk = quiverkey(Q, 0.5, 0.03, 1, r'$1 \frac{m}{s}$', fontproperties={'weight': 'bold'})
     m.plot(x, y, 'k.')
     return Q
 
@@ -698,26 +697,26 @@ def plot_circle(opts, args):
     mercator projection
     """
     fig = plt.subplot(1, 2, 1)
-    ortho = Basemap(projection='ortho',lon_0=opts.start.lon,lat_0=opts.start.lat,resolution='l')
+    ortho = Basemap(projection='ortho', lon_0=opts.start.lon, lat_0=opts.start.lat, resolution='l')
     center = ortho(opts.start.lon, opts.start.lat)
     plotlib.make_pretty(ortho)
     radius = 3000000
-    resol = np.pi/200
-    circle_points = [(center[0] + radius * np.cos(x), center[1] + radius * np.sin(x)) for x in np.arange(0, 2*np.pi, step = resol)]
-    #lat_lons = map(lambda x: ortho(*x, inverse=True), circle_points)
+    resol = np.pi / 200
+    circle_points = [(center[0] + radius * np.cos(x), center[1] + radius * np.sin(x)) for x in np.arange(0, 2 * np.pi, step=resol)]
+    # lat_lons = map(lambda x: ortho(*x, inverse=True), circle_points)
     circlex = [x[0] for x in circle_points]
     circley = [x[1] for x in circle_points]
-    ortho.scatter(circlex, circley, 10, edgecolors='none',zorder=10)
+    ortho.scatter(circlex, circley, 10, edgecolors='none', zorder=10)
 
     fig = plt.subplot(1, 2, 2)
 
-    m = Basemap(projection='merc',llcrnrlat=-80,urcrnrlat=80,\
-            llcrnrlon=-180,urcrnrlon=180,lat_ts=20, resolution='l')
-    #m = Basemap(projection='sinu',lon_0=0,lat_0=0, resolution='l')
+    m = Basemap(projection='merc', llcrnrlat= -80, urcrnrlat=80, \
+            llcrnrlon= -180, urcrnrlon=180, lat_ts=20, resolution='l')
+    # m = Basemap(projection='sinu',lon_0=0,lat_0=0, resolution='l')
     trans_points = [m(*x) for x in lat_lons]
     xs = [x[0] for x in trans_points]
     ys = [x[1] for x in trans_points]
-    m.scatter(xs, ys, 10, edgecolors='none',zorder=10)
+    m.scatter(xs, ys, 10, edgecolors='none', zorder=10)
     plotlib.make_pretty(m)
 
     plt.show()

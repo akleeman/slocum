@@ -9,31 +9,31 @@ import struct
 import unicodedata
 import numpy as np
 
-MAGIC         = 'CDF'
-_31BYTE       = '\x01' # version_byte = 1
-_64BYTE       = '\x02' # version_byte = 2
-NULL          = '\x00'
-ZERO          = '\x00\x00\x00\x00'
-ABSENT        = ZERO * 2
-NC_DIMENSION  = '\x00\x00\x00\x0a'
-NC_VARIABLE   = '\x00\x00\x00\x0b'
-NC_ATTRIBUTE  = '\x00\x00\x00\x0c'
-STREAMING     = '\xff\xff\xff\xff'
-NC_BYTE       = '\x00\x00\x00\x01'
-NC_CHAR       = '\x00\x00\x00\x02'
-NC_SHORT      = '\x00\x00\x00\x03'
+MAGIC = 'CDF'
+_31BYTE = '\x01'# version_byte = 1
+_64BYTE = '\x02'# version_byte = 2
+NULL = '\x00'
+ZERO = '\x00\x00\x00\x00'
+ABSENT = ZERO * 2
+NC_DIMENSION = '\x00\x00\x00\x0a'
+NC_VARIABLE = '\x00\x00\x00\x0b'
+NC_ATTRIBUTE = '\x00\x00\x00\x0c'
+STREAMING = '\xff\xff\xff\xff'
+NC_BYTE = '\x00\x00\x00\x01'
+NC_CHAR = '\x00\x00\x00\x02'
+NC_SHORT = '\x00\x00\x00\x03'
 # netCDF-3 only supports 32-bit integers
-NC_INT        = '\x00\x00\x00\x04'
-NC_FLOAT      = '\x00\x00\x00\x05'
-NC_DOUBLE     = '\x00\x00\x00\x06'
-FILL_BYTE     = '\x81'
-FILL_CHAR     = '\x00'
-FILL_SHORT    = '\x80\x01'
-FILL_INT      = '\x80\x00\x00\x01'
-FILL_FLOAT    = '\x7c\xf0\x00\x00'
-FILL_DOUBLE   = '\x47\x9e\x00\x00\x00\x00'
-NC_BYTE_ORDER = '>' # netCDF-3 uses network byte order
-NC_WORD_LEN   = 4 # netCDF-3 has 4-byte alignment (with some exceptions)
+NC_INT = '\x00\x00\x00\x04'
+NC_FLOAT = '\x00\x00\x00\x05'
+NC_DOUBLE = '\x00\x00\x00\x06'
+FILL_BYTE = '\x81'
+FILL_CHAR = '\x00'
+FILL_SHORT = '\x80\x01'
+FILL_INT = '\x80\x00\x00\x01'
+FILL_FLOAT = '\x7c\xf0\x00\x00'
+FILL_DOUBLE = '\x47\x9e\x00\x00\x00\x00'
+NC_BYTE_ORDER = '>'# netCDF-3 uses network byte order
+NC_WORD_LEN = 4# netCDF-3 has 4-byte alignment (with some exceptions)
 
 # Map between netCDF type and numpy dtype and vice versa. Due to a bug
 # in the __hash__() method of numpy dtype objects (fixed in development
@@ -66,11 +66,11 @@ FILLMAP = {
         # values used as wb conventions for fill values; TODO move this map
         # to a conventions file
         # -999 commonly used as a missing weather value (impossible measurement)
-        np.dtype('int8'): -1,
+        np.dtype('int8'):-1,
         np.dtype('c'): "\x00",
-        np.dtype('int16'): -999,
-        np.dtype('int32'): -999,
-        np.dtype('int64'): -999,
+        np.dtype('int16'):-999,
+        np.dtype('int32'):-999,
+        np.dtype('int64'):-999,
         np.dtype('float32'): np.nan,
         np.dtype('float64'): np.nan,
         np.dtype('bool'): False
@@ -113,14 +113,14 @@ def coerce_type(arr):
     """
     # Comparing the char attributes of numpy dtypes is inelegant, but this is
     # the fastest test of equivalence that is invariant to endianness
-    if arr.dtype.char == 'l': # np.dtype('int64')
+    if arr.dtype.char == 'l':# np.dtype('int64')
         cast_arr = arr.astype(
                 np.dtype('int32').newbyteorder(arr.dtype.byteorder))
         if not (cast_arr == arr).all():
             raise ValueError("array contains integer values that " +
                     "are not representable as 32-bit signed integers")
         return cast_arr
-    elif arr.dtype.char == '?': # np.dtype('bool')
+    elif arr.dtype.char == '?':# np.dtype('bool')
         # bool
         cast_arr = arr.astype(
                 np.dtype('int8').newbyteorder(arr.dtype.byteorder))
@@ -234,7 +234,10 @@ def read_int(f):
     return unpack_int(bytestring)
 
 def pack_int(i):
-    if not isinstance(i, int):
+    try:
+        # this confirms i is an integerlike value
+        np.iinfo(i)
+    except:
         raise TypeError("i must be an int")
     try:
         # size of Python int is platform-dependent, so we need to check that
@@ -282,7 +285,7 @@ def write_int64(f, i):
 def from_udunits(units, index=0):
     return coards.from_udunits(index, units).replace(tzinfo=None)
 
-def char_stack(arr, axis=-1):
+def char_stack(arr, axis= -1):
     """Reduce a character array to an array of fixed-width strings
 
     Given an N-dimensional numpy array whose elements are 1-character
@@ -325,7 +328,7 @@ def char_stack(arr, axis=-1):
         raise RuntimeError, "Character array concatenation failed"
     return out
 
-def char_unstack(arr, axis=-1):
+def char_unstack(arr, axis= -1):
     """Expand an array of fixed-width strings to a character array
 
     Given an N-dimensional numpy array whose elements are strings of

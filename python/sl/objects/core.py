@@ -19,7 +19,7 @@ from cPickle import HIGHEST_PROTOCOL
 from operator import mul, or_
 from cStringIO import StringIO
 
-from sl.lib import ncdflib, numpylib, datelib
+from sl.lib import ncdflib, datelib
 from sl.lib.collections import OrderedDict, FrozenOrderedDict
 import sl.objects.conventions as conv
 
@@ -770,7 +770,10 @@ class Data(object):
                 begin = f.tell()
                 f.seek(begin_field_offsets[name])
                 if self._version_byte == ncdflib._31BYTE:
-                    ncdflib.write_int(f, begin)
+                    try:
+                        ncdflib.write_int(f, begin)
+                    except:
+                        import pdb; pdb.set_trace()
                 elif self._version_byte == ncdflib._64BYTE:
                     ncdflib.write_int64(f, begin)
                 else:
@@ -789,7 +792,7 @@ class Data(object):
             recs = [name for (name, v) in self.variables.iteritems()
                     if self.record_dimension in v.dimensions]
             # Start writing records
-            begin = f.tell() # Remember this position in the file!
+            begin = f.tell()# Remember this position in the file!
             if len(recs) > 1:
                 # Write the file offset for the first record of each record
                 # variable while simultaneously calculating the total record
@@ -1831,17 +1834,17 @@ class Data(object):
             if j == 0 or j == data.size:
                 raise ValueError("value of %6.3f is outside the range of %s"
                                  % (val, coord))
-            i = j-1
+            i = j - 1
             if data[i] == val:
                 return [i, i], 1.0
             else:
-                alpha = np.abs(val - data[j])/np.abs(data[i] - data[j])
+                alpha = np.abs(val - data[j]) / np.abs(data[i] - data[j])
                 assert alpha <= 1. and alpha >= 0.
                 return [i, j], alpha
 
         def weight(obj, inds, coord, w):
             assert len(inds) == 2
-            views = [obj.view(slice(x, x+1), dim=coord) for x in inds]
+            views = [obj.view(slice(x, x + 1), dim=coord) for x in inds]
             if vars is None:
                 vs = [v for v in obj.variables.keys() if coord in obj[v].dimensions]
             else:
@@ -1886,7 +1889,7 @@ class Data(object):
             msg = msg + " required: %s -- given:%s"
             raise ValueError(msg % (str(self[var].dimensions), str(points.keys())))
         # TODO remove this restriction
-        #assert self[var].data.ndim <= 2
+        # assert self[var].data.ndim <= 2
 
         from bisect import bisect
         def neighbors(coord, val):
@@ -1897,11 +1900,11 @@ class Data(object):
             if j == 0 or j == data.size:
                 raise ValueError("value of %6.3f is outside the range of %s"
                                  % (val, coord))
-            i = j-1
+            i = j - 1
             if data[i] == val:
                 return [i, i], 1.0
             else:
-                alpha = np.abs(val - data[j])/np.abs(data[i] - data[j])
+                alpha = np.abs(val - data[j]) / np.abs(data[i] - data[j])
                 assert alpha <= 1. and alpha >= 0.
                 return [i, j], alpha
 
@@ -1913,7 +1916,7 @@ class Data(object):
         ret = ret.T
         for inds, alpha in nhbrs:
             ndim = ret.ndim
-            ret = np.dot(ret, [alpha, 1.-alpha])
+            ret = np.dot(ret, [alpha, 1. - alpha])
             if ret.ndim == ndim:
                 raise ValueError("dot did not reduce the dimension")
                 # for some reason np.dot doesn't always reduce the dimension

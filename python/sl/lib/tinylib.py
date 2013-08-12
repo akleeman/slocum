@@ -19,7 +19,7 @@ def quantile(arr, q):
     arr = np.sort(arr)
 
 
-def pack_ints(arr, req_bits = None):
+def pack_ints(arr, req_bits=None):
     """
     Takes an arry of integers
     """
@@ -40,7 +40,7 @@ def pack_ints(arr, req_bits = None):
     vals_per_int = out_bits / req_bits
     # required is the number of required elements in the array
     required = np.ceil(float(arr.size) * req_bits / out_bits)
-    output = np.zeros(shape=(required, ), dtype=np.uint8)
+    output = np.zeros(shape=(required,), dtype=np.uint8)
     # iterate over each input element
     for i, x in enumerate(arr.flatten()):
         # determine which index
@@ -69,7 +69,7 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
         raise ValueError("the bit encoding doesn't line up")
     # how many values are in each int?
     vals_per_int = enc_bits / bits
-    size = reduce(lambda x, y : x*y, shape)
+    size = reduce(lambda x, y : x * y, shape)
     # the masks are used for logical AND comparisons to retrieve the values
     masks = [(2 ** bits - 1) << i * bits for i in range(vals_per_int)]
     # iterate over array values until we've generated enough values to
@@ -83,7 +83,7 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
             # recover the packed values.  Note that this will always generate
             # 'vals_per_int' values but sometimes we only need a few which is
             # why we select out the first nvals
-            reversed_vals = [(x & y) >> j*bits for j, y in enumerate(masks)][:nvals]
+            reversed_vals = [(x & y) >> j * bits for j, y in enumerate(masks)][:nvals]
             for v in reversed(reversed_vals):
                 yield v
             cnt += len(reversed_vals)
@@ -107,7 +107,7 @@ def tiny_unmasked(arr, bits=None, divs=None):
     Returns a dictionary holding all the required arguments for expand_array
     """
     if divs is None:
-        bits = bits or 4 # it doesn't make sense to store anything larger than this
+        bits = bits or 4# it doesn't make sense to store anything larger than this
         n = np.power(2., bits)
         lower = np.min(arr)
         upper = np.max(arr)
@@ -136,10 +136,10 @@ def tiny_bool(arr, mask=None):
 
 def expand_bool(packed_array, bits, shape, divs, dtype=None, masked=False, mask=None, **kwdargs):
     if masked:
-        return expand_masked(mask, packed_array, bits = 1, shape=shape,
+        return expand_masked(mask, packed_array, bits=1, shape=shape,
                             divs=np.array([False, True]), dtype=np.bool)
     else:
-        return expand_array(packed_array, bits = 1, shape=shape,
+        return expand_array(packed_array, bits=1, shape=shape,
                             divs=np.array([False, True]), dtype=np.bool)
 
 def expand_array(packed_array, bits, shape, divs, dtype=None, masked=False, mask=None, **kwdargs):
@@ -235,9 +235,9 @@ def to_beaufort(obj, start=None, end=None):
     encoded_variables = {}
     for v in coords:
         encoded_variables[v] = {'encoded_array':obj[v].data.tostring(),
-                                'bits' : int(0), # bits
+                                'bits' : int(0),# bits
                                 'shape' : obj[v].shape,
-                                'divs' : int(0), # divs
+                                'divs' : int(0),# divs
                                 'dtype' : str(obj[v].data.dtype),
                                 'attributes' : dict(obj[v].attributes),
                                 'dims' : obj[v].dimensions}
@@ -251,16 +251,16 @@ def to_beaufort(obj, start=None, end=None):
     encoded_variables[conv.WIND_SPEED] = tiny_wind
 
     # convert the direction to cardinal directions and store them
-    direction_bins = np.arange(-np.pi, np.pi, step=np.pi/8)
+    direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
     directions = np.array([x.dir for x in wind]).reshape(uwnd.shape)
-    tiny_direction =  tiny_array(directions, bits=4, divs=direction_bins, mask=mask)
+    tiny_direction = tiny_array(directions, bits=4, divs=direction_bins, mask=mask)
     tiny_direction['encoded_array'] = tiny_direction.pop('packed_array').tostring()
     tiny_direction['attributes'] = dict(obj[conv.UWND].attributes)
     tiny_direction['dims'] = dims
     encoded_variables[conv.WIND_DIR] = tiny_direction
 
     if conv.PRECIP in obj.variables:
-        is_rainy = obj[conv.PRECIP].data > 2. # greater than 2 mm of rain
+        is_rainy = obj[conv.PRECIP].data > 2.# greater than 2 mm of rain
         tiny_precip = tiny_bool(is_rainy, mask=mask)
         tiny_precip['encoded_array'] = tiny_precip.pop('packed_array').tostring()
         tiny_precip['attributes'] = dict(obj[conv.PRECIP].attributes)
@@ -321,11 +321,11 @@ def from_beaufort(yaml_dump):
     dims = obj['wind_speed'].dimensions
     vwnd = -np.cos(obj['wind_dir'].data) * obj['wind_speed'].data
     uwnd = -np.sin(obj['wind_dir'].data) * obj['wind_speed'].data
-    obj.create_variable('vwnd', dim = dims, data = vwnd, attributes={'units':'knots'})
-    obj.create_variable('uwnd', dim = dims, data = uwnd, attributes={'units':'knots'})
+    obj.create_variable('vwnd', dim=dims, data=vwnd, attributes={'units':'knots'})
+    obj.create_variable('uwnd', dim=dims, data=uwnd, attributes={'units':'knots'})
     return obj
 
-#def tiny(obj, vars, stream=None):
+# def tiny(obj, vars, stream=None):
 #    info = {}
 #    vars = set(vars)
 #    dims = set()
@@ -353,7 +353,7 @@ def from_beaufort(yaml_dump):
 #    info['variables'] = encoded_variables
 #    return yaml.dump(info, stream=stream)
 #
-#def huge(tiny_string):
+# def huge(tiny_string):
 #    info = yaml.load(tiny_string)
 #
 #    obj = core.Data()

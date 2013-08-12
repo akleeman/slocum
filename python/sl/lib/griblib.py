@@ -1,16 +1,16 @@
 import os
+import grib2
 import numpy as np
 import coards
-try:
-    import pygrib
-except:
-    pass
+import pygrib
 import itertools
 
-from datetime import datetime, timedelta
+from cStringIO import StringIO
+from datetime import datetime
 
 import sl.objects.conventions as conv
 
+from sl.lib import datelib
 from sl.objects import core, units
 
 codes = {
@@ -154,7 +154,6 @@ def degrib(fn):
     It is assumed that all messages for each group of grids have the same times.
     If this is not the case an exception is thrown
     """
-
     if not os.path.exists(fn):
         raise ValueError("grib file %s does not exist" % fn)
 
@@ -179,7 +178,6 @@ def degrib(fn):
             def iterate():
                 # processes each message returning the date and values
                 g = var_group.next()
-                refdate = datetime(g.year, g.month, g.day, g.hour, g.minute, g.second)
                 for g in itertools.chain([g], var_group):
                     assert g.unitOfTimeRange == 1
                     pre_format = '%s %.4d' % (g.validityDate, float(g.validityTime))
@@ -187,35 +185,146 @@ def degrib(fn):
                     yield valid_time, g.values
 
             # extract all the dates so we can make the time coordinate
-            iter = list(iterate())
-            dates = [x[0] for x in iter]
+            iter_times = list(iterate())
+            dates = [x[0] for x in iter_times]
             start_date = min(dates)
             udunits = coards.to_udunits(start_date,
                                         'hours since %Y-%m-%d %H:%M:%S')
             uddates = [coards.datetime_to_udunits(d, udunits) for d in dates]
             # create an empty data object and fill it
             data = np.zeros((len(uddates), lats.size, lons.size))
-            for i, (date, x) in enumerate(iter):
-                data[i,:,:] = x
+            for i, (_, x) in enumerate(iter_times):
+                data[i, :, :] = x
             # if the time coordinate exists make sure it matches
             if conv.TIME in obj.variables:
                 if not np.all(uddates == obj[conv.TIME].data):
-                    overlap_dates = sorted(set(uddates).intersection(obj[conv.TIME].data))
+                    # overlap_dates = sorted(set(uddates).intersection(obj[conv.TIME].data))
+                    raise ValueError("expected all time variables to match")
             else:
                 obj.create_coordinate(conv.TIME, uddates, record=True,
                                       attributes={conv.UNITS:udunits})
 
-
-            obj.create_variable(var, dim = (conv.TIME, conv.LAT, conv.LON), data=data)
+            obj.create_variable(var, dim=(conv.TIME, conv.LAT, conv.LON), data=data)
         neg_lon = obj[conv.LON].data <= 0
         obj[conv.LON].data[neg_lon] = 360. + obj[conv.LON].data[neg_lon]
         if 'unknown' in obj.variables:
             obj.delete_variable('unknown')
         yield units.normalize_data(obj)
 
+def grib_ready(nc, gribs):
+    """
+    (Pdb) print nc['lon']
+      standard_name   | longitude                                         
+      long_name       | longitude                                         
+      units           | degrees_east                                      
+      axis            | X         
+      
+      (Pdb) print nc['lat']
+      standard_name   | latitude                                          
+      long_name       | latitude                                          
+      units           | degrees_north                                     
+      axis            | Y                                                 
+    """
+
+    out = core.Data()
+    out.attributes['Conventions'] = "CF-1.4"
+
+    if 'ensemble' in nc:
+        nc = nc.take([0], 'ensemble')
+        nc = nc.renamed({'ensemble':'height'})
+
+    if 'lon' in nc:
+        attributes = {'long_name': 'longitude',
+                      'units': 'degrees_east',
+                      'standard_name': 'longitude',
+                      'axis': 'X'}
+        out.create_coordinate('lon', data=nc['lon'].data.astype('float64'),
+                              attributes=attributes)
+    if 'lat' in nc:
+        attributes = {'long_name': 'latitude',
+                      'units': 'degrees_north',
+                      'standard_name': 'latitude',
+                      'axis': 'Y'}
+        out.create_coordinate('lat', data=nc['lat'].data.astype('float64'),
+                              attributes=attributes)
+
+    out.create_coordinate('height', data=[10.], attributes={'standard_name': 'height',
+                                                       'long_name': 'height',
+                                                       'units': 'm',
+                                                       'positive': 'up',
+                                                       'axis': 'Z'})
+
+    if 'time' in nc:
+        attributes = {'long_name': 'time',
+                      'units': nc['time'].attributes['units'],
+                      'standard_name': 'time',
+                      'calendar': 'proleptic_gregorian'}
+        zeros = np.zeros(nc['time'].data.shape)
+        out.create_coordinate('time', data=zeros.astype('float64'),
+                              attributes=attributes, record=True)
+
+    dims = tuple(['time', 'height', 'lat', 'lon'])
+    if 'uwnd' in nc:
+        attributes = {'long_name': '10 metre U wind component',
+                      'units': 'm s**-1',
+                      'code': [33],
+                      'table': [2]}
+        order = tuple([nc['uwnd'].dimensions.index(d) for d in dims])
+        data = nc['uwnd'].data.transpose(order)
+        out.create_variable('10u', dim=dims,
+                            data=data.astype('float32'), attributes=attributes)
+
+    if 'vwnd' in nc:
+        attributes = {'long_name': '10 metre V wind component',
+                      'units': 'm s**-1',
+                      'code': [34],
+                      'table': [2]}
+        order = tuple([nc['vwnd'].dimensions.index(d) for d in dims])
+        data = nc['vwnd'].data.transpose(order)
+        out.create_variable('10v', dim=dims,
+                            data=data.astype('float32'), attributes=attributes)
+
+    with open(os.path.join(os.path.dirname(__file__), '../../../data/repaired.nc'), 'w') as f:
+        out.dump(f)
+    import pdb; pdb.set_trace()
+
+def change_time(fn, reference):
+    grbs = pygrib.open(fn)
+
+    var_names = {'10 metre U wind component':'uwnd',
+                 '10 metre V wind component':'vwnd'}
+    out_fn = os.path.join(os.path.dirname(__file__), '../../../data/time_change.grb')
+    out = open(out_fn, 'wb')
+    for msg in grbs:
+        var = var_names[msg.name]
+        data = reference[var].data[0, :]
+        norms = [np.linalg.norm(msg.values - x, 'fro') for x in data]
+        i = np.argmin(norms)
+        step_range = unicode(int(reference[conv.TIME].data[i]))
+        msg.__setattr__('stepRange', step_range)
+#        msg.__setattr__('dataDate', int(date.strftime('%Y%m%d')))
+#        msg.__setattr__('dataTime', int(date.strftime('%H%M')))
+        out.write(msg.tostring())
+
+    out.close()
+    new_grbs = pygrib.open(out_fn)
+    import pdb; pdb.set_trace()
+
 if __name__ == "__main__":
-    objs = [units.normalize_data(x) for x in
-            degrib('/home/kleeman/Desktop/gfs20110317045000218.grb')]
+
+
+    fn = os.path.join(os.path.dirname(__file__), '../../../data/windbreaker.nc')
+    with open(fn) as f:
+        nc = core.Data(f.read())
+    change_time(os.path.join(os.path.dirname(__file__), '../../../data/repaired.grb'),
+                reference=nc)
+
+    # gribs = grib2.Grib2Decode(fn)
+    gribs = pygrib.open(fn)
+    grib_ready(nc, gribs)
+
+    obj = list(degrib(fn))[0]
+    gribs = pygrib.open(fn)
     import pdb; pdb.set_trace()
     for obj in objs:
         obj.to_file(open('/home/kleeman/Desktop/tmp.nc', 'w'))

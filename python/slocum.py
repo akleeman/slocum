@@ -112,10 +112,10 @@ def handle_when(opts, args):
     ndays = (opts.start_date - opts.end_date).days
     if ndays > 5:
         delta = datetime.timedelta(days=1)
-    elif ndays >2:
-        delta = datetime.timedelta(seconds=12*60*60)
+    elif ndays > 2:
+        delta = datetime.timedelta(seconds=12 * 60 * 60)
     else:
-        delta = datetime.timedelta(seconds=6*60*60)
+        delta = datetime.timedelta(seconds=6 * 60 * 60)
 
     def iterdates():
         current_date = opts.start_date
@@ -201,9 +201,9 @@ def handle_plot(opts, args):
     """
     if not opts.fcst:
         raise ValueError("point to a windbreaker file with --fcst")
-    #f = open(opts.fcst, 'r')
-    #unzipped = zlib.decompress(f.read())
-    unzipped = open(opts.fcst, 'r')
+    f = open(opts.fcst, 'r')
+    unzipped = zlib.decompress(f.read())
+    # unzipped = open(opts.fcst, 'r')
     fcst = tinylib.from_beaufort(unzipped)
     plotlib.plot_wind(fcst)
 
@@ -305,14 +305,14 @@ def main(opts=None, args=None):
                 minute = 0.
             if minute > 60:
                 raise ValueError("minutes must be less than 60")
-            return deg + minute/(60.)
+            return deg + minute / (60.)
         opts.waypoints = [objects.LatLon(*map(degreeify, x.split(',')))
                           for x in opts.waypoints.split(':')]
     else:
         logging.info("Using default start of san francisco: 36.625, -121.9")
         logging.info("Using default end of hawaii: 19.79, -154.76")
-        end = objects.LatLon(19.79, -154.76) # hawaii
-        start = objects.LatLon(36.625, -121.9) # sf
+        end = objects.LatLon(19.79, -154.76)# hawaii
+        start = objects.LatLon(36.625, -121.9)# sf
         opts.waypoints = [start, end]
 
     if opts.start_date:
