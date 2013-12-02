@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 import sl.objects.conventions as conv
 
-from sl.lib import datelib, plotlib, numpylib
+from sl.lib import plotlib, numpylib
 from sl.objects import objects, core
 
 logging.basicConfig(level=logging.DEBUG)

@@ -18,7 +18,6 @@ from matplotlib.widgets import Button, RectangleSelector
 
 import sl.objects.conventions as conv
 
-from sl.lib import datelib
 from sl.objects import objects, core
 from sl import poseidon
 

@@ -14,7 +14,7 @@ from optparse import OptionParser
 from cStringIO import StringIO
 
 from sl import poseidon
-from sl.lib import tinylib, datelib
+from sl.lib import tinylib
 from sl.objects import objects
 import smtplib
 
@@ -292,61 +292,8 @@ def parse_saildocs_query(query):
     return query_dict
 
 def test_parse_saildocs():
-
-    print list(parse_saildocs_hours('0,6,12,24..60,66..90,102,120'))
-    import pdb; pdb.set_trace()
-
     print parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND START=25,175')
     print parse_saildocs_query('send GFS:10S,42S,162E,144W|13,13|0,6,12,24..60,66..90,102,120|PRMSL,WIND,WAVES,RAIN')
 
 if __name__ == "__main__":
     test_parse_saildocs()
-
-
-#
-#
-#fimg = open('/home/kleeman/Desktop/test.jpg', 'rb')
-#img = fimg.read()
-#img_str = base64.b64encode(zlib.compress(img,9))
-#
-#def contents(x):
-#    if x.get_content_maintype() == 'multipart':
-#        return [contents(y) for y in x.get_payload()]
-#    else:
-#        if x.get_filename():
-#            return x.get_payload(decode=True)
-#        else:
-#            return x.get_payload()
-#
-##EXAMPLE OF SENDING PICTURES IN AN EMAIL
-## Import smtplib for the actual sending function
-#import smtplib
-#
-## Here are the email package modules we'll need
-#from email.mime.image import MIMEImage
-#from email.mime.multipart import MIMEMultipart
-#
-#COMMASPACE = ', '
-#
-## Create the container (outer) email message.
-#msg = MIMEMultipart()
-#msg['Subject'] = 'Our family reunion'
-## me == the sender's email address
-## family = the list of all recipients' email addresses
-#msg['From'] = me
-#msg['To'] = COMMASPACE.join(family)
-#msg.preamble = 'Our family reunion'
-#
-## Assume we know that the image files are all in PNG format
-#for file in pngfiles:
-#    # Open the files in binary mode.  Let the MIMEImage class automatically
-#    # guess the specific image type.
-#    fp = open(file, 'rb')
-#    img = MIMEImage(fp.read())
-#    fp.close()
-#    msg.attach(img)
-#
-## Send the email via our own SMTP server.
-#s = smtplib.SMTP()
-#s.sendmail(me, family, msg.as_string())
-#s.quit()

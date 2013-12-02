@@ -1,6 +1,8 @@
 import re
 import coards
-import sl.objects.conventions as conv
+import sl.lib.conventions as conv
+
+import numpy as np
 
 from sl.objects import core
 
@@ -14,13 +16,13 @@ _speed = {'m/s':1.94384449,
           'mph':0.868976242}
 _speed_unit = 'knot'
 
-_variables = {'10 metre U wind component':'uwnd',
-              '10 metre V wind component':'vwnd',
-              'U-component_of_wind_height_above_ground':'uwnd',
-              'U-component of wind':'uwnd',
-              'V-component_of_wind_height_above_ground':'vwnd',
-              'V-component of wind':'vwnd',
-              'Mean sea level pressure':'mslp',
+_variables = {'10 metre U wind component':conv.UWND,
+              '10 metre V wind component':conv.VWND,
+              'U-component_of_wind_height_above_ground':conv.UWND,
+              'U-component of wind':conv.UWND,
+              'V-component_of_wind_height_above_ground':conv.VWND,
+              'V-component of wind':conv.VWND,
+              'Mean sea level pressure':conv.PRESSURE,
               'Significant height of combined wind waves and swell':'combined_sea_height',
               'Signific.height,combined wind waves+swell':'combined_sea_height',
               'Direction of wind waves':'wave_dir',
@@ -48,18 +50,17 @@ def normalize_variable(v):
 
     # scale the variable if needed
     var = core.Variable(v.dimensions,
-                        data=v.data.astype('f'))
-                        #attributes=v.attributes.copy())
+                        data=v.data[:].astype('f'),
+                        attributes=v.attributes.copy())
+
     if hasattr(v, 'scale_factor'):
         scale = v.scale_factor
-        #delattr(var, 'scale_factor')
     else:
         scale = 1.0
 
     # shift the variable if needed
     if hasattr(v, 'add_offset'):
         offset = v.add_offset
-        #delattr(var, 'add_offset')
     else:
         offset = 0.0
 
@@ -72,14 +73,26 @@ def normalize_variable(v):
         elif units in _length:
             mult = (_length[units] / _length[_length_unit])
             var.attributes[conv.UNITS] = _length_unit
-        else:
-            var.attributes[conv.UNITS] = units
-            mult = 1.0
     else:
         mult = 1.0
 
     var.data[:] = mult * (var.data[:] * scale + offset)
     return var
+
+def normalize_units(v):
+    assert v.data.dtype == np.float32
+    # convert the units
+    if conv.UNITS in v.attributes:
+        units = v.attributes[conv.UNITS]
+        if units in _speed:
+            mult = (_speed[units] / _speed[_speed_unit])
+            v.attributes[conv.UNITS] = _speed_unit
+        elif units in _length:
+            mult = (_length[units] / _length[_length_unit])
+            v.attributes[conv.UNITS] = _length_unit
+    else:
+        mult = 1.0
+    v.data[:] *= mult
 
 def normalize_time_units(units):
     try:

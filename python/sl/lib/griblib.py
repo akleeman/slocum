@@ -1,17 +1,16 @@
 import os
-import grib2
 import numpy as np
 import coards
 import pygrib
+import gribapi
+import netCDF4 as nc4
 import itertools
 
 from cStringIO import StringIO
 from datetime import datetime
 
-import sl.objects.conventions as conv
-
-from sl.lib import datelib
-from sl.objects import core, units
+import sl.lib.conventions as conv
+from sl.objects import units
 
 codes = {
 0 : ("Reserved",),
@@ -47,8 +46,8 @@ codes = {
 30 : ("Wave spectra (3)", "-"),
 31 : ("Wind direction", "Degree true"),
 32 : ("Wind speed", "m s-1"),
-33 : ("u-component of wind (see Note 4)", "m s-1"),
-34 : ("v-component of wind (see Note 4)", "m s-1"),
+33 : ("u-component of wind", "m/s"),
+34 : ("v-component of wind", "m/s"),
 35 : ("Stream function", "m2 s-1"),
 36 : ("Velocity potential", "m2 s-1"),
 37 : ("Montgomery stream function", "m2 s-1"),
@@ -59,12 +58,12 @@ codes = {
 42 : ("Absolute divergence", "s-1"),
 43 : ("Relative vorticity", "s-1"),
 44 : ("Relative divergence", "s-1"),
-45 : ("Vertical u-component shear (see Note 4)", "s-1"),
-46 : ("Vertical v-component shear (see Note 4)", "s-1"),
+45 : ("Vertical u-component shear", "s-1"),
+46 : ("Vertical v-component shear", "s-1"),
 47 : ("Direction of current", "Degree true"),
 48 : ("Speed of current", "m s-1"),
-49 : ("u-component of current (see Note 4)", "m s-1"),
-50 : ("v-component of current (see Note 4)", "m s-1"),
+49 : ("u-component of current", "m s-1"),
+50 : ("v-component of current", "m s-1"),
 51 : ("Specific humidity", "kg kg-1"),
 52 : ("Relative humidity", "%"),
 53 : ("Humidity mixing ratio", "kg kg-1"),
@@ -109,8 +108,8 @@ codes = {
 92 : ("Ice thickness", "m"),
 93 : ("Direction of ice drift", "Degree true"),
 94 : ("Speed of ice drift", "m s-1"),
-95 : ("u-component of ice drift (see Note 4)", "m s-1"),
-96 : ("v-component of ice drift (see Note 4)", "m s-1"),
+95 : ("u-component of ice drift", "m s-1"),
+96 : ("v-component of ice drift", "m s-1"),
 97 : ("Ice growth rate", "m s-1"),
 98 : ("Ice divergence", "s-1"),
 99 : ("Snow melt", "kg m-2"),
@@ -138,10 +137,19 @@ codes = {
 121 : ("Latent heat flux", "W m-2"),
 122 : ("Sensible heat flux", "W m-2"),
 123 : ("Boundary layer dissipation", "W m-2"),
-124 : ("Momentum flux, u-component (see Note 4)", "N m-2"),
-125 : ("Momentum flux, v-component (see Note 4)", "N m-2"),
+124 : ("Momentum flux, u-component", "N m-2"),
+125 : ("Momentum flux, v-component", "N m-2"),
 126 : ("Wind mixing energy", "J"),
 }
+
+reverse_codes = dict((v[0], k) for k, v in codes.iteritems())
+
+#http://www.nco.ncep.noaa.gov/pmb/docs/on388/table3.html
+indicator_of_level = {"u-component of wind" : 105,
+                      "v-component of wind" : 105}
+
+level = {"u-component of wind" : 10,
+         "v-component of wind" : 10}
 
 _sec_per_hour = 3600
 
@@ -188,9 +196,9 @@ def degrib(fn):
             iter_times = list(iterate())
             dates = [x[0] for x in iter_times]
             start_date = min(dates)
-            udunits = coards.to_udunits(start_date,
+            udunit = coards.to_udunits(start_date,
                                         'hours since %Y-%m-%d %H:%M:%S')
-            uddates = [coards.datetime_to_udunits(d, udunits) for d in dates]
+            uddates = [coards.datetime_to_udunits(d, udunit) for d in dates]
             # create an empty data object and fill it
             data = np.zeros((len(uddates), lats.size, lons.size))
             for i, (_, x) in enumerate(iter_times):
@@ -202,7 +210,7 @@ def degrib(fn):
                     raise ValueError("expected all time variables to match")
             else:
                 obj.create_coordinate(conv.TIME, uddates, record=True,
-                                      attributes={conv.UNITS:udunits})
+                                      attributes={conv.UNITS:udunit})
 
             obj.create_variable(var, dim=(conv.TIME, conv.LAT, conv.LON), data=data)
         neg_lon = obj[conv.LON].data <= 0
@@ -211,120 +219,135 @@ def degrib(fn):
             obj.delete_variable('unknown')
         yield units.normalize_data(obj)
 
-def grib_ready(nc, gribs):
-    """
-    (Pdb) print nc['lon']
-      standard_name   | longitude                                         
-      long_name       | longitude                                         
-      units           | degrees_east                                      
-      axis            | X         
-      
-      (Pdb) print nc['lat']
-      standard_name   | latitude                                          
-      long_name       | latitude                                          
-      units           | degrees_north                                     
-      axis            | Y                                                 
-    """
+def set_time(source, grib):
+    if source[conv.TIME].size != 1:
+        raise ValueError("expected a single time step")
+    # analysis, forecast start, verify time, obs time,
+    # (start of forecast for now)
+    unit = source[conv.TIME].attributes[conv.UNITS]
+    # reference time is assumed to be the reference to the unit.
+    rt = nc4.num2date([0], unit)[0]
+    gribapi.grib_set_long(grib, "dataDate", "%04d%02d%02d" % (rt.year,
+                                                              rt.month,
+                                                              rt.day))
+    gribapi.grib_set_long(grib, "dataTime", "%02d%02d" % (rt.hour, rt.minute))
 
-    out = core.Data()
-    out.attributes['Conventions'] = "CF-1.4"
+    unit_codes = {'minute' : 0,
+             'hour': 1,
+             'day': 2,
+             'month': 3,
+             'year': 4,
+             'second': 254}
 
-    if 'ensemble' in nc:
-        nc = nc.take([0], 'ensemble')
-        nc = nc.renamed({'ensemble':'height'})
+    grib_time_code = None
+    for k, v in unit_codes.iteritems():
+        if unit.lower().startswith(k):
+            grib_time_code = v
+    if grib_time_code is None:
+        raise ValueError("Unexpected unit")
 
-    if 'lon' in nc:
-        attributes = {'long_name': 'longitude',
-                      'units': 'degrees_east',
-                      'standard_name': 'longitude',
-                      'axis': 'X'}
-        out.create_coordinate('lon', data=nc['lon'].data.astype('float64'),
-                              attributes=attributes)
-    if 'lat' in nc:
-        attributes = {'long_name': 'latitude',
-                      'units': 'degrees_north',
-                      'standard_name': 'latitude',
-                      'axis': 'Y'}
-        out.create_coordinate('lat', data=nc['lat'].data.astype('float64'),
-                              attributes=attributes)
+    gribapi.grib_set_long(grib, 'unitOfTimeRange', 1)
 
-    out.create_coordinate('height', data=[10.], attributes={'standard_name': 'height',
-                                                       'long_name': 'height',
-                                                       'units': 'm',
-                                                       'positive': 'up',
-                                                       'axis': 'Z'})
+    vt = np.asscalar(source[conv.TIME][:])
+    assert int(vt) == vt
+    gribapi.grib_set_long(grib, 'P2', vt)
+    # forecast is valid at reference + tp
+    gribapi.grib_set_long(grib, "timeRangeIndicator", 10)
 
-    if 'time' in nc:
-        attributes = {'long_name': 'time',
-                      'units': nc['time'].attributes['units'],
-                      'standard_name': 'time',
-                      'calendar': 'proleptic_gregorian'}
-        zeros = np.zeros(nc['time'].data.shape)
-        out.create_coordinate('time', data=zeros.astype('float64'),
-                              attributes=attributes, record=True)
+def set_grid(source, grib):
+    # define the grid
+    gribapi.grib_set_long(grib, "gridDefinition", 255)
+    gribapi.grib_set_long(grib, "gridDescriptionSectionPresent", 1)
 
-    dims = tuple(['time', 'height', 'lat', 'lon'])
-    if 'uwnd' in nc:
-        attributes = {'long_name': '10 metre U wind component',
-                      'units': 'm s**-1',
-                      'code': [33],
-                      'table': [2]}
-        order = tuple([nc['uwnd'].dimensions.index(d) for d in dims])
-        data = nc['uwnd'].data.transpose(order)
-        out.create_variable('10u', dim=dims,
-                            data=data.astype('float32'), attributes=attributes)
+    gribapi.grib_set_long(grib, "shapeOfTheEarth", 6)
 
-    if 'vwnd' in nc:
-        attributes = {'long_name': '10 metre V wind component',
-                      'units': 'm s**-1',
-                      'code': [34],
-                      'table': [2]}
-        order = tuple([nc['vwnd'].dimensions.index(d) for d in dims])
-        data = nc['vwnd'].data.transpose(order)
-        out.create_variable('10v', dim=dims,
-                            data=data.astype('float32'), attributes=attributes)
+    gribapi.grib_set_long(grib, "Ni", source.dimensions[conv.LON])
+    gribapi.grib_set_long(grib, "Nj", source.dimensions[conv.LAT])
 
-    with open(os.path.join(os.path.dirname(__file__), '../../../data/repaired.nc'), 'w') as f:
-        out.dump(f)
-    import pdb; pdb.set_trace()
+    lat = source[conv.LAT]
+    lon = source[conv.LON]
+    gribapi.grib_set_long(grib, "latitudeOfFirstGridPoint",
+                          int(lat[0]*1000))
+    gribapi.grib_set_long(grib, "latitudeOfLastGridPoint",
+                          int(lat[-1]*1000))
+    gribapi.grib_set_long(grib, "longitudeOfFirstGridPoint",
+                          int((lon[0] % 360)*1000))
+    gribapi.grib_set_long(grib, "longitudeOfLastGridPoint",
+                          int((lon[-1] % 360)*1000))
 
-def change_time(fn, reference):
-    grbs = pygrib.open(fn)
+def get_varible_name(source):
+    variables = source.noncoordinates
+    if not len(variables) == 1:
+        raise ValueError("expected a single variable")
+    return variables.keys()[0]
 
-    var_names = {'10 metre U wind component':'uwnd',
-                 '10 metre V wind component':'vwnd'}
-    out_fn = os.path.join(os.path.dirname(__file__), '../../../data/time_change.grb')
-    out = open(out_fn, 'wb')
-    for msg in grbs:
-        var = var_names[msg.name]
-        data = reference[var].data[0, :]
-        norms = [np.linalg.norm(msg.values - x, 'fro') for x in data]
-        i = np.argmin(norms)
-        step_range = unicode(int(reference[conv.TIME].data[i]))
-        msg.__setattr__('stepRange', step_range)
-#        msg.__setattr__('dataDate', int(date.strftime('%Y%m%d')))
-#        msg.__setattr__('dataTime', int(date.strftime('%H%M')))
-        out.write(msg.tostring())
+def set_product(source, grib):
+    var_name = get_varible_name(source)
+    grib_var_name = conv.to_grib1[var_name]
+    gribapi.grib_set_long(grib, 'indicatorOfParameter',
+                          reverse_codes[grib_var_name])
+    gribapi.grib_set_long(grib, 'table2Version', 2)
 
-    out.close()
-    new_grbs = pygrib.open(out_fn)
-    import pdb; pdb.set_trace()
+    gribapi.grib_set_long(grib, 'indicatorOfTypeOfLevel',
+                          indicator_of_level[grib_var_name])
+    gribapi.grib_set_long(grib, 'level',
+                          level[grib_var_name])
 
-if __name__ == "__main__":
+def set_data(source, grib):
+    var_name = get_varible_name(source)
+    # treat masked arrays differently
+    if isinstance(source[var_name].data, np.ma.core.MaskedArray):
+        gribapi.grib_set(grib, "bitmapPresent", 1)
+        missing_value = source[var_name].attributes.get('missing_value', 9999)
+        gribapi.grib_set_double(grib, "missingValue",
+                                float(missing_value))
+        data = source[var_name].data.filled()
+    else:
+        gribapi.grib_set_double(grib, "missingValue", 9999)
+        data = source[var_name].data[:]
 
+    gribapi.grib_set_long(grib, "dataRepresentationType", 0)
 
-    fn = os.path.join(os.path.dirname(__file__), '../../../data/windbreaker.nc')
-    with open(fn) as f:
-        nc = core.Data(f.read())
-    change_time(os.path.join(os.path.dirname(__file__), '../../../data/repaired.grb'),
-                reference=nc)
+    code = reverse_codes[conv.to_grib1[var_name]]
+    _, grib_unit = codes[code]
+    # default to the grib default unit
+    unit = source[var_name].attributes.get(conv.UNITS, grib_unit)
+    mult = 1.
+    if not unit == grib_unit:
+        mult = units._speed[unit] / units._speed[grib_unit]
+    # add the data
+    gribapi.grib_set_double_array(grib, "values", mult * data.flatten())
 
-    # gribs = grib2.Grib2Decode(fn)
-    gribs = pygrib.open(fn)
-    grib_ready(nc, gribs)
+def save(source, target, append=False):
+    # grib file (this bit is common to the pp and grib savers...)
+    if isinstance(target, basestring):
+        grib_file = open(target, "ab" if append else "wb")
+    elif hasattr(target, "write"):
+        if hasattr(target, "mode") and "b" not in target.mode:
+            raise ValueError("Target not binary")
+        grib_file = target
+    else:
+        raise ValueError("Can only save grib to filename or writable")
 
-    obj = list(degrib(fn))[0]
-    gribs = pygrib.open(fn)
-    import pdb; pdb.set_trace()
-    for obj in objs:
-        obj.to_file(open('/home/kleeman/Desktop/tmp.nc', 'w'))
+    if not conv.LAT in source.variables or not conv.LON in source.variables:
+        raise ValueError("Did not find either latitude or longitude.")
+    if source[conv.LAT].ndim != 1 or source[conv.LON].ndim != 1:
+        raise ValueError("Latitude and Longitude should be regular.")
+    if not conv.TIME in source.variables:
+        raise ValueError("Expected time coordinate")
+
+    for v in source.noncoordinates.keys():
+        single_var = source.select([v])
+        for t, obj in single_var.iterator(conv.TIME):
+            # Save this slice to the grib file
+            grib_message = gribapi.grib_new_from_samples("GRIB1")
+            set_time(obj, grib_message)
+            set_product(obj, grib_message)
+            set_grid(obj, grib_message)
+            set_data(obj, grib_message)
+            gribapi.grib_write(grib_message, grib_file)
+            gribapi.grib_release(grib_message)
+
+    # (this bit is common to the pp and grib savers...)
+    if isinstance(target, basestring):
+        grib_file.close()

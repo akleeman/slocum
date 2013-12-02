@@ -19,7 +19,7 @@ from cPickle import HIGHEST_PROTOCOL
 from operator import mul, or_
 from cStringIO import StringIO
 
-from sl.lib import ncdflib, datelib
+from sl.lib import ncdflib
 from sl.lib.collections import OrderedDict, FrozenOrderedDict
 import sl.objects.conventions as conv
 

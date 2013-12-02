@@ -10,14 +10,13 @@ import matplotlib.pyplot as plt
 import sl.objects.conventions as conv
 
 from sl import poseidon, spray
-from sl.lib import pupynere, numpylib
-from sl.objects import objects, core
+from sl.lib import numpylib
+from sl.objects import objects, core, units
 
 def quantile(arr, q):
     if not arr.ndim == 1:
         raise ValueError("quantile expects a 1d array")
     arr = np.sort(arr)
-
 
 def pack_ints(arr, req_bits=None):
     """
@@ -213,6 +212,8 @@ _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 5
 def to_beaufort(obj, start=None, end=None):
     if (start is None and end) or (start and end is None):
         raise ValueError("expected both start and end or neither")
+    assert obj[conv.UWND].attributes[conv.UNITS] == 'knot'
+    assert obj[conv.VWND].attributes[conv.UNITS] == 'knot'
     uwnd = obj[conv.UWND].data
     vwnd = obj[conv.VWND].data
     if not uwnd.shape == vwnd.shape:
@@ -234,7 +235,7 @@ def to_beaufort(obj, start=None, end=None):
     coords = set([x for x in dims if x in obj.coordinates])
     encoded_variables = {}
     for v in coords:
-        encoded_variables[v] = {'encoded_array':obj[v].data.tostring(),
+        encoded_variables[v] = {'encoded_array':obj[v].data[:].tostring(),
                                 'bits' : int(0),# bits
                                 'shape' : obj[v].shape,
                                 'divs' : int(0),# divs
@@ -242,11 +243,10 @@ def to_beaufort(obj, start=None, end=None):
                                 'attributes' : dict(obj[v].attributes),
                                 'dims' : obj[v].dimensions}
     # convert the wind speeds to a beaufort scale and store them
-    wind = [objects.Wind(*x) for x in zip(uwnd.flatten(), vwnd.flatten())]
+    wind = [objects.Wind(*x) for x in zip(uwnd[:].flatten(), vwnd[:].flatten())]
     speeds = np.array([x.speed for x in wind]).reshape(uwnd.shape)
     tiny_wind = tiny_array(speeds, bits=4, divs=_beaufort_scale, mask=mask)
     tiny_wind['encoded_array'] = tiny_wind.pop('packed_array').tostring()
-    tiny_wind['attributes'] = dict(obj[conv.UWND].attributes)
     tiny_wind['dims'] = dims
     encoded_variables[conv.WIND_SPEED] = tiny_wind
 
@@ -255,7 +255,6 @@ def to_beaufort(obj, start=None, end=None):
     directions = np.array([x.dir for x in wind]).reshape(uwnd.shape)
     tiny_direction = tiny_array(directions, bits=4, divs=direction_bins, mask=mask)
     tiny_direction['encoded_array'] = tiny_direction.pop('packed_array').tostring()
-    tiny_direction['attributes'] = dict(obj[conv.UWND].attributes)
     tiny_direction['dims'] = dims
     encoded_variables[conv.WIND_DIR] = tiny_direction
 
@@ -316,13 +315,15 @@ def from_beaufort(yaml_dump):
         v = info['variables'][var]
         v['packed_array'] = np.fromstring(v.pop('encoded_array'), dtype='uint8')
         data = expand_array(mask=mask, **v)
-        obj.create_variable(var, v['dims'], data=data, attributes=v['attributes'])
+        obj.create_variable(var, v['dims'], data=data)
 
     dims = obj['wind_speed'].dimensions
     vwnd = -np.cos(obj['wind_dir'].data) * obj['wind_speed'].data
     uwnd = -np.sin(obj['wind_dir'].data) * obj['wind_speed'].data
-    obj.create_variable('vwnd', dim=dims, data=vwnd, attributes={'units':'knots'})
-    obj.create_variable('uwnd', dim=dims, data=uwnd, attributes={'units':'knots'})
+    obj.create_variable('vwnd', dim=dims, data=vwnd,
+                        attributes={'units':units._speed_unit})
+    obj.create_variable('uwnd', dim=dims, data=uwnd,
+                        attributes={'units':units._speed_unit})
     return obj
 
 # def tiny(obj, vars, stream=None):
