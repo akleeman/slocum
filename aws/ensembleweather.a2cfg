@@ -1,9 +1,8 @@
 <VirtualHost *:80>
-     ServerAdmin joshua.slocum@gmail.com
+     ServerAdmin akleeman@gmail.com
      ServerName ensembleweather.com
      ServerAlias www.ensembleweather.com
      DocumentRoot /var/www/ensembleweather/public_html/
      ErrorLog /var/www/ensembleweather/logs/error.log
      CustomLog /var/www/ensembleweather/logs/access.log combined
 </VirtualHost>
-
