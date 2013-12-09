@@ -6,13 +6,14 @@
 set -e
 # this file should be in slocum/aws
 DIR=`dirname $0`
+DIR=`realpath $DIR`
 
 function install_packages {
   # AMI ubuntu-precise-12.04-amd64-server-20131003 (ami-6aad335a)
   sudo apt-get update -y
   sudo apt-get upgrade -y
   sudo apt-get install emacs23 apache2 apache2-doc apache2-utils -y
-  sudo apt-get install libapache2-mod-python -y
+  sudo apt-get install libapache2-mod-python realpath -y
   sudo apt-get install python-mysqldb -y
   sudo apt-get install libapache2-mod-php5 php5 php-pear php5-xcache -y
   sudo apt-get install php5-suhosin -y
@@ -53,22 +54,23 @@ function postfix {
   # anti-virus
 
   sudo ls -s $DIR/aliases /etc/aliases
-  sudo postaliases /etc/aliases
+  sudo postalias /etc/aliases
 
   # make a .forward file
   echo 'ubuntu, "|/home/ubuntu/test.py"' > /home/ubuntu/.forward
 }
 
 function website {
-  sudo a2dissite default
-  sudo a2ensite ensemble-weather
   # Link to the website
   sudo mkdir -p /var/www/ensembleweather/logs
   sudo ln -s $DIR/public_html /var/www/ensembleweather/public_html
   sudo ln -s $DIR/ensembleweather.a2cfg /etc/apache2/sites-available/ensemble-weather
+  sudo a2dissite default
+  sudo a2ensite ensemble-weather
+  sudo service apache2 reload
 }
 
-install_packages()
-postfix()
-website()
+install_packages
+postfix
+website
 
