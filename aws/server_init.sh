@@ -72,6 +72,14 @@ function website {
   sudo service apache2 reload
 }
 
+function slocum {
+  sudo apt-get install python-pip python-dev -y
+  sudo pip install numpy
+  sudo pip install matplotlib
+  cd ~/
+  git clone https://github.com/akleeman/scidata.git
+  echo "export PYTHONPATH=$PYTHONPATH:/home/ubuntu/scidata/src/:/home/ubuntu/slocum/python" >> ~/.bashrc
+}
 install_packages
 postfix
 website

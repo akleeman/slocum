@@ -1,34 +1,28 @@
 import os
 import re
-import sys
 import zlib
 import yaml
+import smtplib
 import numpy as np
 import logging
-import itertools
 
 from email import Parser, mime, encoders
 from email.mime import Multipart
 from email.mime.text import MIMEText
-from optparse import OptionParser
 from cStringIO import StringIO
+
+from polyglot import Dataset
 
 from sl import poseidon
 from sl.lib import tinylib
 from sl.objects import objects
-import smtplib
+from sl.objects import conventions as conv
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
 
-_windbreaker_email = 'wx@saltbreaker.com'
-
-def clean_email_queue(queue_dir):
-    """
-    Removes any unprocessed emails if they are old
-    """
-    emails = [os.path.join(queue_dir, f) for f in os.listdir(queue_dir) if f.endswith('mime')]
-    datelib.remove_old_files(emails, days_old=2)
+_smtp_server = 'mail.ensembleweather.com'
+_windbreaker_email = 'query@ensembleweather.com'
 
 def args_from_email(email):
     body = get_body(email)
@@ -68,7 +62,7 @@ def send_email(mime_email):
     to = mime_email['To']
     fr = mime_email['From']
     s = smtplib.SMTP('localhost')
-    server = smtplib.SMTP('mail.saltbreaker.com', 26)
+    server = smtplib.SMTP(_smtp_server, 26)
     server.login(_windbreaker_email, 'w3ath3r')
     server.sendmail(fr, to, mime_email.as_string())
     s.quit()
@@ -106,6 +100,87 @@ def send_error(to, body, exception = None, fr = None):
     fr = fr or _windbreaker_email
     send_email(create_email(to, fr, body))
 
+def parse_saildocs_hours(hours_str):
+    # the hours query is a bit complex since it
+    # involves interpreting the '..' as slices
+    prev = 0
+    for hr in hours_str.split(','):
+        if '..' in hr:
+            low, high = map(float, hr.split('..'))
+            diff = low - prev
+            if np.mod((high - low), diff):
+                # the step size will not be integer valued
+                # not sure how to handle that so for now just
+                # yield the low and high value
+                hours = [low, high]
+            else:
+                hours = np.linspace(low, high,
+                                    num = ((high - low) / diff) + 1,
+                                    endpoint=True)
+        else:
+            hours = map(float, [hr])
+        for x in hours:
+            prev = x
+            yield x
+
+def get_forecast(query, path=None):
+    ll = objects.LatLon(query['lower'], query['left'])
+    ur = objects.LatLon(query['upper'], query['right'])
+    ur, ll = poseidon.ensure_corners(ur, ll, expand=False)
+    vars = {}
+    if 'wind' in query['vars']:
+        vars['U-component_of_wind_height_above_ground'] = conv.UWND
+        vars['V-component_of_wind_height_above_ground'] = conv.VWND
+    else:
+        raise ValueError("Currently only support wind forecasts")
+#     if 'rain' in query['vars'] or 'precip' in query['vars']:
+#         vars['Total_precipitation'] = conv.PRECIP
+#     if 'cloud' in query['vars']:
+#         vars['Total_cloud_cover'] = conv.CLOUD
+#     if 'pressure' in query['vars']:
+#         vars['Pressure'] = 'mslp'
+
+    if path is None:
+        fcst = poseidon.gefs(ll, ur)
+        fcst.dump('temp_forecast.nc')
+    else:
+        fcst = Dataset(path)
+
+    iter_hours = parse_saildocs_hours(query['hours'])
+
+    assert fcst[conv.TIME].attributes[conv.UNITS].startswith('hour')
+    def time_inds(hours):
+        """determines which indices extract the required hours"""
+        for hr in hours:
+            inds = np.nonzero(fcst['time'].data[:] == float(hr))
+            if len(inds) == 1 and inds[0].size == 1:
+                # only yield an hour index if we know it exists
+                yield inds[0][0]
+    time_inds = list(time_inds(iter_hours))
+    obj = fcst.take(time_inds, 'time')
+
+    lats = fcst['latitude'].data[:]
+    lat_resol = np.unique(np.diff(lats))
+    if len(lat_resol) != 1:
+        raise ValueError("Forecast has non-uniform latitudes")
+    lat_resol = lat_resol[0]
+    lat_step = int(np.max(1, np.floor(query['grid_delta'] / lat_resol)))
+    lat_inds = np.arange(lats.size)[::lat_step]
+
+    lons = fcst['longitude'].data[:]
+    lon_resol = np.unique(np.diff(lons))
+    if len(lon_resol) != 1:
+        raise ValueError("Forecast has non-uniform longitudes")
+    lon_resol = lon_resol[0]
+    lon_step = int(np.max(1, np.floor(query['grid_delta'] / lon_resol)))
+    lon_inds = np.arange(lons.size)[::lon_step]
+
+    obj = obj.take(lat_inds, conv.LAT)
+    obj = obj.take(lon_inds, conv.LON)
+    if 'ensembles' in query:
+        obj = obj.take(np.arange(query['ensembles']), conv.ENSEMBLE)
+    return obj
+
 def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=None):
     """
     Takes a mime_text email that contains one or several saildoc-like
@@ -114,11 +189,11 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
     """
     logger.debug('Wind Breaker')
     email_body = get_body(mime_text)
+    sender = get_sender(mime_text)
     logger.debug('Extracted email body')
     if len(email_body) > 1:
         send_error(sender, "Your email contains more than one body")
         return False
-    sender = get_sender(mime_text)
     # Turns a query string into a dict of params
     try:
         queries = list(parse_saildocs(email_body[0]))
@@ -136,21 +211,14 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
     for query in queries:
         logger.debug('Processing query %s', yaml.dump(query))
         # Aquires a forecast corresponding to a query
-        try:
-            obj = poseidon.email_forecast(query, path=ncdf_weather)
-            logger.debug('Obtained the required forecast')
-        except catchable_exceptions, e:
-            send_error(sender,
-                       'Failure getting your forecast from NOAA.', e)
-            success = False
-            continue
+        fcst = get_forecast(query, path=ncdf_weather)
         # could use other extensions:
         # .grb, .grib  < 30kBytes
         # .bz2         < 5kBytes
         # .fcst        < 30kBytes
         # .gfcst       < 15kBytes
         try:
-            tiny_fcst = tinylib.to_beaufort(obj, query['start'], query['end'])
+            tiny_fcst = tinylib.to_beaufort(fcst, query['start'], query['end'])
             compressed_forecast = zlib.compress(tiny_fcst, 9)
             logger.debug('Tinified the forecast')
         except catchable_exceptions, e:
@@ -177,51 +245,6 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
         send_email(weather_email)
         logger.debug('Email sent.')
     return success
-
-def windbreaker_queue(queue_directory, ncdf_weather=None, catchable_exceptions=None, output=None):
-        # remove any old forecasts so the data directory
-    # doesn't get too large
-    if not os.path.isdir(queue_directory):
-        raise ValueError("%s is not a directory" % queue_directory)
-    # remove old emails
-    clean_email_queue(queue_directory)
-    # clean out the forecast data directory
-    poseidon.clean_data_dir()
-    # create the processed/failed/processing directories
-    processed_dir = os.path.join(queue_directory, 'processed')
-    if not os.path.exists(processed_dir):
-        os.mkdir(processed_dir)
-    failed_dir = os.path.join(queue_directory, 'failed')
-    if not os.path.exists(failed_dir):
-        os.mkdir(failed_dir)
-    processing_dir = os.path.join(queue_directory, 'processing')
-    if not os.path.exists(processing_dir):
-        os.mkdir(processing_dir)
-    emails = [f for f in os.listdir(queue_directory) if f.endswith('.mime')]
-    logger.debug("processing %d emails from %s" % (len(emails), queue_directory))
-    for fn in emails:
-        full_path = os.path.join(processing_dir, fn)
-        # move the current file to the processing directory
-        # that way two email_queue processes can't be working
-        # on the same requests
-        os.rename(os.path.join(queue_directory, fn), full_path)
-        logger.debug("processing %s" % full_path)
-        try:
-            f = open(full_path, 'r')
-            success = windbreaker(f.read(), ncdf_weather, catchable_exceptions, output)
-            f.close()
-        except catchable_exceptions, e:
-            logger.debug(e)
-            success = False
-        # if processing the email failed in any way we move it to
-        # the failed directory otherwise move to processed
-        if not success:
-            logger.debug("moving %s to failed" % full_path)
-            os.rename(full_path, os.path.join(failed_dir, fn))
-        else:
-            logger.debug("moving %s to processed" % full_path)
-            os.rename(full_path, os.path.join(processed_dir, fn))
-    logger.debug("queue processing complete.")
 
 def parse_saildocs(email_body):
     """

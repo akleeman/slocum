@@ -11,13 +11,8 @@ echo grib_api > /export/disk0/wb/python2.6/lib/python2.7/site-packages/gribapi.p
 """
 import os
 import sys
-import zlib
-import numpy as np
 import logging
 import argparse
-
-from optparse import OptionParser
-from matplotlib import pyplot as plt
 
 import sl.objects.conventions as conv
 
@@ -36,39 +31,7 @@ def handle_email(args):
     a saildocs-like request and replying to the sender with
     an packed ensemble forecast.
     """
-    opts.output = open(opts.output, 'w') if opts.output else None
-    emaillib.windbreaker(opts.input.read(), opts.grib, opts.output)
-
-def handle_email_queue(args):
-    """
-    Processes all MIME e-mails that have been queued up
-    and which are expected to reside in --queue-directory
-    """
-    if not opts.queue_directory:
-        raise ValueError("expected --queue_directory")
-    opts.output = open(opts.output, 'w') if opts.output else None
-    emaillib.windbreaker_queue(opts.queue_directory,
-                               ncdf_weather=opts.grib,
-                               catchable_exceptions=opts.exceptions,
-                               output=opts.output)
-
-def add_coordinate(obj, name, vars):
-
-    data = np.asarray([0])
-
-    obj.create_coordinate(name=name,
-                          data=data)
-
-    for i, vname in enumerate(vars):
-        var = obj[vname]
-        newshape = tuple([1] + list(var.data.shape))
-        expanded_dim = tuple([name] + list(var.dimensions))
-        vdata = var.data.reshape(newshape)
-        obj.delete_variable(vname)
-        obj.create_variable(name=vname,
-                            dims=expanded_dim,
-                            attributes=var.attributes,
-                            data=vdata)
+    emaillib.windbreaker(args.input.read(), None , args.output)
 
 def handle_test(args):
     ll = objects.LatLon(-45, 160)

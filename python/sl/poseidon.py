@@ -59,7 +59,6 @@ def subset(nc, ll_crnr, ur_crnr, variables):
     lon_slice = slice(np.min(inds), np.max(inds) + 1)
 
     out = nc.select(variables, view=True)
-    out = out.views({'time': slice(0, 3), 'lat': lat_slice, 'lon': lon_slice})
     return out.renamed(variables)
 
 def forecast(source):
@@ -83,7 +82,8 @@ def gefs(ll, ur):
     new_units = new_units.replace('T', ' ')
     new_units = new_units.replace('Z', '')
     fcst['time'].attributes['units'] = new_units
-
+    units.normalize_units(fcst[conventions.UWND])
+    units.normalize_units(fcst[conventions.VWND])
     return fcst
 
 def ensure_corners(ur, ll, expand=True):
