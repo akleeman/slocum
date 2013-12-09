@@ -1,5 +1,6 @@
 # See man 5 aliases for format
 postmaster:    root
+clamav:        root
 test:	       ubuntu
 root:	       akleeman@gmail.com
 ubuntu:	       ubuntu akleeman@gmail.com

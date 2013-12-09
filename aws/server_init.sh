@@ -5,26 +5,27 @@
 # fail on any error
 set -e
 # this file should be in slocum/aws
+sudo apt-get install -y realpath
 DIR=`dirname $0`
 DIR=`realpath $DIR`
 
 function install_packages {
   # AMI ubuntu-precise-12.04-amd64-server-20131003 (ami-6aad335a)
-  sudo apt-get update -y
-  sudo apt-get upgrade -y
   sudo apt-get install emacs23 apache2 apache2-doc apache2-utils -y
   sudo apt-get install libapache2-mod-python realpath -y
   sudo apt-get install python-mysqldb -y
   sudo apt-get install libapache2-mod-php5 php5 php-pear php5-xcache -y
   sudo apt-get install php5-suhosin -y
   sudo apt-get install php5-mysql -y
-  sudo apt-get install postfix -y
   sudo apt-get install amavisd-new -y
   sudo apt-get install spamassassin spamc -y
   sudo apt-get install clamav -y
 }
 
 function postfix {
+  debconf-set-selections "postfix postfix/mailname string your.hostname.com"
+  debconf-set-selections "postfix postfix/main_mailer_type string 'Internet Site'"
+  sudo apt-get install -y -q --force-yes postfix
   # https://www.digitalocean.com/community/articles/how-to-install-and-setup-postfix-on-ubuntu-12-04
   # took most of this from http://flurdy.com/docs/postfix/#data
   sudo postconf "myorigin=ensembleweather.com"
@@ -44,7 +45,6 @@ function postfix {
   # but they are needed for local aliasing
   sudo postconf "alias_maps = hash:/etc/aliases"
   sudo postconf "alias_database = hash:/etc/aliases"
-  sudo postconf "virtual_alias_maps = hash:/etc/postfix/virtual"
 
   # anti-virus
   sudo postconf "content_filter = amavis:[127.0.0.1]:10024"
@@ -53,8 +53,10 @@ function postfix {
   sudo sed -i 's/ENABLED=0/ENABLED=1/g' /etc/default/spamassassin
   # anti-virus
 
-  sudo ls -s $DIR/aliases /etc/aliases
+  sudo cp $DIR/aliases /etc/aliases
+  sudo cp $DIR/master.cf /etc/postfix/master.cf
   sudo postalias /etc/aliases
+  sudo postfix reload
 
   # make a .forward file
   echo 'ubuntu, "|/home/ubuntu/test.py"' > /home/ubuntu/.forward

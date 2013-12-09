@@ -9,7 +9,6 @@
 #               (yes)   (yes)   (yes)   (never) (100)
 # ==========================================================================
 smtp      inet  n       -       -       -       -       smtpd
-#	  -o content_filter=slocum:dummy
 #smtp      inet  n       -       -       -       1       postscreen
 #smtpd     pass  -       -       -       -       -       smtpd
 #dnsblog   unix  -       -       -       -       0       dnsblog
@@ -28,8 +27,8 @@ smtp      inet  n       -       -       -       -       smtpd
 #  -o milter_macro_daemon_name=ORIGINATING
 #628       inet  n       -       -       -       -       qmqpd
 pickup    fifo  n       -       -       60      1       pickup
-        -o content_filter=
-        -o receive_override_options=no_header_body_checks
+	  -o content_filter=
+          -o receive_override_options=no_header_body_checks
 cleanup   unix  n       -       -       -       0       cleanup
 qmgr      fifo  n       -       n       300     1       qmgr
 #qmgr     fifo  n       -       n       300     1       oqmgr
@@ -113,10 +112,7 @@ scalemail-backend unix	-	n	n	-	2	pipe
 mailman   unix  -       n       n       -       -       pipe
   flags=FR user=list argv=/usr/lib/mailman/bin/postfix-to-mailman.py
   ${nexthop} ${user}
-
-  flags=F user=ubuntu argv=/home/ubuntu/test.sh ${sender} ${size} ${recipient}
-
-amavis unix - - - - 2 smtp
+amavis      unix    -       -       -       -       2       smtp
         -o smtp_data_done_timeout=1200
         -o smtp_send_xforward_command=yes
         -o disable_dns_lookups=yes
