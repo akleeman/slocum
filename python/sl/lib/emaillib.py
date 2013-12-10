@@ -141,7 +141,7 @@ def get_forecast(query, path=None):
 #         vars['Pressure'] = 'mslp'
 
     if path is None:
-        fcst = poseidon.gefs(ll, ur)
+        fcst = poseidon.gfs(ll, ur)
         fcst.dump('temp_forecast.nc')
     else:
         fcst = Dataset(path)
@@ -201,6 +201,7 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
         send_error(sender,
                    'Failed to interpret your forecast requests', e)
         return False
+    logger.debug("parsed the saildoc body")
     # if there are no queries let the sender know
     if len(queries) == 0:
         send_error(sender,
@@ -212,6 +213,7 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
         logger.debug('Processing query %s', yaml.dump(query))
         # Aquires a forecast corresponding to a query
         fcst = get_forecast(query, path=ncdf_weather)
+        logger.debug('Obtained the forecast:', str(fcst))
         # could use other extensions:
         # .grb, .grib  < 30kBytes
         # .bz2         < 5kBytes

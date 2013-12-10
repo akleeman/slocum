@@ -24,6 +24,7 @@ logger.setLevel(logging.DEBUG)
 
 _sources = {'gefs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Global_1p0deg_Ensemble/members/files/latest.html',
             'nww3': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
+            'gfs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
             }
 
 def latest(latest_html_url):
@@ -44,7 +45,7 @@ def latest(latest_html_url):
     dataset = query['dataset']
     return os.path.join('http://motherlode.ucar.edu/thredds/dodsC', dataset)
 
-def subset(nc, ll_crnr, ur_crnr, variables):
+def subset(nc, ll_crnr, ur_crnr, slicers=None):
     """
     Finds the latest forecast on a netcdf subset server
     """
@@ -58,11 +59,15 @@ def subset(nc, ll_crnr, ur_crnr, variables):
     inds = np.nonzero(np.logical_and(lons >= ll.lon, lons <= ur.lon))[0]
     lon_slice = slice(np.min(inds), np.max(inds) + 1)
 
-    out = nc.select(variables, view=True)
-    return out.renamed(variables)
+    slicers = {} if slicers is None else slicers
+    slicers.update({'lat':lat_slice, 'lon':lon_slice})
+    out = nc.views(slicers)
+    return out
 
 def forecast(source):
-    return Dataset(latest(_sources[source]))
+    latest_opendap = latest(_sources[source])
+    logger.debug(latest_opendap)
+    return Dataset(latest_opendap)
 
 def gefs(ll, ur):
     """
@@ -71,13 +76,39 @@ def gefs(ll, ur):
     vars = {'u-component_of_wind_height_above_ground':conventions.UWND,
             'v-component_of_wind_height_above_ground':conventions.VWND,}
     fcst = forecast('gefs')
-    fcst = subset(fcst, ll, ur, vars)
-    renames = dict((d, conventions.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens'))
+    fcst = fcst.select(vars, view=True)
+    fcst = subset(fcst, ll, ur)
+    renames = vars
+    renames.update(dict((d, conventions.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
     renames.update(dict((d, conventions.TIME) for d in fcst.dimensions if d.startswith('time')))
     renames.update({'lat': conventions.LAT,
                     'lon': conventions.LON})
     fcst = fcst.renamed(renames)
-    fcst = fcst.squeeze(dimension='height_above_ground1')
+    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
+    new_units = new_units.replace('T', ' ')
+    new_units = new_units.replace('Z', '')
+    fcst['time'].attributes['units'] = new_units
+    units.normalize_units(fcst[conventions.UWND])
+    units.normalize_units(fcst[conventions.VWND])
+    return fcst
+
+def gfs(ll, ur):
+    """                                                                                                                                        
+    Global Ensemble Forecast System forecast object                                                                                            
+    """
+    vars = {'u-component_of_wind_height_above_ground':conventions.UWND,
+            'v-component_of_wind_height_above_ground':conventions.VWND,}
+    fcst = forecast('gfs')
+    fcst = fcst.select(vars, view=True)
+    fcst = subset(fcst, ll, ur, slicers={'height_above_ground4':slice(0, 1)})
+    import pdb; pdb.set_trace()
+    fcst = fcst.squeeze(dimension='height_above_ground4')
+    renames = vars
+    renames.update(dict((d, conventions.TIME) for d in fcst.dimensions if d.startswith('time')))
+    renames.update({'lat': conventions.LAT,
+                    'lon': conventions.LON})
+    fcst = fcst.renamed(renames)
+    import pdb; pdb.set_trace()
     new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
     new_units = new_units.replace('T', ' ')
     new_units = new_units.replace('Z', '')
