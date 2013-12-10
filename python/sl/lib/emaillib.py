@@ -21,7 +21,7 @@ from sl.objects import conventions as conv
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
 
-_smtp_server = 'mail.ensembleweather.com'
+_smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
 
 def args_from_email(email):
@@ -62,8 +62,7 @@ def send_email(mime_email):
     to = mime_email['To']
     fr = mime_email['From']
     s = smtplib.SMTP('localhost')
-    server = smtplib.SMTP(_smtp_server, 26)
-    server.login(_windbreaker_email, 'w3ath3r')
+    server = smtplib.SMTP(_smtp_server)
     server.sendmail(fr, to, mime_email.as_string())
     s.quit()
 
@@ -164,7 +163,7 @@ def get_forecast(query, path=None):
     if len(lat_resol) != 1:
         raise ValueError("Forecast has non-uniform latitudes")
     lat_resol = lat_resol[0]
-    lat_step = int(np.max(1, np.floor(query['grid_delta'] / lat_resol)))
+    lat_step = int(max(1, np.floor(query['grid_delta'] / lat_resol)))
     lat_inds = np.arange(lats.size)[::lat_step]
 
     lons = fcst['longitude'].data[:]
@@ -172,7 +171,7 @@ def get_forecast(query, path=None):
     if len(lon_resol) != 1:
         raise ValueError("Forecast has non-uniform longitudes")
     lon_resol = lon_resol[0]
-    lon_step = int(np.max(1, np.floor(query['grid_delta'] / lon_resol)))
+    lon_step = int(max(1, np.floor(query['grid_delta'] / lon_resol)))
     lon_inds = np.arange(lons.size)[::lon_step]
 
     obj = obj.take(lat_inds, conv.LAT)

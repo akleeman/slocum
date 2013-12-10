@@ -73,13 +73,28 @@ function website {
 }
 
 function slocum {
-  sudo apt-get install python-pip python-dev -y
+  sudo apt-get install python-pip python-dev  libhdf5-openmpi-dev netcdf-bin libnetcdf-dev -y
+  sudo apt-get install libatlas-dev liblapack-dev libblas-dev build-essential gfortran -y
   sudo pip install numpy
-  sudo pip install matplotlib
+  sudo pip install BeautifulSoup
+  sudo pip install netCDF4
+  sudo apt-get install python-scipy python-matplotlib -y
+  sudo pip install iris
   cd ~/
   git clone https://github.com/akleeman/scidata.git
   echo "export PYTHONPATH=$PYTHONPATH:/home/ubuntu/scidata/src/:/home/ubuntu/slocum/python" >> ~/.bashrc
 }
+
+function swap {
+  sudo dd if=/dev/xvda1 of=/swapfile bs=1024 count=512k
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  sudo su -
+  sudo echo "/swapfile       none    swap    sw      0       0 " >> /etc/fstab
+  sudo echo 0 > /proc/sys/vm/swappiness
+  exit
+}
+
 install_packages
 postfix
 website

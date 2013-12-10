@@ -1,5 +1,5 @@
 import re
-import coards
+import netCDF4
 import sl.lib.conventions as conv
 
 import numpy as np
@@ -38,7 +38,7 @@ _variables = {'10 metre U wind component':conv.UWND,
               }
 
 def from_udunits(x, units, tzinfo=None):
-    return coards.from_udunits(x, units).replace(tzinfo=tzinfo)
+    netCDF4.num2date(x, units, calendar='standard')
 
 def normalize_variable(v):
     """

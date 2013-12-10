@@ -93,22 +93,24 @@ def gefs(ll, ur):
     return fcst
 
 def gfs(ll, ur):
-    """                                                                                                                                        
-    Global Ensemble Forecast System forecast object                                                                                            
+    """
+    Global Ensemble Forecast System forecast object
     """
     vars = {'u-component_of_wind_height_above_ground':conventions.UWND,
             'v-component_of_wind_height_above_ground':conventions.VWND,}
     fcst = forecast('gfs')
     fcst = fcst.select(vars, view=True)
-    fcst = subset(fcst, ll, ur, slicers={'height_above_ground4':slice(0, 1)})
-    import pdb; pdb.set_trace()
+    # subset out the 10m wind height
+    ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
+    fcst = subset(fcst, ll, ur, slicers={'height_above_ground4':slice(ind, ind + 1)})
+    # Remove the height above ground dimension
+    fcst = copy.deepcopy(fcst)
     fcst = fcst.squeeze(dimension='height_above_ground4')
     renames = vars
     renames.update(dict((d, conventions.TIME) for d in fcst.dimensions if d.startswith('time')))
     renames.update({'lat': conventions.LAT,
                     'lon': conventions.LON})
     fcst = fcst.renamed(renames)
-    import pdb; pdb.set_trace()
     new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
     new_units = new_units.replace('T', ' ')
     new_units = new_units.replace('Z', '')
