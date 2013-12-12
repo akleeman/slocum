@@ -21,8 +21,6 @@ import sl.objects.conventions as conv
 from sl.lib import plotlib, numpylib
 from sl.objects import objects, core
 
-logging.basicConfig(level=logging.DEBUG)
-
 _max_pointing = 0.3490658503988659 # 30/180*pi
 _max_boat_speed = 6
 _min_wind_speed = 4

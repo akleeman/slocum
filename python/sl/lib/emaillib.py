@@ -141,7 +141,6 @@ def get_forecast(query, path=None):
 
     if path is None:
         fcst = poseidon.gfs(ll, ur)
-        fcst.dump('temp_forecast.nc')
     else:
         fcst = Dataset(path)
 
@@ -187,13 +186,16 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
     desired forecasts.
     """
     logger.debug('Wind Breaker')
+    logger.debug(mime_text)
     email_body = get_body(mime_text)
     sender = get_sender(mime_text)
-    logger.debug('Extracted email body')
-    if len(email_body) > 1:
-        send_error(sender, "Your email contains more than one body")
+    logger.debug('Extracted email body: %s' % str(email_body))
+    if len(email_body) != 1:
+        send_error(sender, "Your email should contain only one body")
         return False
     # Turns a query string into a dict of params
+    logger.debug("About to parse saildocs")
+    logger.debug(str(email_body))
     try:
         queries = list(parse_saildocs(email_body[0]))
     except catchable_exceptions, e:
@@ -251,7 +253,9 @@ def parse_saildocs(email_body):
     """
     Searches through an email body and yields individual saildocs queries
     """
+    logger.debug("splitting lines:")
     lines = email_body.lower().split('\n')
+    logger.debug('\n'.join(lines))
     matches = filter(lambda x : x,
                      [re.match('\s*(send\s.+)\s*', x) for x in lines])
     queries = [x.groups()[0] for x in matches]

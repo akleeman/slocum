@@ -5,7 +5,6 @@ import logging
 import itertools
 
 import matplotlib.pyplot as plt
-logging.basicConfig(level=logging.DEBUG)
 
 try:
     from mpl_toolkits.basemap import Basemap

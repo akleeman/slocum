@@ -14,16 +14,23 @@ import sys
 import logging
 import argparse
 
+logging.basicConfig(filename='/tmp/slocum.log', 
+                    level=logging.DEBUG,
+                    format="%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+logging.info("Running slocum.py")
+logger = logging.getLogger(os.path.basename(__file__))
+
+file_handler = logging.FileHandler("/tmp/slocum.log")
+logger.addHandler(file_handler)
+console_handler = logging.StreamHandler()
+logger.addHandler(console_handler)
+
 import sl.objects.conventions as conv
 
 from sl import poseidon
 from sl.lib import emaillib, tinylib
 from sl.objects import objects
 from polyglot.data import Dataset
-
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(os.path.basename(__file__))
-logger.setLevel(logging.DEBUG)
 
 def handle_email(args):
     """
@@ -62,8 +69,7 @@ _task_handler = {'email': handle_email,
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser("""%(prog)s task [options]""",
-                                     description = """
+    parser = argparse.ArgumentParser(description = """
     Slocum -- A tool for ocean passage planning
 
     Joshua Slocum (February 20, 1844 -on or shortly after November 14, 1909)
