@@ -1,36 +1,23 @@
-#!/usr/bin/python2.6
-"""
-gribapi package
-https://software.ecmwf.int/wiki/display/GRIB/Releases
+#!/usr/bin/python2.7
 
-./configure --prefix=/export/disk0/wb/python2.6/ --enable-python
-make
-make install
-echo grib_api > /export/disk0/wb/python2.6/lib/python2.7/site-packages/gribapi.pth
-
-"""
 import os
 import sys
 import logging
 import argparse
 
-logging.basicConfig(filename='/tmp/slocum.log', 
+# Configure the logger
+fmt = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
+logging.basicConfig(filename='/tmp/slocum.log',
                     level=logging.DEBUG,
-                    format="%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
-logging.info("Running slocum.py")
+                    format=fmt)
 logger = logging.getLogger(os.path.basename(__file__))
-
 file_handler = logging.FileHandler("/tmp/slocum.log")
 logger.addHandler(file_handler)
 console_handler = logging.StreamHandler()
 logger.addHandler(console_handler)
 
-import sl.objects.conventions as conv
+from sl.lib import emaillib
 
-from sl import poseidon
-from sl.lib import emaillib, tinylib
-from sl.objects import objects
-from polyglot.data import Dataset
 
 def handle_email(args):
     """
@@ -38,48 +25,24 @@ def handle_email(args):
     a saildocs-like request and replying to the sender with
     an packed ensemble forecast.
     """
-    emaillib.windbreaker(args.input.read(), None , args.output)
+    emaillib.windbreaker(args.input.read(), None, args.output)
 
-def handle_test(args):
-    ll = objects.LatLon(-45, 160)
-    ur = objects.LatLon(-35, 180)
-    temp_file = '/home/kleeman/Desktop/gefs_test.nc'
-    if not os.path.exists(temp_file):
-        gefs = poseidon.gefs(ll, ur)
-        gefs.dump(temp_file)
-
-    import copy
-    gefs = copy.deepcopy(Dataset(temp_file))
-
-    from sl.objects import units
-    units.normalize_units(gefs[conv.UWND])
-    units.normalize_units(gefs[conv.VWND])
-
-    import zlib
-    tiny = zlib.compress(tinylib.to_beaufort(gefs))
-    print len(tiny) / float(os.path.getsize(temp_file))
-    full = tinylib.from_beaufort(zlib.decompress(tiny))
-
-    from sl.lib import griblib
-    griblib.save(gefs, 'test.grb')
-
-
-_task_handler = {'email': handle_email,
-                 'test': handle_test}
+_task_handler = {'email': handle_email}
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description = """
+    parser = argparse.ArgumentParser(description="""
     Slocum -- A tool for ocean passage planning
 
     Joshua Slocum (February 20, 1844 -on or shortly after November 14, 1909)
-    was a Canadian-American seaman and adventurer, a noted writer, and the first
-    man to sail single-handedly around the world. In 1900 he told the story of
-    this in Sailing Alone Around the World. He disappeared in November 1909
-    while aboard his boat, the Spray. (wikipedia)""")
+    was a Canadian-American seaman and adventurer, a noted writer, and the
+    first man to sail single-handedly around the world. In 1900 he told the
+    story of this in Sailing Alone Around the World. He disappeared in
+    November 1909 while aboard his boat, the Spray. (wikipedia)""")
 
     # add subparser for each task
     subparsers = parser.add_subparsers()
+
     def add_parser(k):
         p = subparsers.add_parser(k)
         p.set_defaults(func=_task_handler[k])

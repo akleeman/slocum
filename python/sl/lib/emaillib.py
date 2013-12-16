@@ -14,9 +14,8 @@ from cStringIO import StringIO
 from polyglot import Dataset
 
 from sl import poseidon
-from sl.lib import tinylib
-from sl.objects import objects
-from sl.objects import conventions as conv
+from sl.lib import conventions as conv
+from sl.lib import objects, tinylib
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -24,12 +23,19 @@ logger.setLevel(logging.DEBUG)
 _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
 
+
 def args_from_email(email):
     body = get_body(email)
     assert len(body) == 1
     return body[0].rstrip().split(' ')
 
-def get_sender(email):
+
+def get_reply_to(email):
+    """
+    Parses a mime email and returns the reply to address.
+    If not reply to is explicitly specified the senders
+    address is used.
+    """
     parse = Parser.Parser()
     msg = parse.parsestr(email)
     if msg['Reply-To']:
@@ -37,17 +43,21 @@ def get_sender(email):
     elif msg['From']:
         return msg['From']
 
+
 def create_email(to, fr, body, subject=None, attachments=None):
+    """
+    Creates a multipart MIME email to 'to' and from 'fr'.  Both
+    of which must be valid email addresses
+    """
     msg = Multipart.MIMEMultipart()
     msg['Subject'] = subject or '(no subject)'
     msg['From'] = fr
-    if type(to) == type(list()):
+    if isinstance(to, list):
         to = ','.join(to)
     msg['To'] = to
     body = MIMEText(body, 'plain')
     msg.attach(body)
-    #msg.set_payload(body)
-    if attachments:
+    if attachments is not None:
         for attach_name, attach in attachments.iteritems():
             part = mime.base.MIMEBase('application', "octet-stream")
             part.set_payload(attach.read())
@@ -66,10 +76,12 @@ def send_email(mime_email):
     server.sendmail(fr, to, mime_email.as_string())
     s.quit()
 
+
 def mock_send_email(mime_email):
     to = mime_email['To']
     fr = mime_email['From']
     import pdb; pdb.set_trace()
+
 
 def get_body(email):
     """
@@ -89,6 +101,7 @@ def get_body(email):
 
     return filter(len, get_body(msg))
 
+
 def send_error(to, body, exception = None, fr = None):
     """
     Sends a simple email and logs at the same time
@@ -98,6 +111,7 @@ def send_error(to, body, exception = None, fr = None):
     logger.debug(body)
     fr = fr or _windbreaker_email
     send_email(create_email(to, fr, body))
+
 
 def parse_saildocs_hours(hours_str):
     # the hours query is a bit complex since it
@@ -121,6 +135,7 @@ def parse_saildocs_hours(hours_str):
         for x in hours:
             prev = x
             yield x
+
 
 def get_forecast(query, path=None):
     ll = objects.LatLon(query['lower'], query['left'])
@@ -147,6 +162,7 @@ def get_forecast(query, path=None):
     iter_hours = parse_saildocs_hours(query['hours'])
 
     assert fcst[conv.TIME].attributes[conv.UNITS].startswith('hour')
+
     def time_inds(hours):
         """determines which indices extract the required hours"""
         for hr in hours:
@@ -175,11 +191,13 @@ def get_forecast(query, path=None):
 
     obj = obj.take(lat_inds, conv.LAT)
     obj = obj.take(lon_inds, conv.LON)
-    if 'ensembles' in query:
-        obj = obj.take(np.arange(query['ensembles']), conv.ENSEMBLE)
+    if conv.ENSEMBLE in query:
+        obj = obj.take(np.arange(query[conv.ENSEMBLE]), conv.ENSEMBLE)
     return obj
 
-def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=None):
+
+def windbreaker(mime_text, ncdf_weather=None,
+                catchable_exceptions=None, output=None):
     """
     Takes a mime_text email that contains one or several saildoc-like
     requests and replies to the sender with emails containing the
@@ -188,7 +206,7 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
     logger.debug('Wind Breaker')
     logger.debug(mime_text)
     email_body = get_body(mime_text)
-    sender = get_sender(mime_text)
+    sender = get_reply_to(mime_text)
     logger.debug('Extracted email body: %s' % str(email_body))
     if len(email_body) != 1:
         send_error(sender, "Your email should contain only one body")
@@ -206,7 +224,7 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
     # if there are no queries let the sender know
     if len(queries) == 0:
         send_error(sender,
-                   'We were unable to find any forecast requests in your recent email.', e)
+            'We were unable to find any forecast requests in your email.', e)
         return False
     success = True
     # for each query we send a seperate email
@@ -248,6 +266,7 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
         send_email(weather_email)
         logger.debug('Email sent.')
     return success
+
 
 def parse_saildocs(email_body):
     """
@@ -318,10 +337,6 @@ def parse_saildocs_query(query):
             query_dict['ensembles'] = int(kwdargs['ensembles'])
 
     return query_dict
-
-def test_parse_saildocs():
-    print parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND START=25,175')
-    print parse_saildocs_query('send GFS:10S,42S,162E,144W|13,13|0,6,12,24..60,66..90,102,120|PRMSL,WIND,WAVES,RAIN')
 
 if __name__ == "__main__":
     test_parse_saildocs()

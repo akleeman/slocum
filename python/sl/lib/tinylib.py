@@ -1,45 +1,87 @@
 import yaml
+import zlib
 import numpy as np
-import simplejson
+import netCDF4
 
 from bisect import bisect
-from cStringIO import StringIO
 
-import matplotlib.pyplot as plt
+import sl.lib.conventions as conv
 
-import sl.objects.conventions as conv
+from sl.lib import objects, units
 
-from sl import poseidon, spray
-from sl.lib import numpylib
-from sl.objects import objects, core, units
+from polyglot import Dataset
+from collections import OrderedDict
+import datetime
 
-def quantile(arr, q):
-    if not arr.ndim == 1:
-        raise ValueError("quantile expects a 1d array")
-    arr = np.sort(arr)
+_beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
+                            33., 40., 47., 55., 63., 75.])
+_direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
+
+_variables = {conv.WIND_SPEED: {'dtype': np.float32,
+                                'dims': (conv.TIME, conv.LAT, conv.LON),
+                                'divs': _beaufort_scale,
+                                'bits': 4,
+                                'attributes': {conv.UNITS: 'knot'}},
+              conv.WIND_DIR: {'dtype': np.float32,
+                              'dims': (conv.TIME, conv.LAT, conv.LON),
+                              'divs': _direction_bins,
+                              'bits': 4,
+                              'attributes': {conv.UNITS: 'radians'}},
+              conv.LON: {'dtype': np.float64,
+                         'dims': (conv.LON, ),
+                         'least_significant_digit': 2,
+                         'attributes': {conv.UNITS: 'degrees east'}},
+              conv.LAT: {'dtype': np.float64,
+                         'dims': (conv.LAT, ),
+                         'least_significant_digit': 2,
+                         'attributes': {conv.UNITS: 'degrees north'}},
+              conv.TIME: {'dtype': np.int64,
+                          'dims': (conv.TIME, ),
+                          'least_significant_digit': 0},
+              }
 
 def pack_ints(arr, req_bits=None):
     """
-    Takes an arry of integers
+    Takes an array of integers and returns a dictionary
+    holding the packed data.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        An array of integers which are to be packed.  The maximum
+        value of the array is used to determine the number of
+        required bits (unless otherwise specified).
+    req_bits : int (optional)
+        The number of bits required to losslessly store arr.
     """
+    # there has got to be a better way to check if an array
+    # holds integers, but this does this trick
     try:
         np.iinfo(arr.dtype)
     except:
         raise ValueError("pack_ints requires an integer array as input")
     if np.any(arr < 0):
         raise ValueError("expected all values of arr to be non negative")
+    # we assume that these integer arrays are unsigned.
+    assert np.min(arr) >= 0
     # the number of bits required to store the largest number in arr
-    req_bits = req_bits or int(np.ceil(np.log2(np.max(arr) + 1)))
+    # TODO: we could think of better packing schemes ... but not now.
+    req_bits = req_bits or np.ceil(np.log2(np.max(arr) + 1))
+    assert int(req_bits) == req_bits
+    req_bits = int(req_bits)
     if req_bits >= 8:
         raise ValueError("why not just use uint8 or bigger?")
+    # we pack several sub 8 bit into one 'out_bits' bit integer.
+    # will it ever make sense to use more than 8?
     out_bits = 8
     if np.mod(out_bits, req_bits):
         print "output: %d    required: %d" % (out_bits, req_bits)
-        raise ValueError("bit size in the output type must be a multiple of the num. bits")
+        raise ValueError("bit size in the output type must be a " +
+                         "multiple of the num bits")
     vals_per_int = out_bits / req_bits
-    # required is the number of required elements in the array
-    required = np.ceil(float(arr.size) * req_bits / out_bits)
-    output = np.zeros(shape=(required,), dtype=np.uint8)
+    # packed_size is the number of required elements in the output array
+    packed_size = np.ceil(float(arr.size) * req_bits / out_bits)
+    output = np.zeros(shape=(packed_size,), dtype=np.uint8)
     # iterate over each input element
     for i, x in enumerate(arr.flatten()):
         # determine which index
@@ -47,33 +89,51 @@ def pack_ints(arr, req_bits=None):
         if np.mod(i, vals_per_int):
             output[ind] = output[ind] << req_bits
         output[ind] += x
-    packed_array = {'packed_array':output,
-                    'bits':req_bits,
-                    'shape':arr.shape,
-                    'dtype':str(arr.dtype)}
+    packed_array = {'packed_array': zlib.compress(output.tostring(), 9),
+                    'bits': req_bits,
+                    'shape': arr.shape,
+                    'dtype': str(arr.dtype)}
     return packed_array
+
 
 def unpack_ints(packed_array, bits, shape, dtype=None):
     """
-    Takes an packed array and unpacks it to the original
-    array.
-
-    This should be true:
+    Takes a packed array and expands it to its original size such that
 
     np.all(original_array == unpack_ints(**pack_ints(original_array)))
+
+    Parameters
+    ----------
+    packed_array : np.ndarray
+        An integer array of packed data.
+    bits : int
+        The number of bits used to pack each encoded int
+    shape : tuple of ints
+        The resulting shape of the array
+    dtype : numpy.dtype
+        The output data type
+
+    Returns
+    -------
+    unpacked : np.ndarray
+        The unpacked values held in packed_array
     """
+    # the dtype here is different than the final one.  At this point
+    # all the data is stored in packed bytes.
+    packed_array = np.fromstring(zlib.decompress(packed_array), dtype=np.uint8)
     info = np.iinfo(packed_array.dtype)
     enc_bits = info.bits
     if np.mod(enc_bits, bits):
         raise ValueError("the bit encoding doesn't line up")
     # how many values are in each int?
     vals_per_int = enc_bits / bits
-    size = reduce(lambda x, y : x * y, shape)
+    size = reduce(lambda x, y: x * y, shape)
     # the masks are used for logical AND comparisons to retrieve the values
     masks = [(2 ** bits - 1) << i * bits for i in range(vals_per_int)]
-    # iterate over array values until we've generated enough values to
-    # fill the original array
+
     def iter_vals():
+        # iterate over array values until we've generated enough values to
+        # fill the original array
         cnt = 0
         for x in packed_array:
             # nvals is the number of values contained in the next packed int
@@ -82,31 +142,51 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
             # recover the packed values.  Note that this will always generate
             # 'vals_per_int' values but sometimes we only need a few which is
             # why we select out the first nvals
-            reversed_vals = [(x & y) >> j * bits for j, y in enumerate(masks)][:nvals]
-            for v in reversed(reversed_vals):
+            reversed_vals = [(x & y) >> j * bits for j, y in enumerate(masks)]
+            for v in reversed(reversed_vals[:nvals]):
                 yield v
-            cnt += len(reversed_vals)
+            cnt += nvals
     # recreate the original array
-    return np.array([x for x in iter_vals()], dtype=dtype).reshape(shape)
+    try:
+        return np.array([x for x in iter_vals()], dtype=dtype).reshape(shape)
+    except:
+        import pdb; pdb.set_trace()
+
 
 def tiny_array(arr, bits=None, divs=None, mask=None):
+    """
+    A convenience wrapper around  tiny_masked and tiny_unmasked
+    which decides which method to use based on the mask argument
+    """
     if mask is None:
-        return tiny_unmasked(arr, bits, divs)
+        return tiny_unmasked(arr, bits=bits, divs=divs)
     else:
-        return tiny_masked(arr, mask, bits, divs)
+        return tiny_masked(arr, mask=mask, bits=bits, divs=divs)
+
 
 def tiny_unmasked(arr, bits=None, divs=None):
     """
-    Bins the values in arr by using uniformly spaced divisions, 'divs', unless
-    the divs have been provided.  Then rather than storing each value of arr
-    only the bin is stored.  If the number of divs is small the resulting
-    array is compressed even further by packing several sets of 'bins' into
-    a single uint8 using pack_its.
+    Bins the values in arr by using dividers (divs).  The result
+    is a set of integers indicating which bin each value in arr belongs
+    to.  These bin indicators are then stored as packed integers (provided
+    the number of bins can be stored in 4 or less bits.
 
-    Returns a dictionary holding all the required arguments for expand_array
+    Parameters
+    ----------
+    arr : np.ndarray
+        An array of values that are going to be lossy compressed by binning
+    bits : int
+        The number of bits that should be used to hold arr
+    divs : np.ndarray
+        The dividers (ie, edges) of the bins, should be length bins
+
+    Returns
+    -------
+    tiny : dict
+        A dictionary holding all the required arguments to expand the array
     """
     if divs is None:
-        bits = bits or 4# it doesn't make sense to store anything larger than this
+        bits = bits or 4
         n = np.power(2., bits)
         lower = np.min(arr)
         upper = np.max(arr)
@@ -116,11 +196,15 @@ def tiny_unmasked(arr, bits=None, divs=None):
         bits = bits or np.ceil(np.log2(divs.size))
     if int(np.log2(bits)) != np.log2(bits):
         raise ValueError("bits must be a power of two")
+    # it doesn't make sense to store anything larger than this
+    assert bits <= 4
     n = np.power(2., bits)
     # for each element of the array, count how many divs are less than the elem
     # this certainly not the fastest implementation but should do.
     # note that a zero now means that the value was less than all div
-    bins = np.maximum(np.minimum(np.array([bisect(divs, y) for y in arr.flatten()]), n), 1)
+    # and a value of n means it was larger than the nth div.
+    bins = np.maximum(np.minimum(np.array([bisect(divs, y)
+                                           for y in arr.flatten()]), n), 1)
     bins = bins.astype(np.uint8)
     tiny = pack_ints(bins - 1, bits)
     tiny['divs'] = divs
@@ -128,35 +212,83 @@ def tiny_unmasked(arr, bits=None, divs=None):
     tiny['dtype'] = str(arr.dtype)
     return tiny
 
+
+def tiny_masked(arr, mask=None, bits=None, divs=None):
+    """
+    Creates a tiny array with a mask.  Only the values
+    that are not masked are packed.  The mask is not
+    stored, so must be persisted to expansion.
+
+    See tiny_unmasked for more details.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        The full precision array that is to be packed.
+    mask : np.ndarray
+        A masked which is applied to arr, via arr[mask]
+    bits : int
+        The number of bit used to store arr.
+
+    Returns
+    -------
+    tiny : dict
+        A dictionary holding all the required arguments to
+        expand the array. Note however that in order to expand
+        the tiny array the same mask used to create it must
+        be used.
+    """
+    if mask is None:
+        return tiny_array(arr, bits, divs)
+    masked = arr[mask].flatten()
+    ta = tiny_unmasked(masked, bits=bits, divs=divs)
+    ta['shape'] = arr.shape
+    ta['masked'] = True
+    return ta
+
+
 def tiny_bool(arr, mask=None):
+    """
+    A convenience wrapper around tiny_array to be used for boolean arrays.
+    """
     if not arr.dtype == 'bool':
         raise ValueError("expected a boolean valued array")
     return tiny_array(arr, bits=1, divs=np.array([0., 1.]), mask=mask)
 
-def expand_bool(packed_array, bits, shape, divs, dtype=None, masked=False, mask=None, **kwdargs):
-    if masked:
-        return expand_masked(mask, packed_array, bits=1, shape=shape,
-                            divs=np.array([False, True]), dtype=np.bool)
-    else:
-        return expand_array(packed_array, bits=1, shape=shape,
-                            divs=np.array([False, True]), dtype=np.bool)
 
-def expand_array(packed_array, bits, shape, divs, dtype=None, masked=False, mask=None, **kwdargs):
+def expand_bool(packed_array, shape, **kwdargs):
+    """
+    A convenience wrapper around exapnd_array to be used for boolean arrays.
+    """
+    return expand_array(packed_array, bits=1, shape=shape,
+                        divs=np.array([False, True]),
+                        dtype=None, masked=False, mask=None)
+
+
+def expand_array(packed_array, bits, shape, divs, dtype=None,
+                 masked=False, mask=None):
+    """
+    A convenience function which decides how to expand based on
+    the masked flag.
+    """
     if masked:
         return expand_masked(mask, packed_array, bits, shape, divs, dtype)
     else:
         return expand_unmasked(packed_array, bits, shape, divs, dtype)
 
-def expand_unmasked(packed_array, bits, shape, divs, dtype=None, **kwdargs):
+
+def expand_unmasked(packed_array, bits, shape, divs, dtype=None):
     """
-    Expands a tiny array to its 'original' ... but remember
-    theres been a loss of information so it won't quite be
-    the same
+    Expands a tiny array to the original data type, but with
+    a loss of information.  The original data, which has been
+    binned, is returned as the value at the middle of each bin.
+
 
     Typical usage:
+
     original_array = np.random.normal(size=(30, 3))
     tiny = tiny_array(original_array)
-    recovered = expand_array(**tiny)
+    recovered = expand_unmasked(**tiny)
     """
     dtype = dtype or divs.dtype
     ndivs = divs.size
@@ -167,96 +299,112 @@ def expand_unmasked(packed_array, bits, shape, divs, dtype=None, **kwdargs):
     averages = 0.5 * (divs[lower_bins] + divs[upper_bins])
     return averages.astype(dtype).reshape(shape)
 
-def tiny_masked(arr, mask=None, bits=None, divs=None):
-    if mask is None:
-        return tiny_array(arr, bits, divs)
-    masked = arr[mask].flatten()
-    ta = tiny_array(masked, bits=bits, divs=divs)
-    ta['shape'] = arr.shape
-    ta['masked'] = True
-    return ta
 
-def expand_masked(mask, packed_array, bits, shape, divs, dtype=None, **kwdargs):
+def expand_masked(mask, packed_array, bits, shape, divs, dtype=None):
+    """
+    Expands a masked tiny array by filling any masked values with nans
+    """
     masked_shape = (np.sum(mask),)
     masked = expand_array(packed_array, bits, masked_shape, divs, dtype)
-    ret = numpylib.nans(shape)
+    ret = np.empty(shape)
+    ret.fill(np.nan)
     ret[mask] = masked
     return ret
 
-def rhumbline_slice(start, end, lats, lons, max_dist=180):
-    """
-    Takes a start and end point and returns a meshgrid mask that
-    will exclude all points more than max_dist nautical miles from the rhumbline
-    """
-    grid_lon, grid_lat = np.meshgrid(lons, lats)
 
-    bearing = spray.rhumbline_bearing(start, end)
-    rhumbline = spray.rhumbline_path(start, bearing)
-    max_distance = spray.rhumbline_distance(start, end)
+def small_array(arr, least_significant_digit):
+    data = np.round(arr * np.power(10, least_significant_digit))
+    return {'packed_array': zlib.compress(data.tostring(), 9),
+            'dtype': arr.dtype,
+            'least_significant_digit': least_significant_digit}
 
-    def distance(latlon):
-        def func(x):
-            return spray.rhumbline_distance(latlon, rhumbline(x))
-        dists = map(func, np.linspace(0., max_distance, num=1000))
-        # find the point on the rhumbline thats closest to our lat lon
-        return min(dists)
 
-    def iter_distances():
-        for lat, lon in zip(grid_lat.flatten(), grid_lon.flatten()):
-            yield distance(objects.LatLon(lat, lon)) <= max_dist
+def expand_small_array(packed_array, dtype, least_significant_digit):
+    arr = np.fromstring(zlib.decompress(packed_array), dtype=dtype)
+    arr = arr / np.power(10, least_significant_digit)
+    return arr
 
-    mask = np.array(list(iter_distances())).reshape(grid_lon.shape)
-    return mask
 
-_beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27., 33., 40., 47., 55., 63., 75.])
-def to_beaufort(obj, start=None, end=None):
-    if (start is None and end) or (start and end is None):
-        raise ValueError("expected both start and end or neither")
+def small_time(time_var):
+    assert time_var.attributes[conv.UNITS].startswith('hours')
+    origin = netCDF4.num2date([0],
+                              time_var.attributes[conv.UNITS],
+                              calendar='standard')[0]
+    diffs = np.diff(np.concatenate([[0], time_var.data[:]]))
+    fromordinal = datetime.datetime.fromordinal(origin.toordinal())
+    seconds = int(datetime.timedelta.total_seconds(origin - fromordinal))
+    augmented = np.concatenate([[origin.toordinal(),
+                                 seconds],
+                                diffs])
+    return small_array(augmented, least_significant_digit=0)
+
+
+def expand_small_time(packed_array, dtype, least_significant_digit):
+    augmented = expand_small_array(packed_array, dtype,
+                                   least_significant_digit)
+    origin = datetime.datetime.fromordinal(augmented[0])
+    origin += datetime.timedelta(seconds=int(augmented[1]))
+    times = np.cumsum(augmented[2:])
+    units = origin.strftime('hours since %Y-%m-%d %H:%M:%S')
+    return times, units
+
+
+def check_beaufort(obj):
+    # these will fail if UWND or VWND are not variables
     assert obj[conv.UWND].attributes[conv.UNITS] == 'knot'
     assert obj[conv.VWND].attributes[conv.UNITS] == 'knot'
+    # make sure time is all integers
+    np.testing.assert_array_equal(obj[conv.TIME].data.astype('int'),
+                                  obj[conv.TIME])
+    # make sure latitudes are in degrees and are on the correct scale
+    assert 'degrees' in obj[conv.LAT].attributes[conv.UNITS]
+    assert np.min(obj[conv.LAT]) >= -90
+    assert np.max(obj[conv.LAT]) <= 90
+    # make sure longitudes are in degrees and are on the correct scale
+    assert 'degrees' in obj[conv.LON].attributes[conv.UNITS]
+    assert np.min(obj[conv.LAT]) >= 0
+    assert np.max(obj[conv.LAT]) <= 360
+    assert obj[conv.UWND].shape == obj[conv.VWND].shape
+
+_variable_order = [conv.TIME, conv.LAT, conv.LON, conv.WIND_SPEED, conv.WIND_DIR]
+
+
+def to_beaufort(obj):
+    """
+    Takes an object holding wind and precip, cloud or pressure
+    variables and compresses it by converting zonal and meridional
+    winds to wind speed and direction, then compressing to
+    beaufort scales and second order cardinal directions.
+
+    Parameters
+    ----------
+    """
     uwnd = obj[conv.UWND].data
     vwnd = obj[conv.VWND].data
-    if not uwnd.shape == vwnd.shape:
-        raise ValueError("expected uwnd and vwnd to have same shape")
-    if not start is None and not end is None:
-        mask = rhumbline_slice(start, end,
-                               obj[conv.LAT].data, obj[conv.LON].data)
-        if not obj[conv.UWND].dimensions == (conv.ENSEMBLE, conv.TIME, conv.LAT, conv.LON):
-            raise ValueError("masking only works with specific dimensions")
-        ntime = obj.dimensions[conv.TIME]
-        nens = obj.dimensions[conv.ENSEMBLE]
-        mask = np.array([[mask for i in range(ntime)] for j in range(nens)])
-        if not mask.shape == uwnd.shape:
-            raise ValueError("something funkys up with those shapes")
-    else:
-        mask = None
-    # first we store all the required coordinates
-    dims = obj[conv.UWND].dimensions
-    coords = set([x for x in dims if x in obj.coordinates])
-    encoded_variables = {}
-    for v in coords:
-        encoded_variables[v] = {'encoded_array':obj[v].data[:].tostring(),
-                                'bits' : int(0),# bits
-                                'shape' : obj[v].shape,
-                                'divs' : int(0),# divs
-                                'dtype' : str(obj[v].data.dtype),
-                                'attributes' : dict(obj[v].attributes),
-                                'dims' : obj[v].dimensions}
+    # first we store all the required coordinates using (nearly)
+    # lossless compression
+    check_beaufort(obj)
+    # keep this ordered so the coordinates get written (and read) first
+    encoded_variables = OrderedDict()
+
+    assert _variables[conv.TIME]['dtype'] == obj[conv.TIME].dtype
+    encoded_variables[conv.TIME] = small_time(obj[conv.TIME])['packed_array']
+    for v in [conv.LAT, conv.LON]:
+        small = small_array(obj[v].data[:].astype(_variables[v]['dtype']),
+                            _variables[v]['least_significant_digit'])
+        encoded_variables[v] = small['packed_array']
     # convert the wind speeds to a beaufort scale and store them
     wind = [objects.Wind(*x) for x in zip(uwnd[:].flatten(), vwnd[:].flatten())]
     speeds = np.array([x.speed for x in wind]).reshape(uwnd.shape)
-    tiny_wind = tiny_array(speeds, bits=4, divs=_beaufort_scale, mask=mask)
-    tiny_wind['encoded_array'] = tiny_wind.pop('packed_array').tostring()
-    tiny_wind['dims'] = dims
-    encoded_variables[conv.WIND_SPEED] = tiny_wind
-
+    speeds = speeds.astype(_variables[conv.WIND_SPEED]['dtype'])
+    tiny_wind = tiny_array(speeds, bits=4, divs=_beaufort_scale)
+    encoded_variables[conv.WIND_SPEED] = tiny_wind['packed_array']
     # convert the direction to cardinal directions and store them
-    direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
     directions = np.array([x.dir for x in wind]).reshape(uwnd.shape)
-    tiny_direction = tiny_array(directions, bits=4, divs=direction_bins, mask=mask)
-    tiny_direction['encoded_array'] = tiny_direction.pop('packed_array').tostring()
-    tiny_direction['dims'] = dims
-    encoded_variables[conv.WIND_DIR] = tiny_direction
+    directions.astype(_variables[conv.WIND_DIR]['dtype'])
+    tiny_direction = tiny_array(directions, bits=4,
+                                divs=_direction_bins)
+    encoded_variables[conv.WIND_DIR] = tiny_direction['packed_array']
 
     if conv.PRECIP in obj.variables:
         is_rainy = obj[conv.PRECIP].data > 2.# greater than 2 mm of rain
@@ -280,125 +428,61 @@ def to_beaufort(obj, start=None, end=None):
         tiny_pres['dims'] = dims
         encoded_variables[conv.PRESSURE] = tiny_pres
 
-    info = {}
-    info['dimensions'] = dims
-    info['coordinates'] = coords
-    info['variables'] = encoded_variables
-    info['start'] = start or ''
-    info['end'] = end or ''
+    def stringify(vname, packed):
+        vid = _variable_order.index(vname)
+        header = np.array([vid, len(packed)], dtype=np.uint8).tostring()
+        return ''.join([header, packed])
 
-    for k, v in encoded_variables.iteritems():
-        print '%10d\t%s' % (len(v['encoded_array']), k)
-    return yaml.dump(info)
+    payload = ''.join(stringify(k, v) for k, v in encoded_variables.iteritems())
+    print "compressed to: ", len(zlib.compress(payload, 9)) / float(len(payload))
+    return zlib.compress(payload, 9)
 
-def from_beaufort(yaml_dump):
-    info = yaml.load(yaml_dump)
-    obj = core.Data()
-    # first create the coordinates
-    for coord in info['coordinates']:
-        v = info['variables'][coord]
-        data = np.fromstring(v['encoded_array'],
-                             dtype=v['dtype']).reshape(v['shape'])
-        obj.create_coordinate(coord, data, attributes=v['attributes'])
-    # next create any non coordinates, these are all assumed to be tiny arrays
-    non_coords = [x for x in info['variables'].keys() if not x in info['coordinates']]
-    if ('start' in info and 'end' in info) and info['start'] and info['end']:
-        mask = rhumbline_slice(info['start'], info['end'],
-                               obj[conv.LAT].data, obj[conv.LON].data)
-        ntime = obj.dimensions[conv.TIME]
-        nens = obj.dimensions[conv.ENSEMBLE]
-        mask = np.array([[mask for i in range(ntime)] for j in range(nens)])
-    else:
-        mask = None
 
-    for var in non_coords:
-        v = info['variables'][var]
-        v['packed_array'] = np.fromstring(v.pop('encoded_array'), dtype='uint8')
-        data = expand_array(mask=mask, **v)
-        obj.create_variable(var, v['dims'], data=data)
+def unstring_beaufort(payload):
+    payload = zlib.decompress(payload)
+    while len(payload):
+        vid, vlen = np.fromstring(payload[:2], dtype=np.uint8)
+        packed = payload[2:(vlen + 2)]
+        payload = payload[(vlen + 2):]
+        vname = _variable_order[vid]
+        info = _variables[vname]
+        info['packed_array'] = packed
+        yield vname, info
 
-    dims = obj['wind_speed'].dimensions
-    vwnd = -np.cos(obj['wind_dir'].data) * obj['wind_speed'].data
-    uwnd = -np.sin(obj['wind_dir'].data) * obj['wind_speed'].data
-    obj.create_variable('vwnd', dim=dims, data=vwnd,
-                        attributes={'units':units._speed_unit})
-    obj.create_variable('uwnd', dim=dims, data=uwnd,
-                        attributes={'units':units._speed_unit})
-    return obj
 
-# def tiny(obj, vars, stream=None):
-#    info = {}
-#    vars = set(vars)
-#    dims = set()
-#    for v in vars:
-#        [dims.add((x, obj.dimensions[x])) for x in obj[v].dimensions
-#         if x in obj.dimensions and not x in obj.coordinates]
-#    coords = set([v for v in vars if v in obj.coordinates])
-#    for v in vars:
-#        [coords.add(x) for x in obj[v].dimensions if x in obj.coordinates]
-#    encoded_variables = {}
-#    vars.update(coords)
-#    for v in vars:
-#        print v
-#        if v not in coords:
-#            encoded, divs = tiny_array(obj[v].data.flatten())
-#            encoded = ''.join([chr(x) for x in encoded])
-#            divs = '%s\t%s' % (divs.tostring(), str(divs.dtype))
-#        else:
-#            encoded = obj[v].data.tostring()
-#            divs = str(obj[v].data.dtype)
-#        encoded_variables[v] = (obj[v].shape, encoded, divs,
-#                                obj[v].attributes, obj[v].dimensions)
-#    info['dimensions'] = dims
-#    info['coordinates'] = coords
-#    info['variables'] = encoded_variables
-#    return yaml.dump(info, stream=stream)
-#
-# def huge(tiny_string):
-#    info = yaml.load(tiny_string)
-#
-#    obj = core.Data()
-#    for (dim, k) in info['dimensions']:
-#        obj.create_dimension(dim, k)
-#    for coord in info['coordinates']:
-#        (shape, encoded, divs, attributes, dims) = info['variables'][coord]
-#        obj.create_coordinate(coord,
-#                              data=np.fromstring(encoded, divs),
-#                              attributes=attributes)
-#    vars = [(v, x) for (v, x) in info['variables'].iteritems()
-#            if not v in info['coordinates']]
-#    for v, x in vars:
-#        (shape, encoded, divs, attributes, dims) = x
-#        try:
-#            divs = np.fromstring(*divs.rsplit('\t', 1))
-#        except:
-#            import pdb; pdb.set_trace()
-#        encoded = [ord(x) for x in encoded]
-#        obj.create_variable(v, dim=dims,
-#                            data=expand(encoded, divs).reshape(shape),
-#                            attributes=attributes)
-#    return obj
+def from_beaufort(payload):
+    variables = list(unstring_beaufort(payload))
 
-def test():
-    core.ENSURE_VALID = False
+    out = Dataset()
+    for vname, info in variables:
+        if vname == conv.TIME:
+            data, time_units = expand_small_time(info['packed_array'],
+                                     info['dtype'],
+                                     info['least_significant_digit'])
+            info['attributes'] = {conv.UNITS: time_units}
+            out.create_coordinate(vname, data, info.get('attributes', None))
+        elif vname in [conv.LAT, conv.LON]:
+            data = expand_small_array(info['packed_array'],
+                                     info['dtype'],
+                                     info['least_significant_digit'])
+            out.create_coordinate(vname, data, info.get('attributes', None))
+        else:
+            shape = [out.dimensions[d] for d in info['dims']]
+            data = expand_array(info['packed_array'],
+                                 bits=info['bits'],
+                                 shape=shape,
+                                 divs=info['divs'],
+                                 dtype=info['dtype'])
+            out.create_variable(vname, info['dims'],
+                                data=data,
+                                attributes=info.get('attributes', None))
 
-    ur = objects.LatLon(11, 280)
-    ll = objects.LatLon(-2, 267)
+    dims = out[conv.WIND_SPEED].dimensions
+    vwnd = -np.cos(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
+    uwnd = -np.sin(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
+    out.create_variable(conv.UWND, dims=dims, data=uwnd,
+                        attributes={conv.UNITS: units._speed_unit})
+    out.create_variable(conv.VWND, dims=dims, data=vwnd,
+                        attributes={conv.UNITS: units._speed_unit})
+    return out
 
-    gefs = poseidon.gefs_subset(ur=ur, ll=ll, path='/home/kleeman/slocum/data/gefs/abed8fee-7f77-cda2-e4ab-7b7129473c29.nc')
-    ret = to_beaufort(gefs)
-    f = open('/home/kleeman/Desktop/beaufort.yaml', 'w')
-    f.write(ret)
-    f.close()
-
-    f = open('/home/kleeman/Desktop/beaufort.yaml', 'r')
-    reconstructed = from_beaufort(f.read())
-    import pdb; pdb.set_trace()
-    np.random.seed(1982)
-    tmp = np.random.normal(size=(101,))
-    ret, divs = tiny_array(tmp.copy())
-    recon = expand(ret, divs)
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(test())
