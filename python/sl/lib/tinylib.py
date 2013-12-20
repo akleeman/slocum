@@ -12,6 +12,7 @@ from sl.lib import objects, units
 from polyglot import Dataset
 from collections import OrderedDict
 import datetime
+import copy
 
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
                             33., 40., 47., 55., 63., 75.])
@@ -89,7 +90,7 @@ def pack_ints(arr, req_bits=None):
         if np.mod(i, vals_per_int):
             output[ind] = output[ind] << req_bits
         output[ind] += x
-    packed_array = {'packed_array': zlib.compress(output.tostring(), 9),
+    packed_array = {'packed_array': output.tostring(),
                     'bits': req_bits,
                     'shape': arr.shape,
                     'dtype': str(arr.dtype)}
@@ -120,7 +121,7 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
     """
     # the dtype here is different than the final one.  At this point
     # all the data is stored in packed bytes.
-    packed_array = np.fromstring(zlib.decompress(packed_array), dtype=np.uint8)
+    packed_array = np.fromstring(packed_array, dtype=np.uint8)
     info = np.iinfo(packed_array.dtype)
     enc_bits = info.bits
     if np.mod(enc_bits, bits):
@@ -362,8 +363,8 @@ def check_beaufort(obj):
     assert np.max(obj[conv.LAT]) <= 90
     # make sure longitudes are in degrees and are on the correct scale
     assert 'degrees' in obj[conv.LON].attributes[conv.UNITS]
-    assert np.min(obj[conv.LAT]) >= 0
-    assert np.max(obj[conv.LAT]) <= 360
+    assert np.min(obj[conv.LON]) >= 0
+    assert np.max(obj[conv.LON]) <= 360
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
 _variable_order = [conv.TIME, conv.LAT, conv.LON, conv.WIND_SPEED, conv.WIND_DIR]
@@ -379,6 +380,7 @@ def to_beaufort(obj):
     Parameters
     ----------
     """
+    obj = copy.deepcopy(obj)
     uwnd = obj[conv.UWND].data
     vwnd = obj[conv.VWND].data
     # first we store all the required coordinates using (nearly)
@@ -387,7 +389,6 @@ def to_beaufort(obj):
     # keep this ordered so the coordinates get written (and read) first
     encoded_variables = OrderedDict()
 
-    assert _variables[conv.TIME]['dtype'] == obj[conv.TIME].dtype
     encoded_variables[conv.TIME] = small_time(obj[conv.TIME])['packed_array']
     for v in [conv.LAT, conv.LON]:
         small = small_array(obj[v].data[:].astype(_variables[v]['dtype']),
@@ -430,7 +431,13 @@ def to_beaufort(obj):
 
     def stringify(vname, packed):
         vid = _variable_order.index(vname)
-        header = np.array([vid, len(packed)], dtype=np.uint8).tostring()
+        l = np.array(len(packed), dtype=np.uint16)
+        # make sure the length fits in 16 bits
+        assert len(packed) == l
+        l0 = (l >> 8) & 0xff
+        l1 = l & 0xff
+        header = np.array([vid, l0, l1], dtype=np.uint8).tostring()
+        print vid, l
         return ''.join([header, packed])
 
     payload = ''.join(stringify(k, v) for k, v in encoded_variables.iteritems())
@@ -441,9 +448,11 @@ def to_beaufort(obj):
 def unstring_beaufort(payload):
     payload = zlib.decompress(payload)
     while len(payload):
-        vid, vlen = np.fromstring(payload[:2], dtype=np.uint8)
-        packed = payload[2:(vlen + 2)]
-        payload = payload[(vlen + 2):]
+        vid, l0, l1 = np.fromstring(payload[:3], dtype=np.uint8)
+        vlen = (l0 << 8) + l1
+        print vid, vlen
+        packed = payload[3:(vlen + 3)]
+        payload = payload[(vlen + 3):]
         vname = _variable_order[vid]
         info = _variables[vname]
         info['packed_array'] = packed
@@ -484,5 +493,6 @@ def from_beaufort(payload):
                         attributes={conv.UNITS: units._speed_unit})
     out.create_variable(conv.VWND, dims=dims, data=vwnd,
                         attributes={conv.UNITS: units._speed_unit})
+    out = out.select([conv.UWND, conv.VWND])
     return out
 

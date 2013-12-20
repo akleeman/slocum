@@ -68,6 +68,7 @@ def create_email(to, fr, body, subject=None, attachments=None):
 
     return msg
 
+
 def send_email(mime_email):
     to = mime_email['To']
     fr = mime_email['From']
@@ -239,7 +240,7 @@ def windbreaker(mime_text, ncdf_weather=None,
         # .fcst        < 30kBytes
         # .gfcst       < 15kBytes
         try:
-            tiny_fcst = tinylib.to_beaufort(fcst, query['start'], query['end'])
+            tiny_fcst = tinylib.to_beaufort(fcst)
             compressed_forecast = zlib.compress(tiny_fcst, 9)
             logger.debug('Tinified the forecast')
         except catchable_exceptions, e:
@@ -280,6 +281,7 @@ def parse_saildocs(email_body):
     queries = [x.groups()[0] for x in matches]
     return (parse_saildocs_query(x) for x in queries)
 
+
 def parse_saildocs_query(query):
     """
     Parses a saildocs string retrieving the forecast query params
@@ -307,6 +309,7 @@ def parse_saildocs_query(query):
     if not provider.lower() == 'gfs':
         raise ValueError("currently only supports the GFS model")
     # parse the corners of the forecast grid
+
     def floatify(latlon):
         """ Turns a latlon string into a float """
         sign = -2. * (latlon[-1].lower() in ['s', 'w']) + 1
@@ -324,9 +327,9 @@ def parse_saildocs_query(query):
             'right': right,
             'grid_delta': grid_delta,
             'hours': hours_str,
-            'start':None,
-            'end':None,
-            'vars':vars}
+            'start': None,
+            'end': None,
+            'vars': vars}
 
     if args:
         kwdargs = dict(x.lower().split('=') for x in args)
@@ -339,4 +342,14 @@ def parse_saildocs_query(query):
     return query_dict
 
 if __name__ == "__main__":
-    test_parse_saildocs()
+    query = parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND START=25,175')
+    if not os.path.exists('test.nc'):
+        fcst = get_forecast(query)
+        fcst.dump('test.nc')
+    else:
+        fcst = Dataset('test.nc')
+    tiny_fcst = tinylib.to_beaufort(fcst)
+    compressed_forecast = zlib.compress(tiny_fcst, 9)
+    with open('test.windbreaker', 'w') as f:
+        f.write(compressed_forecast)
+

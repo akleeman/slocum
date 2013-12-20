@@ -2,6 +2,7 @@
 
 import os
 import sys
+import zlib
 import logging
 import argparse
 
@@ -16,7 +17,15 @@ logger.addHandler(file_handler)
 console_handler = logging.StreamHandler()
 logger.addHandler(console_handler)
 
-from sl.lib import emaillib
+from polyglot import Dataset
+
+from sl.lib import emaillib, griblib, tinylib
+
+
+def handle_grib(args):
+    tinyfcst = zlib.decompress(args.input.read())
+    fcst = tinylib.from_beaufort(tinyfcst)
+    griblib.save(fcst, target=args.output, append=False)
 
 
 def handle_email(args):
@@ -27,7 +36,8 @@ def handle_email(args):
     """
     emaillib.windbreaker(args.input.read(), None, args.output)
 
-_task_handler = {'email': handle_email}
+_task_handler = {'email': handle_email,
+                 'grib': handle_grib}
 
 if __name__ == "__main__":
 
@@ -46,9 +56,9 @@ if __name__ == "__main__":
     def add_parser(k):
         p = subparsers.add_parser(k)
         p.set_defaults(func=_task_handler[k])
-        p.add_argument('--input', type=argparse.FileType('r'),
+        p.add_argument('--input', type=argparse.FileType('rb'),
                         default=sys.stdin)
-        p.add_argument('--output', type=argparse.FileType('w'),
+        p.add_argument('--output', type=argparse.FileType('wb'),
                             default=sys.stdout)
         return p
     task_parsers = [add_parser(k) for k in _task_handler.keys()]
