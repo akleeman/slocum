@@ -1,41 +1,41 @@
 import os
 import re
-import sys
 import zlib
 import yaml
+import smtplib
 import numpy as np
 import logging
-import itertools
 
 from email import Parser, mime, encoders
 from email.mime import Multipart
 from email.mime.text import MIMEText
-from optparse import OptionParser
 from cStringIO import StringIO
 
+from polyglot import Dataset
+
 from sl import poseidon
-from sl.lib import tinylib, datelib
-from sl.objects import objects
-import smtplib
+from sl.lib import conventions as conv
+from sl.lib import objects, tinylib
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
 
-_windbreaker_email = 'wx@saltbreaker.com'
+_smtp_server = 'localhost'
+_windbreaker_email = 'query@ensembleweather.com'
 
-def clean_email_queue(queue_dir):
-    """
-    Removes any unprocessed emails if they are old
-    """
-    emails = [os.path.join(queue_dir, f) for f in os.listdir(queue_dir) if f.endswith('mime')]
-    datelib.remove_old_files(emails, days_old=2)
 
 def args_from_email(email):
     body = get_body(email)
     assert len(body) == 1
     return body[0].rstrip().split(' ')
 
-def get_sender(email):
+
+def get_reply_to(email):
+    """
+    Parses a mime email and returns the reply to address.
+    If not reply to is explicitly specified the senders
+    address is used.
+    """
     parse = Parser.Parser()
     msg = parse.parsestr(email)
     if msg['Reply-To']:
@@ -43,17 +43,21 @@ def get_sender(email):
     elif msg['From']:
         return msg['From']
 
+
 def create_email(to, fr, body, subject=None, attachments=None):
+    """
+    Creates a multipart MIME email to 'to' and from 'fr'.  Both
+    of which must be valid email addresses
+    """
     msg = Multipart.MIMEMultipart()
     msg['Subject'] = subject or '(no subject)'
     msg['From'] = fr
-    if type(to) == type(list()):
+    if isinstance(to, list):
         to = ','.join(to)
     msg['To'] = to
     body = MIMEText(body, 'plain')
     msg.attach(body)
-    #msg.set_payload(body)
-    if attachments:
+    if attachments is not None:
         for attach_name, attach in attachments.iteritems():
             part = mime.base.MIMEBase('application', "octet-stream")
             part.set_payload(attach.read())
@@ -64,19 +68,21 @@ def create_email(to, fr, body, subject=None, attachments=None):
 
     return msg
 
+
 def send_email(mime_email):
     to = mime_email['To']
     fr = mime_email['From']
     s = smtplib.SMTP('localhost')
-    server = smtplib.SMTP('mail.saltbreaker.com', 26)
-    server.login(_windbreaker_email, 'w3ath3r')
+    server = smtplib.SMTP(_smtp_server)
     server.sendmail(fr, to, mime_email.as_string())
     s.quit()
+
 
 def mock_send_email(mime_email):
     to = mime_email['To']
     fr = mime_email['From']
     import pdb; pdb.set_trace()
+
 
 def get_body(email):
     """
@@ -96,6 +102,7 @@ def get_body(email):
 
     return filter(len, get_body(msg))
 
+
 def send_error(to, body, exception = None, fr = None):
     """
     Sends a simple email and logs at the same time
@@ -106,51 +113,134 @@ def send_error(to, body, exception = None, fr = None):
     fr = fr or _windbreaker_email
     send_email(create_email(to, fr, body))
 
-def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=None):
+
+def parse_saildocs_hours(hours_str):
+    # the hours query is a bit complex since it
+    # involves interpreting the '..' as slices
+    prev = 0
+    for hr in hours_str.split(','):
+        if '..' in hr:
+            low, high = map(float, hr.split('..'))
+            diff = low - prev
+            if np.mod((high - low), diff):
+                # the step size will not be integer valued
+                # not sure how to handle that so for now just
+                # yield the low and high value
+                hours = [low, high]
+            else:
+                hours = np.linspace(low, high,
+                                    num = ((high - low) / diff) + 1,
+                                    endpoint=True)
+        else:
+            hours = map(float, [hr])
+        for x in hours:
+            prev = x
+            yield x
+
+
+def get_forecast(query, path=None):
+    ll = objects.LatLon(query['lower'], query['left'])
+    ur = objects.LatLon(query['upper'], query['right'])
+    ur, ll = poseidon.ensure_corners(ur, ll, expand=False)
+    vars = {}
+    if 'wind' in query['vars']:
+        vars['U-component_of_wind_height_above_ground'] = conv.UWND
+        vars['V-component_of_wind_height_above_ground'] = conv.VWND
+    else:
+        raise ValueError("Currently only support wind forecasts")
+#     if 'rain' in query['vars'] or 'precip' in query['vars']:
+#         vars['Total_precipitation'] = conv.PRECIP
+#     if 'cloud' in query['vars']:
+#         vars['Total_cloud_cover'] = conv.CLOUD
+#     if 'pressure' in query['vars']:
+#         vars['Pressure'] = 'mslp'
+
+    if path is None:
+        fcst = poseidon.gfs(ll, ur)
+    else:
+        fcst = Dataset(path)
+
+    iter_hours = parse_saildocs_hours(query['hours'])
+
+    assert fcst[conv.TIME].attributes[conv.UNITS].startswith('hour')
+
+    def time_inds(hours):
+        """determines which indices extract the required hours"""
+        for hr in hours:
+            inds = np.nonzero(fcst['time'].data[:] == float(hr))
+            if len(inds) == 1 and inds[0].size == 1:
+                # only yield an hour index if we know it exists
+                yield inds[0][0]
+    time_inds = list(time_inds(iter_hours))
+    obj = fcst.take(time_inds, 'time')
+
+    lats = fcst['latitude'].data[:]
+    lat_resol = np.unique(np.diff(lats))
+    if len(lat_resol) != 1:
+        raise ValueError("Forecast has non-uniform latitudes")
+    lat_resol = lat_resol[0]
+    lat_step = int(max(1, np.floor(query['grid_delta'] / lat_resol)))
+    lat_inds = np.arange(lats.size)[::lat_step]
+
+    lons = fcst['longitude'].data[:]
+    lon_resol = np.unique(np.diff(lons))
+    if len(lon_resol) != 1:
+        raise ValueError("Forecast has non-uniform longitudes")
+    lon_resol = lon_resol[0]
+    lon_step = int(max(1, np.floor(query['grid_delta'] / lon_resol)))
+    lon_inds = np.arange(lons.size)[::lon_step]
+
+    obj = obj.take(lat_inds, conv.LAT)
+    obj = obj.take(lon_inds, conv.LON)
+    if conv.ENSEMBLE in query:
+        obj = obj.take(np.arange(query[conv.ENSEMBLE]), conv.ENSEMBLE)
+    return obj
+
+
+def windbreaker(mime_text, ncdf_weather=None,
+                catchable_exceptions=None, output=None):
     """
     Takes a mime_text email that contains one or several saildoc-like
     requests and replies to the sender with emails containing the
     desired forecasts.
     """
     logger.debug('Wind Breaker')
+    logger.debug(mime_text)
     email_body = get_body(mime_text)
-    logger.debug('Extracted email body')
-    if len(email_body) > 1:
-        send_error(sender, "Your email contains more than one body")
+    sender = get_reply_to(mime_text)
+    logger.debug('Extracted email body: %s' % str(email_body))
+    if len(email_body) != 1:
+        send_error(sender, "Your email should contain only one body")
         return False
-    sender = get_sender(mime_text)
     # Turns a query string into a dict of params
+    logger.debug("About to parse saildocs")
+    logger.debug(str(email_body))
     try:
         queries = list(parse_saildocs(email_body[0]))
     except catchable_exceptions, e:
         send_error(sender,
                    'Failed to interpret your forecast requests', e)
         return False
+    logger.debug("parsed the saildoc body")
     # if there are no queries let the sender know
     if len(queries) == 0:
         send_error(sender,
-                   'We were unable to find any forecast requests in your recent email.', e)
+            'We were unable to find any forecast requests in your email.', e)
         return False
     success = True
     # for each query we send a seperate email
     for query in queries:
         logger.debug('Processing query %s', yaml.dump(query))
         # Aquires a forecast corresponding to a query
-        try:
-            obj = poseidon.email_forecast(query, path=ncdf_weather)
-            logger.debug('Obtained the required forecast')
-        except catchable_exceptions, e:
-            send_error(sender,
-                       'Failure getting your forecast from NOAA.', e)
-            success = False
-            continue
+        fcst = get_forecast(query, path=ncdf_weather)
+        logger.debug('Obtained the forecast:', str(fcst))
         # could use other extensions:
         # .grb, .grib  < 30kBytes
         # .bz2         < 5kBytes
         # .fcst        < 30kBytes
         # .gfcst       < 15kBytes
         try:
-            tiny_fcst = tinylib.to_beaufort(obj, query['start'], query['end'])
+            tiny_fcst = tinylib.to_beaufort(fcst)
             compressed_forecast = zlib.compress(tiny_fcst, 9)
             logger.debug('Tinified the forecast')
         except catchable_exceptions, e:
@@ -178,60 +268,19 @@ def windbreaker(mime_text, ncdf_weather=None, catchable_exceptions=None, output=
         logger.debug('Email sent.')
     return success
 
-def windbreaker_queue(queue_directory, ncdf_weather=None, catchable_exceptions=None, output=None):
-        # remove any old forecasts so the data directory
-    # doesn't get too large
-    if not os.path.isdir(queue_directory):
-        raise ValueError("%s is not a directory" % queue_directory)
-    # remove old emails
-    clean_email_queue(queue_directory)
-    # clean out the forecast data directory
-    poseidon.clean_data_dir()
-    # create the processed/failed/processing directories
-    processed_dir = os.path.join(queue_directory, 'processed')
-    if not os.path.exists(processed_dir):
-        os.mkdir(processed_dir)
-    failed_dir = os.path.join(queue_directory, 'failed')
-    if not os.path.exists(failed_dir):
-        os.mkdir(failed_dir)
-    processing_dir = os.path.join(queue_directory, 'processing')
-    if not os.path.exists(processing_dir):
-        os.mkdir(processing_dir)
-    emails = [f for f in os.listdir(queue_directory) if f.endswith('.mime')]
-    logger.debug("processing %d emails from %s" % (len(emails), queue_directory))
-    for fn in emails:
-        full_path = os.path.join(processing_dir, fn)
-        # move the current file to the processing directory
-        # that way two email_queue processes can't be working
-        # on the same requests
-        os.rename(os.path.join(queue_directory, fn), full_path)
-        logger.debug("processing %s" % full_path)
-        try:
-            f = open(full_path, 'r')
-            success = windbreaker(f.read(), ncdf_weather, catchable_exceptions, output)
-            f.close()
-        except catchable_exceptions, e:
-            logger.debug(e)
-            success = False
-        # if processing the email failed in any way we move it to
-        # the failed directory otherwise move to processed
-        if not success:
-            logger.debug("moving %s to failed" % full_path)
-            os.rename(full_path, os.path.join(failed_dir, fn))
-        else:
-            logger.debug("moving %s to processed" % full_path)
-            os.rename(full_path, os.path.join(processed_dir, fn))
-    logger.debug("queue processing complete.")
 
 def parse_saildocs(email_body):
     """
     Searches through an email body and yields individual saildocs queries
     """
+    logger.debug("splitting lines:")
     lines = email_body.lower().split('\n')
+    logger.debug('\n'.join(lines))
     matches = filter(lambda x : x,
                      [re.match('\s*(send\s.+)\s*', x) for x in lines])
     queries = [x.groups()[0] for x in matches]
     return (parse_saildocs_query(x) for x in queries)
+
 
 def parse_saildocs_query(query):
     """
@@ -260,6 +309,7 @@ def parse_saildocs_query(query):
     if not provider.lower() == 'gfs':
         raise ValueError("currently only supports the GFS model")
     # parse the corners of the forecast grid
+
     def floatify(latlon):
         """ Turns a latlon string into a float """
         sign = -2. * (latlon[-1].lower() in ['s', 'w']) + 1
@@ -277,9 +327,9 @@ def parse_saildocs_query(query):
             'right': right,
             'grid_delta': grid_delta,
             'hours': hours_str,
-            'start':None,
-            'end':None,
-            'vars':vars}
+            'start': None,
+            'end': None,
+            'vars': vars}
 
     if args:
         kwdargs = dict(x.lower().split('=') for x in args)
@@ -291,62 +341,15 @@ def parse_saildocs_query(query):
 
     return query_dict
 
-def test_parse_saildocs():
-
-    print list(parse_saildocs_hours('0,6,12,24..60,66..90,102,120'))
-    import pdb; pdb.set_trace()
-
-    print parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND START=25,175')
-    print parse_saildocs_query('send GFS:10S,42S,162E,144W|13,13|0,6,12,24..60,66..90,102,120|PRMSL,WIND,WAVES,RAIN')
-
 if __name__ == "__main__":
-    test_parse_saildocs()
+    query = parse_saildocs_query('send GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND START=25,175')
+    if not os.path.exists('test.nc'):
+        fcst = get_forecast(query)
+        fcst.dump('test.nc')
+    else:
+        fcst = Dataset('test.nc')
+    tiny_fcst = tinylib.to_beaufort(fcst)
+    compressed_forecast = zlib.compress(tiny_fcst, 9)
+    with open('test.windbreaker', 'w') as f:
+        f.write(compressed_forecast)
 
-
-#
-#
-#fimg = open('/home/kleeman/Desktop/test.jpg', 'rb')
-#img = fimg.read()
-#img_str = base64.b64encode(zlib.compress(img,9))
-#
-#def contents(x):
-#    if x.get_content_maintype() == 'multipart':
-#        return [contents(y) for y in x.get_payload()]
-#    else:
-#        if x.get_filename():
-#            return x.get_payload(decode=True)
-#        else:
-#            return x.get_payload()
-#
-##EXAMPLE OF SENDING PICTURES IN AN EMAIL
-## Import smtplib for the actual sending function
-#import smtplib
-#
-## Here are the email package modules we'll need
-#from email.mime.image import MIMEImage
-#from email.mime.multipart import MIMEMultipart
-#
-#COMMASPACE = ', '
-#
-## Create the container (outer) email message.
-#msg = MIMEMultipart()
-#msg['Subject'] = 'Our family reunion'
-## me == the sender's email address
-## family = the list of all recipients' email addresses
-#msg['From'] = me
-#msg['To'] = COMMASPACE.join(family)
-#msg.preamble = 'Our family reunion'
-#
-## Assume we know that the image files are all in PNG format
-#for file in pngfiles:
-#    # Open the files in binary mode.  Let the MIMEImage class automatically
-#    # guess the specific image type.
-#    fp = open(file, 'rb')
-#    img = MIMEImage(fp.read())
-#    fp.close()
-#    msg.attach(img)
-#
-## Send the email via our own SMTP server.
-#s = smtplib.SMTP()
-#s.sendmail(me, family, msg.as_string())
-#s.quit()

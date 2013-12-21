@@ -6,158 +6,146 @@ This contains tools for accessing data about the future/past state of the seas.
 from __future__ import with_statement
 
 import os
-import re
 import copy
-import uuid
 import numpy as np
-import hashlib
 import logging
 import urllib
 import urllib2
-import datetime
 import urlparse
 
 from BeautifulSoup import BeautifulSoup
 
-import sl.objects.conventions as conv
-from sl.objects import objects, units, core
-from sl.lib import datelib
+from polyglot import Dataset
+
+from sl.lib import conventions, units
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
 
-_data_dir = os.path.join(os.path.dirname(__file__), '../../data/')
-_sources = {'ccmp_daily':'ccmp/mean_wind_%Y%m%d_v11l30flk.nc',
-            'gefs': 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_%Y%m%d_0600.grib2',
-            'nww3': 'http://motherlode.ucar.edu:9080/thredds/ncss/grid/fmrc/NCEP/WW3/Global/files/WW3_Global_20110103_1800.grib2/dataset.html',
-}
-_ibtracs = 'ibtracs/Allstorms.ibtracs_wmo.v03r02.nc'
-_storms = 'historical_storms.nc'
-
-def clean_data_dir(days=3):
-    dirs = ['gefs', 'nww3']
-    remove_if_before = datetime.datetime.now() - datetime.timedelta(days=3)
-    for d in dirs:
-        fcst_dir = os.path.join(_data_dir, d)
-        fcst_files = [os.path.join(fcst_dir, f) for f in os.listdir(fcst_dir)]
-        datelib.remove_old_files(fcst_files)
-
-def ncdf_subset(url, ll, ur, vars, dir=None, path=None):
-    """
-    Finds the latest forecast on a netcdf subset server
-    """
-    ur, ll = ensure_corners(ur, ll)
-    query = {'var':','.join(vars.keys()),
-             'north':'%.2f' % np.ceil(ur.lat),
-             'west':'%.2f' % np.floor(ll.lon),
-             'south':'%.2f' % np.floor(ll.lat),
-             'east':'%.2f' % np.ceil(ur.lon),
-             'addLatLon':'true',
-             'temporal':'all',
+_sources = {'gefs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Global_1p0deg_Ensemble/members/files/latest.html',
+            'nww3': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
+            'gfs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
             }
-    full_query = urllib.unquote(urllib.urlencode(query))
-    # here we have the query for the actual dataset
-    url = "%s?%s" % (url, full_query)
-    logger.warn(url)
 
-    encoded_name = "%s.nc" % str(uuid.UUID(bytes=hashlib.md5(url).digest()))
-    dir = dir or 'ncdf_subset'
-    path = path or os.path.join(_data_dir, dir, encoded_name)
-    if not os.path.exists(path):
-        logger.info("dumping forecast to: %s" % path)
-        urlf = urllib2.urlopen(url)
-        with open(path, 'wb') as f:
-            f.write(urlf.read())
 
-    logger.warn(path)
-    obj = objects.Data(ncdf=open(path, 'r'))
-
-    if 'ens' in obj.variables and obj['ens'].ndim != 1:
-        obj.delete_variable('ens')
-
-    # we rename any variables that are found in the object
-    contained_vars = dict((k, v) for k, v in vars.iteritems() if k in obj.variables)
-    # then normalize the units
-    return units.normalize_data(obj.renamed(contained_vars))
-
-def latest_nww3():
-    index_url = 'http://motherlode.ucar.edu/thredds/catalog/fmrc/NCEP/WW3/Global/runs/catalog.html'
-    data_url = 'http://motherlode.ucar.edu/thredds/ncss/grid/fmrc/NCEP/WW3/Global/runs/%s'
-    print index_url
-    f = urllib2.urlopen(index_url)
+def latest(latest_html_url):
+    """
+    UCAR's thredds server provides access to the latest forecasts
+    using a latest.html web page.  Here we parse that page to
+    determine the uri to the openDAP data set containing the most
+    recent forecast.
+    """
+    # create a beatiful soup
+    f = urllib2.urlopen(latest_html_url)
     soup = BeautifulSoup(f.read())
-    text = [x.fetchText() for x in soup.findAll("a")]
-    tags = [x[0].string for x in text if len(x)]
-    return data_url % sorted(tags)[-1]
 
-def latest_gefs():
-    latest_url = 'http://motherlode.ucar.edu/thredds/catalog/NCEP/GEFS/Global_1p0deg_Ensemble/member/latest.html'
-    dataset_base_url = 'http://motherlode.ucar.edu/thredds/ncss/grid/'
-    print latest_url
-    f = urllib2.urlopen(latest_url)
-    soup = BeautifulSoup(f.read())
     def is_latest(x):
         # checks if the beautiful soup a tag holds the latest href
         text = x.fetchText()
         return len(text) == 1 and 'Latest' in str(text[0])
+    # get all the possible href links to the latest forecast
     atag = [x for x in soup.findAll("a") if is_latest(x)]
+    # we expect there to be only one match
     if len(atag) != 1:
         raise ValueError("Expected at least one tag with Latest in the name:" +
-                         "instead got %s" % str(latest_aref))
+                         "instead got %s" % str(atag))
     atag = atag[0]
-    (_, query) = urllib.splitquery(atag.get(u'href'))
+    # pull out the query from the atag
     query = dict(urlparse.parse_qsl(urllib.splitquery(atag.get('href'))[1]))
     dataset = query['dataset']
-    url = os.path.join(dataset_base_url, dataset)
-    # this url should look like this
-    #http://motherlode.ucar.edu/thredds/ncss/grid/NCEP/GEFS/Global_1p0deg_Ensemble/member/GEFS_Global_1p0deg_Ensemble_20110830_1800.grib2
-    return url
+    # the base directory for openDAP data changes to included suffix dodsC
+    return os.path.join('http://motherlode.ucar.edu/thredds/dodsC', dataset)
 
-def gefs_subset(ll, ur, url=None, path=None, vars=None):
+
+def subset(nc, ll_crnr, ur_crnr, slicers=None):
+    """
+    Given a forecast (nc) and corners of a spatial subset
+    this function returns the corresponding subset of data
+    that contains the spatial region.
+    """
+    # This actually expans the corners by one degree
+    # to make sure we include the requested corners.
+    ur, ll = ensure_corners(ur_crnr, ll_crnr)
+    # determine which slice we need for latitude
+    lats = nc.variables['lat'][:]
+    inds = np.nonzero(np.logical_and(lats >= ll.lat, lats <= ur.lat))[0]
+    lat_slice = slice(np.min(inds), np.max(inds) + 1)
+    # determine which slice we need for longitude
+    lons = nc.variables['lon'][:]
+    inds = np.nonzero(np.logical_and(lons >= ll.lon, lons <= ur.lon))[0]
+    lon_slice = slice(np.min(inds), np.max(inds) + 1)
+    # add lat/lon slicers to any additional slicers
+    slicers = {} if slicers is None else slicers
+    slicers.update({'lat': lat_slice, 'lon': lon_slice})
+    # and pull out the dataset.  This is delayed till the
+    # end because until this point all the data probably
+    # lives on a remote server, so we'd like to download
+    # as little as possible.
+    out = nc.views(slicers)
+    return out
+
+
+def forecast(source):
+    """
+    A convenience wrapper which will looked up the uri
+    to the latest openDAP dataset for source.
+    """
+    latest_opendap = latest(_sources[source])
+    logger.debug(latest_opendap)
+    return Dataset(latest_opendap)
+
+
+def gefs(ll, ur):
     """
     Global Ensemble Forecast System forecast object
     """
-    if vars is None:
-        vars = {'U-component_of_wind_height_above_ground':conv.UWND,
-                'V-component_of_wind_height_above_ground':conv.VWND,}
+    vars = {'u-component_of_wind_height_above_ground':conventions.UWND,
+            'v-component_of_wind_height_above_ground':conventions.VWND,}
+    fcst = forecast('gefs')
+    fcst = fcst.select(vars, view=True)
+    fcst = subset(fcst, ll, ur)
+    renames = vars
+    renames.update(dict((d, conventions.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
+    renames.update(dict((d, conventions.TIME) for d in fcst.dimensions if d.startswith('time')))
+    renames.update({'lat': conventions.LAT,
+                    'lon': conventions.LON})
+    fcst = fcst.renamed(renames)
+    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
+    new_units = new_units.replace('T', ' ')
+    new_units = new_units.replace('Z', '')
+    fcst['time'].attributes['units'] = new_units
+    units.normalize_units(fcst[conventions.UWND])
+    units.normalize_units(fcst[conventions.VWND])
+    return fcst
 
-    if not url and not path:
-        url = latest_gefs()
 
-    obj = ncdf_subset(url=url, ll=ll, ur=ur, vars=vars, dir='gefs', path=path)
-    renames = {'ens':conv.ENSEMBLE}
-    if 'time1' in obj.variables:
-        renames['time1'] = conv.TIME
-    obj = obj.renamed(renames)
-    obj = obj.squeeze(dimension='height_above_ground1')
-    gefs_format = 'hour since %Y-%m-%d %H:%M:%S'
-    coards_format = 'hours since %Y-%m-%d %H:%M:%S'
-    try:
-        date = datetime.datetime.strptime(obj[conv.TIME].attributes[conv.UNITS],
-                                          gefs_format)
-    except:
-        date = datetime.datetime.strptime(obj[conv.TIME].attributes[conv.UNITS],
-                                          'hour since %Y-%m-%dT%H:%M:%SZ')
-    obj[conv.TIME].attributes[conv.UNITS] = date.strftime(coards_format)
+def gfs(ll, ur):
+    """
+    Global Forecast System forecast object
+    """
+    vars = {'u-component_of_wind_height_above_ground': conventions.UWND,
+            'v-component_of_wind_height_above_ground': conventions.VWND,}
+    fcst = forecast('gfs')
+    fcst = fcst.select(vars, view=True)
+    # subset out the 10m wind height
+    ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
+    fcst = subset(fcst, ll, ur, slicers={'height_above_ground4': slice(ind, ind + 1)})
+    # Remove the height above ground dimension
+    fcst = copy.deepcopy(fcst)
+    fcst = fcst.squeeze(dimension='height_above_ground4')
+    renames = vars
+    renames.update(dict((d, conventions.TIME) for d in fcst.dimensions if d.startswith('time')))
+    renames.update({'lat': conventions.LAT,
+                    'lon': conventions.LON})
+    fcst = fcst.renamed(renames)
+    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
+    new_units = new_units.replace('T', ' ')
+    new_units = new_units.replace('Z', '')
+    fcst['time'].attributes['units'] = new_units
+    units.normalize_units(fcst[conventions.UWND])
+    units.normalize_units(fcst[conventions.VWND])
+    return fcst
 
-    # remove the ensemble variable since it contains unneeded text
-    var = obj.create_variable(conv.ENSEMBLE, (conv.ENSEMBLE,),
-                              data=np.arange(obj.dimensions[conv.ENSEMBLE]))
-    obj.sort_coordinate(conv.LAT)
-    obj.sort_coordinate(conv.LON)
-    return obj
-
-def nww3_subset(ll, ur, path=None):
-    vars = {'Significant_height_of_combined_wind_waves_and_swell':'combined_swell_height',
-            'U-component_of_wind':'uwnd',
-            'V-component_of_wind':'vwnd',
-            'Primary_wave_direction':'primary_wave_direction',
-            'Direction_of_wind_waves':'direction_of_wind_waves'}
-    url = 'http://motherlode.ucar.edu/thredds/ncss/grid/fmrc/NCEP/WW3/Global/runs/NCEP-WW3-Global_RUN_%Y-%m-%dT06:00:00Z'
-
-    if not path:
-        url = latest_nww3()
-    return ncdf_subset(url=url, ll=ll, ur=ur, vars=vars, dir='nww3', path=path)
 
 def ensure_corners(ur, ll, expand=True):
     """
@@ -180,162 +168,3 @@ def ensure_corners(ur, ll, expand=True):
         ll.lat -= 1
         ll.lon -= 1
     return ur, ll
-
-def parse_saildocs_hours(hours_str):
-    # the hours query is a bit complex since it
-    # involves interpreting the '..' as slices
-    prev = 0
-    for hr in hours_str.split(','):
-        if '..' in hr:
-            low, high = map(float, hr.split('..'))
-            diff = low - prev
-            if np.mod((high - low), diff):
-                # the step size will not be integer valued
-                # not sure how to handle that so for now just
-                # yield the low and high value
-                hours = [low, high]
-            else:
-                hours = np.linspace(low, high,
-                                    num = ((high - low) / diff) + 1,
-                                    endpoint=True)
-        else:
-            hours = map(float, [hr])
-        for x in hours:
-            prev = x
-            yield x
-
-def email_forecast(query, path=None):
-    ll = objects.LatLon(query['lower'], query['left'])
-    ur = objects.LatLon(query['upper'], query['right'])
-    ur, ll = ensure_corners(ur, ll, expand=False)
-    vars = {}
-    if 'wind' in query['vars']:
-        vars['U-component_of_wind_height_above_ground'] = conv.UWND
-        vars['V-component_of_wind_height_above_ground'] = conv.VWND
-    if 'rain' in query['vars'] or 'precip' in query['vars']:
-        vars['Total_precipitation'] = conv.PRECIP
-    if 'cloud' in query['vars']:
-        vars['Total_cloud_cover'] = conv.CLOUD
-    if 'pressure' in query['vars']:
-        vars['Pressure'] = 'mslp'
-    obj = gefs_subset(ll, ur, path=path, vars=vars)
-    iter_hours = parse_saildocs_hours(query['hours'])
-
-    def time_inds(hours):
-        """determines which indices extract the required hours"""
-        for hr in hours:
-            inds = np.nonzero(obj['time'].data == float(hr))
-            if len(inds) == 1 and inds[0].size == 1:
-                # only yield an hour index if we know it exists
-                yield inds[0][0]
-
-    time_inds = list(time_inds(iter_hours))
-    obj = obj.take(time_inds, 'time')
-    lats = np.linspace(ll.lat, ur.lat,
-                       num = (ur.lat - ll.lat) + 1,
-                       endpoint=True)
-    lats = lats[::query['grid_delta']]
-    lons = np.linspace(ll.lon, ur.lon,
-                       num = (ur.lon - ll.lon) + 1,
-                       endpoint=True)
-    lons = lons[::query['grid_delta']]
-    lat_inds = np.concatenate([np.nonzero(obj[conv.LAT].data == x)[0] for x in lats])
-    if not lat_inds.size:
-        raise ValueError("forecast lats don't overlap with the requested lats")
-    lon_inds = np.concatenate([np.nonzero(obj[conv.LON].data == x)[0] for x in lons])
-    if not lon_inds.size:
-        raise ValueError("forecast lons don't overlap with the requested lons")
-    obj = obj.take(lat_inds, conv.LAT)
-    obj = obj.take(lon_inds, conv.LON)
-    if 'ensembles' in query:
-        obj = obj.take(np.arange(query['ensembles']), conv.ENSEMBLE)
-    return obj
-
-def forecast_weather(start_date, ur, ll, recent=False):
-    ur, ll = ensure_corners(ur, ll)
-
-    def most_recent(dir):
-        files = os.listdir(dir)
-        if not len(files):
-            raise ValueError("No files found in %s" % dir)
-        def ctime(x):
-            return os.path.getctime(os.path.join(dir, x))
-        sfiles = sorted(files, key=ctime)
-        return os.path.join(dir, sfiles[-1])
-
-    paths = {'gefs':None, 'nww3':None}
-
-    if recent:
-        dirs = dict((x, os.path.join(_data_dir, x)) for x in ['gefs', 'nww3'])
-        paths = dict((k, most_recent(d)) for k, d in dirs.iteritems())
-        print paths
-
-    gefs = gefs_subset(ur=ur, ll=ll, path=paths['gefs'])
-    nww3 = nww3_subset(ur=ur, ll=ll, path=paths['nww3'])
-
-    def daterange(obj):
-        st = units.from_udunits(min(obj[conv.TIME]),
-                                obj[conv.TIME].attributes[conv.UNITS])
-        en = units.from_udunits(max(obj[conv.TIME]),
-                                obj[conv.TIME].attributes[conv.UNITS])
-        return [st, en]
-    print "nww3 spans %s to %s" % tuple(str(x) for x in daterange(nww3))
-    print "gefs spans %s to %s" % tuple(str(x) for x in daterange(gefs))
-    gefs.sort_coordinate(conv.LAT)
-    gefs.sort_coordinate(conv.LON)
-    for ens, gfs in gefs.iterator(conv.ENSEMBLE):
-        yield [gfs, nww3]
-
-def historical_weather(start_date, data_dir=None, source='ccmp_daily'):
-    if not data_dir:
-        data_dir = _data_dir
-    fn_format = os.path.join(data_dir, _sources[source])
-    storms_path = os.path.join(data_dir, _storms)
-    if not os.path.exists(storms_path):
-        msg = "Missing data file: %s, Have you created the storms file yet?"
-        raise IOError(msg % storms_path)
-    storms_nc = objects.DataObject(filename=storms_path, mode='r')
-
-    def historical_year(year):
-        now = start_date.replace(year=year)
-        for day in range(365):
-            def get_data():
-                filename = now.strftime(fn_format)
-                if not os.path.exists(filename):
-                    msg = "Missing data file: %s, Have you downloaded the data for %s yet?"
-                    raise IOError(msg % (filename, source))
-                nc = objects.DataObject(filename=filename, mode='r')
-                nc = nc.slice('time', 0)
-
-                timevar = nc.variables['time']
-                # ccmp_daily is stored in files with one day per file
-                assert timevar.shape[0] == 1
-                # unfortunately the cdo operation invalidates the coard stored times
-                timevar = datetime.datetime.strptime(str(timevar[0]), '%Y%m%d.%f')
-                # make sure it the requested day
-                assert timevar.strftime('%Y%m%d') == now.strftime('%Y%m%d')
-
-                variables = ['uwnd', 'vwnd']
-                yield dict((v, objects.DataField(nc, v)) for v in ['uwnd', 'vwnd'])
-            yield now, get_data()
-            now = now + datetime.timedelta(days=1)
-
-    return [list(historical_year(year)) for year in range(2000, 2009)]
-
-def main():
-
-    ll = objects.LatLon(30., -115.)
-    ur = objects.LatLon(40., -125.)
-    obj = gefs_subset(ll, ur)
-    from sl.lib import tinylib
-
-    string = tinylib.tiny(obj, ['uwnd', 'vwnd'])
-    new_obj = tinylib.huge(string)
-
-    import zlib
-    print len(zlib.compress(obj.dumps()))/ float(len(zlib.compress(string)))
-    return 0
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(main())

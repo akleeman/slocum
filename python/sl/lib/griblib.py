@@ -1,149 +1,158 @@
 import os
-import grib2
 import numpy as np
 import coards
 import pygrib
+import gribapi
+import netCDF4 as nc4
 import itertools
 
-from cStringIO import StringIO
 from datetime import datetime
 
-import sl.objects.conventions as conv
+import sl.lib.conventions as conv
 
-from sl.lib import datelib
-from sl.objects import core, units
+from sl.lib import units
 
 codes = {
-0 : ("Reserved",),
-1 : ("Pressure", "Pa"),
-2 : ("Pressure reduced to MSL", "Pa"),
-3 : ("Pressure tendency", "Pa s-1"),
-4 : ("Potential vorticity", "K m2 kg-1 s-1"),
-5 : ("ICAO Standard Atmosphere reference height", "m"),
-6 : ("Geopotential", "m2 s-2"),
-7 : ("Geopotential height", "gpm"),
-8 : ("Geometrical height", "m"),
-9 : ("Standard deviation of height", "m"),
-10 : ("Total ozone", "Dobson"),
-11 : ("Temperature", "K"),
-12 : ("Virtual temperature", "K"),
-13 : ("Potential temperature", "K"),
-14 : ("Pseudo-adiabatic potential temperature", "K"),
-15 : ("Maximum temperature", "K"),
-16 : ("Minimum temperature", "K"),
-17 : ("Dew-point temperature", "K"),
-18 : ("Dew-point depression (or deficit)", "K"),
-19 : ("Lapse rate", "K m-1"),
-20 : ("Visibility", "m"),
-21 : ("Radar spectra (1)", "-"),
-22 : ("Radar spectra (2)", "-"),
-23 : ("Radar spectra (3)", "-"),
-24 : ("Parcel lifted index (to 500 hPa) (see Note 6)", "K"),
-25 : ("Temperature anomaly", "K"),
-26 : ("Pressure anomaly", "Pa"),
-27 : ("Geopotential height anomaly", "gpm"),
-28 : ("Wave spectra (1)", "-"),
-29 : ("Wave spectra (2)", "-"),
-30 : ("Wave spectra (3)", "-"),
-31 : ("Wind direction", "Degree true"),
-32 : ("Wind speed", "m s-1"),
-33 : ("u-component of wind (see Note 4)", "m s-1"),
-34 : ("v-component of wind (see Note 4)", "m s-1"),
-35 : ("Stream function", "m2 s-1"),
-36 : ("Velocity potential", "m2 s-1"),
-37 : ("Montgomery stream function", "m2 s-1"),
-38 : ("Sigma coordinate vertical velocity", "s-1"),
-39 : ("Vertical velocity", "Pa s-1"),
-40 : ("Vertical velocity", "m s-1"),
-41 : ("Absolute vorticity", "s-1"),
-42 : ("Absolute divergence", "s-1"),
-43 : ("Relative vorticity", "s-1"),
-44 : ("Relative divergence", "s-1"),
-45 : ("Vertical u-component shear (see Note 4)", "s-1"),
-46 : ("Vertical v-component shear (see Note 4)", "s-1"),
-47 : ("Direction of current", "Degree true"),
-48 : ("Speed of current", "m s-1"),
-49 : ("u-component of current (see Note 4)", "m s-1"),
-50 : ("v-component of current (see Note 4)", "m s-1"),
-51 : ("Specific humidity", "kg kg-1"),
-52 : ("Relative humidity", "%"),
-53 : ("Humidity mixing ratio", "kg kg-1"),
-54 : ("Precipitable water", "kg m-2"),
-55 : ("Vapor pressure", "Pa"),
-56 : ("Saturation deficit", "Pa"),
-57 : ("Evaporation", "kg m-2"),
-58 : ("Cloud ice", "kg m-2"),
-59 : ("Precipitation rate", "kg m-2 s-1"),
-60 : ("Thunderstorm probability", "%"),
-61 : ("Total precipitation", "kg m-2"),
-62 : ("Large scale precipitation", "kg m-2"),
-63 : ("Convective precipitation", "kg m-2"),
-64 : ("Snowfall rate water equivalent", "kg m-2 s-1"),
-65 : ("Water equivalent of accumulated snow depth", "kg m-2"),
-66 : ("Snow depth", "m"),
-67 : ("Mixed layer depth", "m"),
-68 : ("Transient thermocline depth", "m"),
-69 : ("Main thermocline depth", "m"),
-70 : ("Main thermocline anomaly", "m"),
-71 : ("Total cloud cover", "%"),
-72 : ("Convective cloud cover", "%"),
-73 : ("Low cloud cover", "%"),
-74 : ("Medium cloud cover", "%"),
-75 : ("High cloud cover", "%"),
-76 : ("Cloud water", "kg m-2"),
-77 : ("Best lifted index (to 500 hPa) (see Note 6)", "K"),
-78 : ("Convective snow", "kg m-2"),
-79 : ("Large scale snow", "kg m-2"),
-80 : ("Water temperature", "K"),
-81 : ("Land cover (1 = land, 0 = sea)", "Proportion"),
-82 : ("Deviation of sea level from mean", "m"),
-83 : ("Surface roughness", "m"),
-84 : ("Albedo", "%"),
-85 : ("Soil temperature", "K"),
-86 : ("Soil moisture content", "kg m-2"),
-87 : ("Vegetation", "%"),
-88 : ("Salinity", "kg kg-1"),
-89 : ("Density", "kg m-3"),
-90 : ("Water run-off", "kg m-2"),
-91 : ("Ice cover (1 = ice, 0 = no ice)", "Proportion"),
-92 : ("Ice thickness", "m"),
-93 : ("Direction of ice drift", "Degree true"),
-94 : ("Speed of ice drift", "m s-1"),
-95 : ("u-component of ice drift (see Note 4)", "m s-1"),
-96 : ("v-component of ice drift (see Note 4)", "m s-1"),
-97 : ("Ice growth rate", "m s-1"),
-98 : ("Ice divergence", "s-1"),
-99 : ("Snow melt", "kg m-2"),
-100 : ("Significant height of combined wind waves and swell", "m"),
-101 : ("Direction of wind waves", "Degree true"),
-102 : ("Significant height of wind waves", "m"),
-103 : ("Mean period of wind waves", "s"),
-104 : ("Direction of swell waves", "Degree true"),
-105 : ("Significant height of swell waves", "m"),
-106 : ("Mean period of swell waves", "s"),
-107 : ("Primary wave direction", "Degree true"),
-108 : ("Primary wave mean period", "s"),
-109 : ("Secondary wave direction", "Degree true"),
-110 : ("Secondary wave mean period", "s"),
-111 : ("Net short-wave radiation flux (surface) (see Note 3)", "W m-2"),
-112 : ("Net long-wave radiation flux (surface) (see Note 3)", "W m-2"),
-113 : ("Net short-wave radiation flux (top of atmosphere) (see Note 3)", "W m-2"),
-114 : ("Net long-wave radiation flux (top of atmosphere) (see Note 3)", "W m-2"),
-115 : ("Long-wave radiation flux (see Note 3)", "W m-2"),
-116 : ("Short-wave radiation flux (see Note 3)", "W m-2"),
-117 : ("Global radiation flux (see Note 3)", "W m-2"),
-118 : ("Brightness temperature", "K"),
-119 : ("Radiance (with respect to wave number)", "W m-1 sr-1"),
-120 : ("Radiance (with respect to wave length)", "W m-3 sr-1"),
-121 : ("Latent heat flux", "W m-2"),
-122 : ("Sensible heat flux", "W m-2"),
-123 : ("Boundary layer dissipation", "W m-2"),
-124 : ("Momentum flux, u-component (see Note 4)", "N m-2"),
-125 : ("Momentum flux, v-component (see Note 4)", "N m-2"),
-126 : ("Wind mixing energy", "J"),
+0: ("Reserved",),
+1: ("Pressure", "Pa"),
+2: ("Pressure reduced to MSL", "Pa"),
+3: ("Pressure tendency", "Pa s-1"),
+4: ("Potential vorticity", "K m2 kg-1 s-1"),
+5: ("ICAO Standard Atmosphere reference height", "m"),
+6: ("Geopotential", "m2 s-2"),
+7: ("Geopotential height", "gpm"),
+8: ("Geometrical height", "m"),
+9: ("Standard deviation of height", "m"),
+10: ("Total ozone", "Dobson"),
+11: ("Temperature", "K"),
+12: ("Virtual temperature", "K"),
+13: ("Potential temperature", "K"),
+14: ("Pseudo-adiabatic potential temperature", "K"),
+15: ("Maximum temperature", "K"),
+16: ("Minimum temperature", "K"),
+17: ("Dew-point temperature", "K"),
+18: ("Dew-point depression (or deficit)", "K"),
+19: ("Lapse rate", "K m-1"),
+20: ("Visibility", "m"),
+21: ("Radar spectra (1)", "-"),
+22: ("Radar spectra (2)", "-"),
+23: ("Radar spectra (3)", "-"),
+24: ("Parcel lifted index (to 500 hPa) (see Note 6)", "K"),
+25: ("Temperature anomaly", "K"),
+26: ("Pressure anomaly", "Pa"),
+27: ("Geopotential height anomaly", "gpm"),
+28: ("Wave spectra (1)", "-"),
+29: ("Wave spectra (2)", "-"),
+30: ("Wave spectra (3)", "-"),
+31: ("Wind direction", "Degree true"),
+32: ("Wind speed", "m s-1"),
+33: ("u-component of wind", "m/s"),
+34: ("v-component of wind", "m/s"),
+35: ("Stream function", "m2 s-1"),
+36: ("Velocity potential", "m2 s-1"),
+37: ("Montgomery stream function", "m2 s-1"),
+38: ("Sigma coordinate vertical velocity", "s-1"),
+39: ("Vertical velocity", "Pa s-1"),
+40: ("Vertical velocity", "m s-1"),
+41: ("Absolute vorticity", "s-1"),
+42: ("Absolute divergence", "s-1"),
+43: ("Relative vorticity", "s-1"),
+44: ("Relative divergence", "s-1"),
+45: ("Vertical u-component shear", "s-1"),
+46: ("Vertical v-component shear", "s-1"),
+47: ("Direction of current", "Degree true"),
+48: ("Speed of current", "m s-1"),
+49: ("u-component of current", "m s-1"),
+50: ("v-component of current", "m s-1"),
+51: ("Specific humidity", "kg kg-1"),
+52: ("Relative humidity", "%"),
+53: ("Humidity mixing ratio", "kg kg-1"),
+54: ("Precipitable water", "kg m-2"),
+55: ("Vapor pressure", "Pa"),
+56: ("Saturation deficit", "Pa"),
+57: ("Evaporation", "kg m-2"),
+58: ("Cloud ice", "kg m-2"),
+59: ("Precipitation rate", "kg m-2 s-1"),
+60: ("Thunderstorm probability", "%"),
+61: ("Total precipitation", "kg m-2"),
+62: ("Large scale precipitation", "kg m-2"),
+63: ("Convective precipitation", "kg m-2"),
+64: ("Snowfall rate water equivalent", "kg m-2 s-1"),
+65: ("Water equivalent of accumulated snow depth", "kg m-2"),
+66: ("Snow depth", "m"),
+67: ("Mixed layer depth", "m"),
+68: ("Transient thermocline depth", "m"),
+69: ("Main thermocline depth", "m"),
+70: ("Main thermocline anomaly", "m"),
+71: ("Total cloud cover", "%"),
+72: ("Convective cloud cover", "%"),
+73: ("Low cloud cover", "%"),
+74: ("Medium cloud cover", "%"),
+75: ("High cloud cover", "%"),
+76: ("Cloud water", "kg m-2"),
+77: ("Best lifted index (to 500 hPa) (see Note 6)", "K"),
+78: ("Convective snow", "kg m-2"),
+79: ("Large scale snow", "kg m-2"),
+80: ("Water temperature", "K"),
+81: ("Land cover (1 = land, 0 = sea)", "Proportion"),
+82: ("Deviation of sea level from mean", "m"),
+83: ("Surface roughness", "m"),
+84: ("Albedo", "%"),
+85: ("Soil temperature", "K"),
+86: ("Soil moisture content", "kg m-2"),
+87: ("Vegetation", "%"),
+88: ("Salinity", "kg kg-1"),
+89: ("Density", "kg m-3"),
+90: ("Water run-off", "kg m-2"),
+91: ("Ice cover (1 = ice, 0 = no ice)", "Proportion"),
+92: ("Ice thickness", "m"),
+93: ("Direction of ice drift", "Degree true"),
+94: ("Speed of ice drift", "m s-1"),
+95: ("u-component of ice drift", "m s-1"),
+96: ("v-component of ice drift", "m s-1"),
+97: ("Ice growth rate", "m s-1"),
+98: ("Ice divergence", "s-1"),
+99: ("Snow melt", "kg m-2"),
+100: ("Significant height of combined wind waves and swell", "m"),
+101: ("Direction of wind waves", "Degree true"),
+102: ("Significant height of wind waves", "m"),
+103: ("Mean period of wind waves", "s"),
+104: ("Direction of swell waves", "Degree true"),
+105: ("Significant height of swell waves", "m"),
+106: ("Mean period of swell waves", "s"),
+107: ("Primary wave direction", "Degree true"),
+108: ("Primary wave mean period", "s"),
+109: ("Secondary wave direction", "Degree true"),
+110: ("Secondary wave mean period", "s"),
+111: ("Net short-wave radiation flux (surface) (see Note 3)", "W m-2"),
+112: ("Net long-wave radiation flux (surface) (see Note 3)", "W m-2"),
+113: ("Net short-wave radiation flux (top of atmosphere) (see Note 3)", "W m-2"),
+114: ("Net long-wave radiation flux (top of atmosphere) (see Note 3)", "W m-2"),
+115: ("Long-wave radiation flux (see Note 3)", "W m-2"),
+116: ("Short-wave radiation flux (see Note 3)", "W m-2"),
+117: ("Global radiation flux (see Note 3)", "W m-2"),
+118: ("Brightness temperature", "K"),
+119: ("Radiance (with respect to wave number)", "W m-1 sr-1"),
+120: ("Radiance (with respect to wave length)", "W m-3 sr-1"),
+121: ("Latent heat flux", "W m-2"),
+122: ("Sensible heat flux", "W m-2"),
+123: ("Boundary layer dissipation", "W m-2"),
+124: ("Momentum flux, u-component", "N m-2"),
+125: ("Momentum flux, v-component", "N m-2"),
+126: ("Wind mixing energy", "J"),
 }
 
+reverse_codes = dict((v[0], k) for k, v in codes.iteritems())
+
+#http://www.nco.ncep.noaa.gov/pmb/docs/on388/table3.html
+indicator_of_level = {"u-component of wind": 105,
+                      "v-component of wind": 105}
+
+level = {"u-component of wind": 10,
+         "v-component of wind": 10}
+
 _sec_per_hour = 3600
+
 
 def degrib(fn):
     """
@@ -154,10 +163,13 @@ def degrib(fn):
     It is assumed that all messages for each group of grids have the same times.
     If this is not the case an exception is thrown
     """
+    raise NotImplementedError("This function will be useful but needs some work")
+
     if not os.path.exists(fn):
         raise ValueError("grib file %s does not exist" % fn)
 
     gribs = pygrib.open(fn)
+
     def get_grid(x):
         # extracts the stringified lat long variables from a message
         return "%s\t%s" % (x.distinctLatitudes.tostring(),
@@ -188,9 +200,9 @@ def degrib(fn):
             iter_times = list(iterate())
             dates = [x[0] for x in iter_times]
             start_date = min(dates)
-            udunits = coards.to_udunits(start_date,
+            udunit = coards.to_udunits(start_date,
                                         'hours since %Y-%m-%d %H:%M:%S')
-            uddates = [coards.datetime_to_udunits(d, udunits) for d in dates]
+            uddates = [coards.datetime_to_udunits(d, udunit) for d in dates]
             # create an empty data object and fill it
             data = np.zeros((len(uddates), lats.size, lons.size))
             for i, (_, x) in enumerate(iter_times):
@@ -202,7 +214,7 @@ def degrib(fn):
                     raise ValueError("expected all time variables to match")
             else:
                 obj.create_coordinate(conv.TIME, uddates, record=True,
-                                      attributes={conv.UNITS:udunits})
+                                      attributes={conv.UNITS: udunit})
 
             obj.create_variable(var, dim=(conv.TIME, conv.LAT, conv.LON), data=data)
         neg_lon = obj[conv.LON].data <= 0
@@ -211,120 +223,193 @@ def degrib(fn):
             obj.delete_variable('unknown')
         yield units.normalize_data(obj)
 
-def grib_ready(nc, gribs):
+
+def set_time(source, grib):
     """
-    (Pdb) print nc['lon']
-      standard_name   | longitude                                         
-      long_name       | longitude                                         
-      units           | degrees_east                                      
-      axis            | X         
-      
-      (Pdb) print nc['lat']
-      standard_name   | latitude                                          
-      long_name       | latitude                                          
-      units           | degrees_north                                     
-      axis            | Y                                                 
+    Sets the dataDate, dataTime, unitOfTimeRange, P2, timeRangeIndicator,
+    parameters in the grib message 'grib' using the time variable in source.
     """
-
-    out = core.Data()
-    out.attributes['Conventions'] = "CF-1.4"
-
-    if 'ensemble' in nc:
-        nc = nc.take([0], 'ensemble')
-        nc = nc.renamed({'ensemble':'height'})
-
-    if 'lon' in nc:
-        attributes = {'long_name': 'longitude',
-                      'units': 'degrees_east',
-                      'standard_name': 'longitude',
-                      'axis': 'X'}
-        out.create_coordinate('lon', data=nc['lon'].data.astype('float64'),
-                              attributes=attributes)
-    if 'lat' in nc:
-        attributes = {'long_name': 'latitude',
-                      'units': 'degrees_north',
-                      'standard_name': 'latitude',
-                      'axis': 'Y'}
-        out.create_coordinate('lat', data=nc['lat'].data.astype('float64'),
-                              attributes=attributes)
-
-    out.create_coordinate('height', data=[10.], attributes={'standard_name': 'height',
-                                                       'long_name': 'height',
-                                                       'units': 'm',
-                                                       'positive': 'up',
-                                                       'axis': 'Z'})
-
-    if 'time' in nc:
-        attributes = {'long_name': 'time',
-                      'units': nc['time'].attributes['units'],
-                      'standard_name': 'time',
-                      'calendar': 'proleptic_gregorian'}
-        zeros = np.zeros(nc['time'].data.shape)
-        out.create_coordinate('time', data=zeros.astype('float64'),
-                              attributes=attributes, record=True)
-
-    dims = tuple(['time', 'height', 'lat', 'lon'])
-    if 'uwnd' in nc:
-        attributes = {'long_name': '10 metre U wind component',
-                      'units': 'm s**-1',
-                      'code': [33],
-                      'table': [2]}
-        order = tuple([nc['uwnd'].dimensions.index(d) for d in dims])
-        data = nc['uwnd'].data.transpose(order)
-        out.create_variable('10u', dim=dims,
-                            data=data.astype('float32'), attributes=attributes)
-
-    if 'vwnd' in nc:
-        attributes = {'long_name': '10 metre V wind component',
-                      'units': 'm s**-1',
-                      'code': [34],
-                      'table': [2]}
-        order = tuple([nc['vwnd'].dimensions.index(d) for d in dims])
-        data = nc['vwnd'].data.transpose(order)
-        out.create_variable('10v', dim=dims,
-                            data=data.astype('float32'), attributes=attributes)
-
-    with open(os.path.join(os.path.dirname(__file__), '../../../data/repaired.nc'), 'w') as f:
-        out.dump(f)
-    import pdb; pdb.set_trace()
-
-def change_time(fn, reference):
-    grbs = pygrib.open(fn)
-
-    var_names = {'10 metre U wind component':'uwnd',
-                 '10 metre V wind component':'vwnd'}
-    out_fn = os.path.join(os.path.dirname(__file__), '../../../data/time_change.grb')
-    out = open(out_fn, 'wb')
-    for msg in grbs:
-        var = var_names[msg.name]
-        data = reference[var].data[0, :]
-        norms = [np.linalg.norm(msg.values - x, 'fro') for x in data]
-        i = np.argmin(norms)
-        step_range = unicode(int(reference[conv.TIME].data[i]))
-        msg.__setattr__('stepRange', step_range)
-#        msg.__setattr__('dataDate', int(date.strftime('%Y%m%d')))
-#        msg.__setattr__('dataTime', int(date.strftime('%H%M')))
-        out.write(msg.tostring())
-
-    out.close()
-    new_grbs = pygrib.open(out_fn)
-    import pdb; pdb.set_trace()
-
-if __name__ == "__main__":
+    if source[conv.TIME].size != 1:
+        raise ValueError("expected a single time step")
+    # analysis, forecast start, verify time, obs time,
+    # (start of forecast for now)
+    unit = source[conv.TIME].attributes[conv.UNITS]
+    # reference time is assumed to be the origin of the source
+    # time variable.  This is the case with GFS but perhaps
+    # not with other forecasts.
+    rt = nc4.num2date([0], unit)[0]
+    gribapi.grib_set_long(grib, "dataDate", "%04d%02d%02d" % (rt.year,
+                                                              rt.month,
+                                                              rt.day))
+    gribapi.grib_set_long(grib, "dataTime", "%02d%02d" % (rt.hour, rt.minute))
+    # taken from ECMWF grib tables
+    unit_codes = {'minute': 0,
+             'hour': 1,
+             'day': 2,
+             'month': 3,
+             'year': 4,
+             'second': 254}
+    grib_time_code = None
+    for k, v in unit_codes.iteritems():
+        if unit.lower().startswith(k):
+            grib_time_code = v
+    if grib_time_code is None:
+        raise ValueError("Unexpected unit")
+    gribapi.grib_set_long(grib, 'unitOfTimeRange', 1)
+    vt = np.asscalar(source[conv.TIME][:])
+    assert int(vt) == vt
+    gribapi.grib_set_long(grib, 'P2', vt)
+    # forecast is valid at reference + P2
+    gribapi.grib_set_long(grib, "timeRangeIndicator", 10)
 
 
-    fn = os.path.join(os.path.dirname(__file__), '../../../data/windbreaker.nc')
-    with open(fn) as f:
-        nc = core.Data(f.read())
-    change_time(os.path.join(os.path.dirname(__file__), '../../../data/repaired.grb'),
-                reference=nc)
+def set_grid(source, grib):
+    """
+    Infers the grid from source's longitude and latitude varibles and
+    writes grib message parameters:
 
-    # gribs = grib2.Grib2Decode(fn)
-    gribs = pygrib.open(fn)
-    grib_ready(nc, gribs)
+    gridDefinition, gridDescriptionSectionPresent,  shapeOfTheEarth,
+    Ni, Nj, latitudeOfFirstGridPoint, latitudeOfLastGridPoint,
+    longitudeOfFirstGridPoint, longitudeOfLastGridPoint.
+    """
+    # define the grid
+    gribapi.grib_set_long(grib, "gridDefinition", 255)
+    gribapi.grib_set_long(grib, "gridDescriptionSectionPresent", 1)
 
-    obj = list(degrib(fn))[0]
-    gribs = pygrib.open(fn)
-    import pdb; pdb.set_trace()
-    for obj in objs:
-        obj.to_file(open('/home/kleeman/Desktop/tmp.nc', 'w'))
+    gribapi.grib_set_long(grib, "shapeOfTheEarth", 6)
+
+    gribapi.grib_set_long(grib, "Ni", source.dimensions[conv.LON])
+    gribapi.grib_set_long(grib, "Nj", source.dimensions[conv.LAT])
+
+    lon = source[conv.LON]
+    lat = source[conv.LAT]
+    assert lon.ndim == 1
+    assert lat.ndim == 1
+    gribapi.grib_set_long(grib, "latitudeOfFirstGridPoint",
+                          int(lat[0] * 1000))
+    gribapi.grib_set_long(grib, "latitudeOfLastGridPoint",
+                          int(lat[-1] * 1000))
+    gribapi.grib_set_long(grib, "longitudeOfFirstGridPoint",
+                          int((lon[0] % 360) * 1000))
+    gribapi.grib_set_long(grib, "longitudeOfLastGridPoint",
+                          int((lon[-1] % 360) * 1000))
+
+
+def get_varible_name(source):
+    """
+    Infers the variable name of source by assuming there is only one
+    non-coordinate.
+    """
+    variables = source.noncoordinates
+    if not len(variables) == 1:
+        raise ValueError("expected a single non-coordinate")
+    return variables.keys()[0]
+
+
+def set_product(source, grib):
+    """
+    Sets the 'inidcatorOfParameter', 'table2Version', 'indicatorOfTypeOfLevel'
+    and 'level' parameters in a grib message by inferring their values from
+    the only non-coordinate in source.
+    """
+    var_name = get_varible_name(source)
+    grib_var_name = conv.to_grib1[var_name]
+    gribapi.grib_set_long(grib, 'indicatorOfParameter',
+                          reverse_codes[grib_var_name])
+    gribapi.grib_set_long(grib, 'table2Version', 2)
+
+    gribapi.grib_set_long(grib, 'indicatorOfTypeOfLevel',
+                          indicator_of_level[grib_var_name])
+    gribapi.grib_set_long(grib, 'level',
+                          level[grib_var_name])
+
+
+def set_data(source, grib):
+    """
+    Sets the actual data of a grib message.
+    """
+    var_name = get_varible_name(source)
+    # treat masked arrays differently
+    if isinstance(source[var_name].data, np.ma.core.MaskedArray):
+        gribapi.grib_set(grib, "bitmapPresent", 1)
+        # use the missing value from the masked array as default
+        missing_value = source[var_name].data.get_fill_value()
+        # but give the netCDF specified missing value preference
+        missing_value = source[var_name].attributes.get('missing_value',
+                                                        missing_value)
+        gribapi.grib_set_double(grib, "missingValue",
+                                float(missing_value))
+        data = source[var_name].data.filled()
+    else:
+        gribapi.grib_set_double(grib, "missingValue", 9999)
+        data = source[var_name].data[:]
+
+    gribapi.grib_set_long(grib, "dataRepresentationType", 0)
+    # get the grib code for the variable
+    code = reverse_codes[conv.to_grib1[var_name]]
+    _, grib_unit = codes[code]
+    # default to the grib default unit
+    unit = source[var_name].attributes.get(conv.UNITS, grib_unit)
+    mult = 1.
+    if not unit == grib_unit:
+        mult = units._speed[unit] / units._speed[grib_unit]
+    # add the data
+    gribapi.grib_set_double_array(grib, "values", mult * data.flatten())
+
+
+def save(source, target, append=False):
+    """
+    Takes a polyglot dataset (source) and writes its contents
+    as grib 1 to file-like target.  Grib 1 is used (instead
+    of grib 2) because some older forecast visualization
+    software can't read grib 2.
+
+    This is a heavily modified but none-the-less derivative of
+    the grib saving functions from the iris package.
+
+    Parameters
+    ----------
+    source : polyglot.Dataset
+        A netcdf-like file holding the dataset we want to write
+        as grib.  This must contain time, longitude and latitude
+        coordinates in order to infer the grib grid and time params
+    target : string path or file-like
+        Where the contents should be written.  If target is a string
+        the file is created or appended to.
+    append : boolean
+        When creating a new file from string you can optionally
+        append to the file.
+    """
+    if isinstance(target, basestring):
+        grib_file = open(target, "ab" if append else "wb")
+    elif hasattr(target, "write"):
+        if hasattr(target, "mode") and "b" not in target.mode:
+            raise ValueError("Target not binary")
+        grib_file = target
+    else:
+        raise ValueError("Can only save grib to filename or writable")
+
+    if not conv.LAT in source.variables or not conv.LON in source.variables:
+        raise ValueError("Did not find either latitude or longitude.")
+    if source[conv.LAT].ndim != 1 or source[conv.LON].ndim != 1:
+        raise ValueError("Latitude and Longitude should be regular.")
+    if not conv.TIME in source.variables:
+        raise ValueError("Expected time coordinate")
+
+    # iterate over variables
+    for v in source.noncoordinates.keys():
+        single_var = source.select([v])
+        # then iterate over time slices
+        for t, obj in single_var.iterator(conv.TIME):
+            # Save this slice to the grib file
+            grib_message = gribapi.grib_new_from_samples("GRIB1")
+            set_time(obj, grib_message)
+            set_product(obj, grib_message)
+            set_grid(obj, grib_message)
+            set_data(obj, grib_message)
+            gribapi.grib_write(grib_message, grib_file)
+            gribapi.grib_release(grib_message)
+    # if target was a string then we have to close the file we
+    # created, otherwise leave that up to the user.
+    if isinstance(target, basestring):
+        grib_file.close()

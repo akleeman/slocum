@@ -2,8 +2,8 @@
 ENSEMBLE = 'ensemble'
 TIME = 'time'
 HOURS = 'hours'
-LAT = 'lat'
-LON = 'lon'
+LAT = 'latitude'
+LON = 'longitude'
 UWND = 'uwnd'
 VWND = 'vwnd'
 PRECIP = 'precip'
@@ -20,3 +20,6 @@ WIND_SPEED = 'wind_speed'
 WIND_DIR = 'wind_dir'
 STEP = 'step'
 NUM_STEPS = 'num_steps'
+
+to_grib1 = {UWND: "u-component of wind",
+            VWND: "v-component of wind"}
