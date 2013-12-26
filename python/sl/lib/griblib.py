@@ -5,12 +5,19 @@ import pygrib
 import gribapi
 import netCDF4 as nc4
 import itertools
+import logging
 
 from datetime import datetime
 
 import sl.lib.conventions as conv
 
 from sl.lib import units
+
+logger = logging.getLogger(os.path.basename(__file__))
+logger.setLevel(logging.DEBUG)
+
+_sample_file = os.path.join(os.path.dirname(__file__),
+                        '../../../data/GFS20131226164503639.grb')
 
 codes = {
 0: ("Reserved",),
@@ -285,10 +292,12 @@ def set_grid(source, grib):
     lat = source[conv.LAT]
     assert lon.ndim == 1
     assert lat.ndim == 1
+    gribapi.grib_set_long(grib, "jScansPositively", 1)
     gribapi.grib_set_long(grib, "latitudeOfFirstGridPoint",
-                          int(lat[0] * 1000))
+                          int(np.min(lat.data[:]) * 1000))
     gribapi.grib_set_long(grib, "latitudeOfLastGridPoint",
-                          int(lat[-1] * 1000))
+                          int(np.max(lat.data[:]) * 1000))
+    gribapi.grib_set_long(grib, "iScansPositively", 1)
     gribapi.grib_set_long(grib, "longitudeOfFirstGridPoint",
                           int((lon[0] % 360) * 1000))
     gribapi.grib_set_long(grib, "longitudeOfLastGridPoint",
@@ -343,7 +352,11 @@ def set_data(source, grib):
     else:
         gribapi.grib_set_double(grib, "missingValue", 9999)
         data = source[var_name].data[:]
-
+    gribapi.grib_set_long(grib, "bitsPerValue", 12)
+    #gribapi.grib_set_long(grib, "bitsPerValueAndRepack", 12)
+    gribapi.grib_set_long(grib, "decimalPrecision", 2)
+    gribapi.grib_set_long(grib, "decimalScaleFactor", 2)
+    #gribapi.grib_set_long(grib, "binaryScaleFactor", 0)
     gribapi.grib_set_long(grib, "dataRepresentationType", 0)
     # get the grib code for the variable
     code = reverse_codes[conv.to_grib1[var_name]]
@@ -357,7 +370,7 @@ def set_data(source, grib):
     gribapi.grib_set_double_array(grib, "values", mult * data.flatten())
 
 
-def save(source, target, append=False):
+def save(source, target, append=False, sample_file=_sample_file):
     """
     Takes a polyglot dataset (source) and writes its contents
     as grib 1 to file-like target.  Grib 1 is used (instead
@@ -395,14 +408,23 @@ def save(source, target, append=False):
         raise ValueError("Latitude and Longitude should be regular.")
     if not conv.TIME in source.variables:
         raise ValueError("Expected time coordinate")
-
+    # sort the lats and lons
+    source = source.take(np.argsort(source['latitude'].data), 'latitude')
+    source = source.take(np.argsort(source['longitude'].data), 'longitude')
     # iterate over variables
     for v in source.noncoordinates.keys():
         single_var = source.select([v])
         # then iterate over time slices
         for t, obj in single_var.iterator(conv.TIME):
             # Save this slice to the grib file
-            grib_message = gribapi.grib_new_from_samples("GRIB1")
+            gribapi.grib_gribex_mode_off()
+            if sample_file is not None and os.path.exists(sample_file):
+                with open(sample_file, 'r') as f:
+                    grib_message = gribapi.grib_new_from_file(f)
+                logger.info("Created grib message from file %s" % sample_file)
+            else:
+                logger.info("Creating grib message from gribapi sample: GRIB1")
+                grib_message = gribapi.grib_new_from_samples("GRIB1")
             set_time(obj, grib_message)
             set_product(obj, grib_message)
             set_grid(obj, grib_message)

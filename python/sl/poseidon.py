@@ -65,7 +65,7 @@ def subset(nc, ll_crnr, ur_crnr, slicers=None):
     """
     # This actually expans the corners by one degree
     # to make sure we include the requested corners.
-    ur, ll = ensure_corners(ur_crnr, ll_crnr)
+    ur, ll = ensure_corners(ur_crnr, ll_crnr, expand=False)
     # determine which slice we need for latitude
     lats = nc.variables['lat'][:]
     inds = np.nonzero(np.logical_and(lats >= ll.lat, lats <= ur.lat))[0]

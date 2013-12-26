@@ -155,10 +155,12 @@ def get_forecast(query, path=None):
 #     if 'pressure' in query['vars']:
 #         vars['Pressure'] = 'mslp'
 
-    if path is None:
-        fcst = poseidon.gfs(ll, ur)
-    else:
+    if os.path.exists(path):
         fcst = Dataset(path)
+    else:
+        fcst = poseidon.gfs(ll, ur)
+        if path is not None:
+            fcst.dump(path)
 
     iter_hours = parse_saildocs_hours(query['hours'])
 
@@ -263,8 +265,9 @@ def windbreaker(mime_text, ncdf_weather=None,
             output.write(forecast_attachment.getvalue())
         # creates the new mime email
         weather_email = create_email(sender, _windbreaker_email,
-                                      'This forecast brought to you by your friends on Saltbreaker.',
-                                      attachments={'windbreaker.fcst': forecast_attachment})
+                          'This forecast brought to you by your friends on Saltbreaker.',
+                          subject=email_body[0],
+                          attachments={'windbreaker.fcst': forecast_attachment})
         logger.debug('Sending email to %s' % sender)
         send_email(weather_email)
         logger.debug('Email sent.')
@@ -277,6 +280,8 @@ def parse_saildocs(email_body):
     """
     logger.debug("splitting lines:")
     lines = email_body.lower().split('\n')
+
+
     logger.debug('\n'.join(lines))
     matches = filter(lambda x : x,
                      [re.match('\s*(send\s.+)\s*', x) for x in lines])
