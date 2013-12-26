@@ -178,16 +178,18 @@ def get_forecast(query, path=None):
     lat_resol = np.unique(np.diff(lats))
     if len(lat_resol) != 1:
         raise ValueError("Forecast has non-uniform latitudes")
-    lat_resol = lat_resol[0]
+    lat_resol = np.abs(lat_resol[0])
     lat_step = int(max(1, np.floor(query['grid_delta'] / lat_resol)))
+    logger.debug("latitude - resol: %d, step: %d" % (lat_resol, lat_step))
     lat_inds = np.arange(lats.size)[::lat_step]
 
     lons = fcst['longitude'].data[:]
     lon_resol = np.unique(np.diff(lons))
     if len(lon_resol) != 1:
         raise ValueError("Forecast has non-uniform longitudes")
-    lon_resol = lon_resol[0]
+    lon_resol = np.abs(lon_resol[0])
     lon_step = int(max(1, np.floor(query['grid_delta'] / lon_resol)))
+    logger.debug("latitude - resol: %d, step: %d" % (lat_resol, lat_step))
     lon_inds = np.arange(lons.size)[::lon_step]
 
     obj = obj.take(lat_inds, conv.LAT)

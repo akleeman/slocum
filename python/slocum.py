@@ -11,10 +11,11 @@ fmt = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
 logging.basicConfig(filename='/tmp/slocum.log',
                     level=logging.DEBUG,
                     format=fmt)
+
 logger = logging.getLogger(os.path.basename(__file__))
 file_handler = logging.FileHandler("/tmp/slocum.log")
 logger.addHandler(file_handler)
-console_handler = logging.StreamHandler()
+console_handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(console_handler)
 
 from polyglot import Dataset
@@ -34,7 +35,7 @@ def handle_email(args):
     a saildocs-like request and replying to the sender with
     an packed ensemble forecast.
     """
-    emaillib.windbreaker(args.input.read(), None, args.output)
+    emaillib.windbreaker(args.input.read(), args.ncdf, args.output)
 
 _task_handler = {'email': handle_email,
                  'grib': handle_grib}
@@ -61,7 +62,8 @@ if __name__ == "__main__":
         p.add_argument('--output', type=argparse.FileType('wb'),
                             default=sys.stdout)
         return p
-    task_parsers = [add_parser(k) for k in _task_handler.keys()]
+    task_parsers = dict((k, add_parser(k)) for k in _task_handler.keys())
+    task_parsers['email'].add_argument('--ncdf', default=None)
     # parse the arguments and run the handler associated with each task
     args = parser.parse_args()
     args.func(args)

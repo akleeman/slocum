@@ -75,9 +75,23 @@ function website {
 function slocum {
   sudo apt-get install python-pip python-dev  libhdf5-openmpi-dev netcdf-bin libnetcdf-dev -y
   sudo apt-get install libatlas-dev liblapack-dev libblas-dev build-essential gfortran -y
+  sudo apt-get install libgrib-api-dev libgeos-dev libopenjpeg-dev
   sudo pip install numpy
   sudo pip install BeautifulSoup
   sudo pip install netCDF4
+  sudo pip install pygrib
+  sudo pip install basemap
+  sudo pip install pyproj
+  wget https://software.ecmwf.int/wiki/download/attachments/3473437/grib_api-1.11.0.tar.gz?api=v2
+  tar xvfz grib_api*
+  sudo mkdir /usr/lib/gribapi
+  cd grib_api*
+
+  ./configure --prefix=/usr/local/ --enable-python
+  sudo make
+  sudo make install
+  sudo echo grib_api > /usr/local/lib/python2.7/site-packages/gribapi.pth
+
   sudo apt-get install python-scipy python-matplotlib -y
   sudo pip install iris
   cd ~/
