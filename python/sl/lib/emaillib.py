@@ -155,7 +155,7 @@ def get_forecast(query, path=None):
 #     if 'pressure' in query['vars']:
 #         vars['Pressure'] = 'mslp'
 
-    if os.path.exists(path):
+    if path is not None and os.path.exists(path):
         fcst = Dataset(path)
     else:
         fcst = poseidon.gfs(ll, ur)

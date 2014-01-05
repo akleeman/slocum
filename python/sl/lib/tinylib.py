@@ -1,18 +1,17 @@
-import yaml
+import copy
 import zlib
 import numpy as np
 import netCDF4
+import datetime
 
 from bisect import bisect
+from collections import OrderedDict
 
 import sl.lib.conventions as conv
 
 from sl.lib import objects, units
 
 from polyglot import Dataset
-from collections import OrderedDict
-import datetime
-import copy
 
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
                             33., 40., 47., 55., 63., 75.])
@@ -40,6 +39,7 @@ _variables = {conv.WIND_SPEED: {'dtype': np.float32,
                           'dims': (conv.TIME, ),
                           'least_significant_digit': 0},
               }
+
 
 def pack_ints(arr, req_bits=None):
     """
@@ -148,10 +148,7 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
                 yield v
             cnt += nvals
     # recreate the original array
-    try:
-        return np.array([x for x in iter_vals()], dtype=dtype).reshape(shape)
-    except:
-        import pdb; pdb.set_trace()
+    return np.array([x for x in iter_vals()], dtype=dtype).reshape(shape)
 
 
 def tiny_array(arr, bits=None, divs=None, mask=None):
@@ -367,7 +364,8 @@ def check_beaufort(obj):
     assert np.max(obj[conv.LON]) <= 360
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
-_variable_order = [conv.TIME, conv.LAT, conv.LON, conv.WIND_SPEED, conv.WIND_DIR]
+_variable_order = [conv.TIME, conv.LAT, conv.LON,
+                   conv.WIND_SPEED, conv.WIND_DIR]
 
 
 def to_beaufort(obj):

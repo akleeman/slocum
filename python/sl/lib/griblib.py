@@ -1,11 +1,10 @@
 import os
 import numpy as np
 import coards
-import pygrib
 import gribapi
+import logging
 import netCDF4 as nc4
 import itertools
-import logging
 
 from datetime import datetime
 
@@ -175,7 +174,7 @@ def degrib(fn):
     if not os.path.exists(fn):
         raise ValueError("grib file %s does not exist" % fn)
 
-    gribs = pygrib.open(fn)
+    #gribs = pygrib.open(fn)
 
     def get_grid(x):
         # extracts the stringified lat long variables from a message
