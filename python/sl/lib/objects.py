@@ -21,11 +21,12 @@ class Wind(object):
         # Here we bin according to the standard cardinal directions
         bins = np.arange(-np.pi, np.pi, step=np.pi / 4)
         names = ['S', 'SE', 'E', 'NE', 'N', 'NW', 'W', 'SW']
-        ind = bisect(bins, self.dir)
-        if ind == 0 or self.dir > np.pi:
+        diffs = np.mod(self.dir - bins, 2 * np.pi)
+        ind = np.argmin(diffs)
+        if diffs[ind] > np.pi / 4:
             self.readable = '-'
         else:
-            self.readable = names[ind - 1]
+            self.readable = names[ind]
 
 
 class LatLon(object):

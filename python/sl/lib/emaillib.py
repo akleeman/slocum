@@ -2,9 +2,10 @@ import os
 import re
 import zlib
 import yaml
-import smtplib
 import numpy as np
 import logging
+import smtplib
+import datetime
 
 from email import Parser, mime, encoders
 from email.mime import Multipart
@@ -22,6 +23,11 @@ logger.setLevel(logging.DEBUG)
 
 _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
+_email_body = """
+This forecast brought to you by your friends on Saltbreaker.
+
+Remember, always be skeptical of numerical forecasts (such as this).
+For a full disclaimer visit www.ensembleweather.com."""
 
 
 def args_from_email(email):
@@ -76,12 +82,6 @@ def send_email(mime_email):
     server = smtplib.SMTP(_smtp_server)
     server.sendmail(fr, to, mime_email.as_string())
     s.quit()
-
-
-def mock_send_email(mime_email):
-    to = mime_email['To']
-    fr = mime_email['From']
-    import pdb; pdb.set_trace()
 
 
 def get_body(email):
@@ -264,10 +264,12 @@ def windbreaker(mime_text, ncdf_weather=None,
             logger.debug("dumping file to output")
             output.write(forecast_attachment.getvalue())
         # creates the new mime email
+        file_fmt = 'windbreaker_%Y-%m-%d_%H%m.fcst'
+        filename = datetime.datetime.today().strftime(file_fmt)
         weather_email = create_email(sender, _windbreaker_email,
-                          'This forecast brought to you by your friends on Saltbreaker.',
-                          subject=email_body[0],
-                          attachments={'windbreaker.fcst': forecast_attachment})
+                              _email_body,
+                              subject=email_body[0],
+                              attachments={filename: forecast_attachment})
         logger.debug('Sending email to %s' % sender)
         send_email(weather_email)
         logger.debug('Email sent.')
@@ -280,10 +282,8 @@ def parse_saildocs(email_body):
     """
     logger.debug("splitting lines:")
     lines = email_body.lower().split('\n')
-
-
     logger.debug('\n'.join(lines))
-    matches = filter(lambda x : x,
+    matches = filter(lambda x: x,
                      [re.match('\s*(send\s.+)\s*', x) for x in lines])
     queries = [x.groups()[0] for x in matches]
     return (parse_saildocs_query(x) for x in queries)
@@ -307,7 +307,7 @@ def parse_saildocs_query(query):
     # subscribe and spot doesn't currently work
     if not command.lower() == 'send':
         raise ValueError("currently only supports the 'send' command")
-    region, grid, hours_str, vars  = options.split('|')
+    region, grid, hours_str, vars = options.split('|')
     vars = set([x.lower() for x in vars.split(',')])
     if not len(vars):
         vars = 'wind'
