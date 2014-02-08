@@ -11,7 +11,7 @@ import sl.lib.conventions as conv
 
 from sl.lib import objects, units
 
-from polyglot import Dataset
+from scidata import Dataset
 
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
                             33., 40., 47., 55., 63., 75.])

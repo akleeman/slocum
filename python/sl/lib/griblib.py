@@ -371,7 +371,7 @@ def set_data(source, grib):
 
 def save(source, target, append=False, sample_file=_sample_file):
     """
-    Takes a polyglot dataset (source) and writes its contents
+    Takes a dataset (source) and writes its contents
     as grib 1 to file-like target.  Grib 1 is used (instead
     of grib 2) because some older forecast visualization
     software can't read grib 2.
@@ -381,7 +381,7 @@ def save(source, target, append=False, sample_file=_sample_file):
 
     Parameters
     ----------
-    source : polyglot.Dataset
+    source : Dataset
         A netcdf-like file holding the dataset we want to write
         as grib.  This must contain time, longitude and latitude
         coordinates in order to infer the grib grid and time params

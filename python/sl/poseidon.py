@@ -8,14 +8,14 @@ from __future__ import with_statement
 import os
 import copy
 import numpy as np
-import logging
 import urllib
 import urllib2
+import logging
 import urlparse
 
 from BeautifulSoup import BeautifulSoup
 
-from polyglot import Dataset
+from scidata import Dataset, open_dataset
 
 from sl.lib import conventions, units
 
@@ -92,17 +92,17 @@ def forecast(source):
     """
     latest_opendap = latest(_sources[source])
     logger.debug(latest_opendap)
-    return Dataset(latest_opendap)
+    return open_dataset(latest_opendap)
 
 
 def gefs(ll, ur):
     """
     Global Ensemble Forecast System forecast object
     """
-    vars = {'u-component_of_wind_height_above_ground':conventions.UWND,
-            'v-component_of_wind_height_above_ground':conventions.VWND,}
+    vars = {'u-component_of_wind_height_above_ground': conventions.UWND,
+            'v-component_of_wind_height_above_ground': conventions.VWND,}
     fcst = forecast('gefs')
-    fcst = fcst.select(vars, view=True)
+    fcst = fcst.select(*vars.keys())
     fcst = subset(fcst, ll, ur)
     renames = vars
     renames.update(dict((d, conventions.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
@@ -126,10 +126,13 @@ def gfs(ll, ur):
     vars = {'u-component_of_wind_height_above_ground': conventions.UWND,
             'v-component_of_wind_height_above_ground': conventions.VWND,}
     fcst = forecast('gfs')
-    fcst = fcst.select(vars, view=True)
+    fcst = fcst.select(*vars.keys())
     # subset out the 10m wind height
+    logger.debug("Selected out variables")
     ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
+    logger.debug("found 10m height")
     fcst = subset(fcst, ll, ur, slicers={'height_above_ground4': slice(ind, ind + 1)})
+    logger.debug("subsetted to the domain")
     # Remove the height above ground dimension
     fcst = copy.deepcopy(fcst)
     fcst = fcst.squeeze(dimension='height_above_ground4')
