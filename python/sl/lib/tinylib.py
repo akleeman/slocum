@@ -349,6 +349,9 @@ def expand_small_time(packed_array, dtype, least_significant_digit):
 
 def check_beaufort(obj):
     # these will fail if UWND or VWND are not variables
+    units.convert_units(obj[conv.UWND], 'knot')
+    units.convert_units(obj[conv.VWND], 'knot')
+    # double check
     assert obj[conv.UWND].attributes[conv.UNITS] == 'knot'
     assert obj[conv.VWND].attributes[conv.UNITS] == 'knot'
     # make sure time is all integers
@@ -360,8 +363,8 @@ def check_beaufort(obj):
     assert np.max(obj[conv.LAT]) <= 90
     # make sure longitudes are in degrees and are on the correct scale
     assert 'degrees' in obj[conv.LON].attributes[conv.UNITS]
-    assert np.min(obj[conv.LON]) >= 0
-    assert np.max(obj[conv.LON]) <= 360
+    assert np.min(obj[conv.LON]) >= -180
+    assert np.max(obj[conv.LON]) <= 180
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
 _variable_order = [conv.TIME, conv.LAT, conv.LON,
@@ -378,12 +381,11 @@ def to_beaufort(obj):
     Parameters
     ----------
     """
+    # first we make sure all the data is in the expected units
+    check_beaufort(obj)
     obj = copy.deepcopy(obj)
     uwnd = obj[conv.UWND].data
     vwnd = obj[conv.VWND].data
-    # first we store all the required coordinates using (nearly)
-    # lossless compression
-    check_beaufort(obj)
     # keep this ordered so the coordinates get written (and read) first
     encoded_variables = OrderedDict()
 
@@ -488,9 +490,9 @@ def from_beaufort(payload):
     vwnd = -np.cos(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
     uwnd = -np.sin(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
     out.create_variable(conv.UWND, dims=dims, data=uwnd,
-                        attributes={conv.UNITS: units._speed_unit})
+                        attributes={conv.UNITS: 'knot'})
     out.create_variable(conv.VWND, dims=dims, data=vwnd,
-                        attributes={conv.UNITS: units._speed_unit})
-    out = out.select([conv.UWND, conv.VWND])
-    return out
+                        attributes={conv.UNITS: 'knot'})
+    out = out.select(conv.UWND, conv.VWND)
+    return units.normalize_variables(out)
 
