@@ -19,8 +19,8 @@ class Wind(object):
         # the wind is headed
         self.dir = np.arctan2(-u, -v)
         # Note to Alex: I moved cardinal directions to the center of the
-        # respective bins, so that you don't get 'NNE' for 1°, or 'SSE' for
-        # 91°, etc.  Also added intermediate directions because I need these
+        # respective bins, so that you don't get 'NNE' for 1deg, or 'SSE' for
+        # 91deg etc.  Also added intermediate directions because I need these
         # for the wind arrows in the route forecast.  Replaced np.arange by
         # np.linspace (more robust for ranges bounded by floats/float steps),
         # and used bisect to find the correct index (your diffs logic was
