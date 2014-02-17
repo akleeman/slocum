@@ -38,7 +38,6 @@ import numpy as np
 from netCDF4 import num2date
 from pyproj import Geod
 from objects import LatLon, Wind
-from polyglot import Dataset
 
 logger = logging.getLogger(__name__)
 if not __name__ == '__main__':
@@ -48,24 +47,14 @@ if not __name__ == '__main__':
 # TODO: fold into sl.lib.units
 KN_PER_MS = 1.94384449
 
-# mapping input format codes to parser functions:
-# TODO: add parsers for different import formats
-IN_FORMATS = {
-    'csv': 'read_csv'
-    # csv file with lat, lon in decimal degrees, followed by speed in kn to the
-    # next waypoint; speed can be empty if avrgSpeed is passed to route
-    # constructor; if speed is provided for any leg it will overwrite avrgSpeed
-    # for that leg
-}
-
 # Sceleton OpenCPN gpx file (used by exportFcstGPX):
 GPX_WRAPPER = """<?xml version="1.0" encoding="utf-8" ?>
 <gpx version="1.1" creator="OpenCPN" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" xmlns:opencpn="http://www.opencpn.org">
 </gpx>
 """
 
-XML_HEADER = '<?xml version="1.0" encoding="utf-8" ?>' # used by exportFcstGPX
-                                                       # as first output line
+XML_HEADER = '<?xml version="1.0" encoding="utf-8" ?>'  # used by exportFcstGPX
+                                                        # as first output line
 
 # OpenCPN user icons for wind arrow way point symbols are assumed to named:
 # W_ARROW_ICON_PREFIX + [cardinal direction], where cardinal direction is
@@ -78,10 +67,22 @@ class Route(object):
     """
     Holds a route in list rtePts of LatLon objects and associated speeds (in
     m/s) to the next respective waypoint.  Also maintains a current position in
-    curPos and two prevWP and nextWP indeces that point to the elements of
+    curPos and two prevWP and nextWP indices that point to the elements of
     rtePts that bracket curPos.  Exports a method getPos(utc) that will return
     the position along the route at time utc as a LatLon object.
+
+    The following format specifiers for the route input file are recognized by
+    the constructor:
+
+        'csv'
+            csv file with lat, lon in decimal degrees, followed by speed in kn
+            to the next waypoint; speed can be empty if avrgSpeed is passed to
+            route constructor; if speed is provided for any leg it will
+            overwrite avrgSpeed for that leg
+
     """
+    # TODO: add parsers for different import formats
+
     RtePoint = namedtuple('RtePoint', ['wp', 'speed'])
 
     geod = Geod(ellps='WGS84')
@@ -89,22 +90,28 @@ class Route(object):
     def __init__(self, ifh=None, inFmt=None, utcDept=None, avrgSpeed=None):
         """
         Constructs a route object from the data in file object ifh which must
-        be in format inFmt (see IN_FORMAT for valid formats).  utcDept is a
-        datetime object specifying departure from the first waypoint.  If
+        be in format inFmt (see class doc string for valid formats).  utcDept
+        is a datetime object specifying departure from the first waypoint.  If
         avrgSpeed in knots is provided, it will be substituted for any missing
-        leg speeds in the input.  If no ifh is provided or inFmt is not in
-        IN_FORMATS the route object will be constructed with an empty rtePts
-        list.  If no avrgSpeed > 0 is provided and the input file contains
-        missing leg speeds an 'InvalidInFileError' will be raised.
-        Note: longitudes in rtePts will be in range 0..360 (see
-        objects.LatLon).  Use nautLatLon() method of objects.LatLon to get a
-        (lat, lon) tuple with lon in range -180..180.
+        leg speeds in the input.  If no ifh is provided the route object will
+        be constructed with an empty rtePts list.  If no avrgSpeed > 0 is
+        provided and the input file contains missing leg speeds an
+        'InvalidInFileError' will be raised.  Note: longitudes in rtePts will
+        be in range 0..360 (see objects.LatLon).  Use nautical_latlon() method
+        of objects.LatLon to get a (lat, lon) tuple with lon in range
+        -180..180.
         """
         self.utcDept = utcDept
         self.rtePts = []
 
-        if ifh is not None and inFmt in IN_FORMATS:
-            Route.__dict__[IN_FORMATS[inFmt]](self, ifh, avrgSpeed)
+        if ifh is None:     # in case we want to roll our own
+            return
+
+        if inFmt == 'csv':
+            self.read_csv(ifh, avrgSpeed)
+        else:
+            raise (InvalidInFormatError,
+                   "Invalid route file format specifier: %s" % inFmt)
 
         self.ur, self.ll = self.updateBBox()
 
@@ -117,8 +124,8 @@ class Route(object):
         self.rtePts, defined as ur and ll corners. Returns (ur, ll) tuple.  If
         self.ur and self.ll exist they will be updated with the new values.
         """
-        ll = LatLon(89.999999, 359.999999)
-        # TODO: LatLon doesn't handle intialization with (90, 360) correctly
+        ll = LatLon(90, 359.999999)
+
         ur = LatLon(-90, 0)
 
         for p in self.rtePts:
@@ -127,8 +134,8 @@ class Route(object):
             if p.wp.lon < ll.lon: ll.lon = p.wp.lon
             if p.wp.lon > ur.lon: ur.lon = p.wp.lon
 
-        if 'ur' in self.__dict__: self.ur = ur.copy()
-        if 'll' in self.__dict__: self.ll = ll.copy()
+        if hasattr(self, 'ur'): self.ur = ur.copy()
+        if hasattr(self, 'll'): self.ll = ll.copy()
 
         return ur, ll
 
@@ -164,7 +171,8 @@ class Route(object):
         self.utcArrival of arrival.
         """
         if utc < self.utcDept:
-            raise TimeOverlapError, "position requested for time before departure"
+            raise (TimeOverlapError,
+                   "position requested for time before departure")
 
         self.updateUtcArrival()     # just in case some one messed with the
                                     # waypoint list
@@ -183,7 +191,7 @@ class Route(object):
         self.curPos = origCurPos
         self.prevWP, self.nextWP = origWP
 
-        return tmpCurPos, course, speed 
+        return tmpCurPos, course, speed
 
     def advanceCurPos(self, deltaT):
         """
@@ -194,28 +202,31 @@ class Route(object):
         timedelta object (0 if the new position is still before the last WP).
         """
         logger.debug(
-            "advanceCurPos called with deltaT: %d sec, curPos: %.3f %.3f, prevWP: %d, nextWP: %d" %
+            "advanceCurPos called with deltaT: %d sec, curPos: "
+            "%.3f %.3f, prevWP: %d, nextWP: %d" %
             (deltaT.total_seconds(), self.curPos.lat, self.curPos.lon,
             self.prevWP, self.nextWP))
 
         if self.nextWP is None:     # we're already at the end of the route
             return None, None, deltaT
-        elif deltaT.total_seconds() <= 0: # utcDept coincides with forecast time
-            az12, az21, distToNext = Route.geod.inv(self.curPos.lon,
-                                                    self.curPos.lat, self.rtePts[
-                                                        self.nextWP].wp.lon,
-                                                    self.rtePts[self.nextWP].wp.lat)
-            logger.debug("exiting advanceCurPos with deltaT: % d sec, curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
+        elif deltaT.total_seconds() <= 0:  # utcDept coincides with
+                                           # forecast time
+            az12, __, __ = Route.geod.inv(self.curPos.lon,
+                                    self.curPos.lat,
+                                    self.rtePts[self.nextWP].wp.lon,
+                                    self.rtePts[self.nextWP].wp.lat)
+            logger.debug("exiting advanceCurPos with deltaT: % d sec, "
+                    "curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
                         (deltaT.total_seconds(), self.curPos.lat,
                             self.curPos.lon, self.prevWP, self.nextWP))
             return az12, self.rtePts[self.prevWP].speed, deltaT
 
         while deltaT.total_seconds() > 0:
 
-            az12, az21, distToNext = Route.geod.inv(self.curPos.lon,
-                                                    self.curPos.lat, self.rtePts[
-                                                        self.nextWP].wp.lon,
-                                                    self.rtePts[self.nextWP].wp.lat)
+            az12, __, distToNext = Route.geod.inv(self.curPos.lon,
+                                            self.curPos.lat,
+                                            self.rtePts[self.nextWP].wp.lon,
+                                            self.rtePts[self.nextWP].wp.lat)
 
             # TODO: agree on what's 'at the WP' (100m)?
             if distToNext < 100:
@@ -228,11 +239,12 @@ class Route(object):
 
             if deltaT < tToNext:    # new curPos in this iteration
                 dist = deltaT.total_seconds() * self.rtePts[self.prevWP].speed
-                self.curPos.lon, self.curPos.lat, az21 = (
+                self.curPos.lon, self.curPos.lat, __ = (
                     Route.geod.fwd(self.curPos.lon, self.curPos.lat, az12,
                                    dist))
                 deltaT = dt.timedelta(0)
-                logger.debug("exiting advanceCurPos with deltaT: % d sec, curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
+                logger.debug("exiting advanceCurPos with deltaT: % d sec, "
+                        "curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
                             (deltaT.total_seconds(), self.curPos.lat,
                                 self.curPos.lon, self.prevWP, self.nextWP))
                 return az12, self.rtePts[self.prevWP].speed, deltaT
@@ -241,8 +253,9 @@ class Route(object):
                 self.curPos = self.rtePts[self.nextWP].wp.copy()
                 prevWP, nextWP = self.__advancePrevNext()
                 if nextWP is None:
-                    logger.debug("exiting advanceCurPos with deltaT: % d sec, curPos: % .3f % .3f, prevWP: % d, nextWP: None" %
-                                 (deltaT.total_seconds(), self.curPos.lat,
+                    logger.debug("exiting advanceCurPos with deltaT: % d sec,"
+                            " curPos: % .3f % .3f, prevWP: % d, nextWP: None"
+                            % (deltaT.total_seconds(), self.curPos.lat,
                                      self.curPos.lon, self.prevWP))
                     return None, None, deltaT
 
@@ -306,15 +319,15 @@ class Route(object):
 
 
 class FcstWP(LatLon):
-    
+
     """
     Convenience wrapper to store forecast data at waypoints. Subclasses LatLon
     and adds Wind as an attribute, plus utc (datetime object), cog (true, in
-    radians), and sog (knots).
+    radians), and sog (m/s).
     """
     def __init__(self, lat, lon, u, v, utc=None, cog=None, sog=None):
         LatLon.__init__(self, lat, lon)
-        self.wind = Wind(u, v)  
+        self.wind = Wind(u, v)
         self.utc = utc
         self.cog = cog
         self.sog = sog
@@ -329,29 +342,32 @@ class RouteForecast(object):
     that overlap with the travel time.  The result can be written to a gpx
     waypoint file wich can be displayed in OpenCPN as a temroary layer.
     """
-    
+
     def __init__(self, rte, fcst):
         """
         rte:    rtefcst.Route object
         fcst:   polyglot.Dataset object
         """
-        fTimes = num2date(fcst['time'].data[:], fcst['time'].attributes['units'])
+        fTimes = num2date(fcst['time'].data[:],
+                          fcst['time'].attributes['units'])
         # check that forecast times overlap travel time
         if fTimes[0] > rte.utcArrival or fTimes[-1] < rte.utcDept:
-            raise TimeOverlapError, "Forecast times do not overlap with route times"
+            raise (TimeOverlapError,
+                   "Forecast times do not overlap with route times")
 
         # check that forecast area overlaps route
         if (rte.ur.lat < min(fcst['latitude'].data) or rte.ll.lat >
                 max(fcst['latitude'].data)):
-            raise RegionOverlapError, "Route latitudes outside of forecast region"
+            raise (RegionOverlapError,
+                   "Route latitudes outside of forecast region")
         if (rte.ur.lon < min(fcst['longitude'].data) or rte.ll.lon >
                 max(fcst['longitude'].data)):
-            raise RegionOverlapError, "Route longitudes outside of forecast region"
+            raise (RegionOverlapError,
+                   "Route longitudes outside of forecast region")
 
         self.rte = rte
         self.fcst = fcst
         self.fTimes = fTimes
-
 
     def genRteFcst(self):
         """
@@ -364,7 +380,7 @@ class RouteForecast(object):
         i_tn = bisect_right(self.fTimes, self.rte.utcArrival)
 
         logger.debug("genRteFcst: it_0, i_tn: %d, %d" % (i_t0, i_tn))
-        
+
         self.rte.resetCurPos()
         rteFcst = []
         for i in range(i_t0, i_tn):
@@ -381,12 +397,19 @@ class RouteForecast(object):
             try:
                 u, v = self.getCurPosFcst(i, ('uwnd', 'vwnd'))
             except PointNotInsideGrid:
-                logger.debug("genRteFcst: PointNotInsideGrid exception caught on i = %d" % i)
+                logger.debug("genRteFcst: PointNotInsideGrid exception caught "
+                             "on i = %d" % i)
                 continue
 
+            # TODO: delete once standard wind speeds are m/s in units.py;
+            #       or check for != 'm/s' and convert with unit.py dictionary
+            if self.fcst['uwnd'].attributes['units'] == 'knot':
+                u = u / KN_PER_MS
+            if self.fcst['vwnd'].attributes['units'] == 'knot':
+                v = v / KN_PER_MS
+
             rteFcst.append(FcstWP(self.rte.curPos.lat, self.rte.curPos.lon, u,
-                                  v, self.fTimes[i], np.radians(cog),
-                                  sog*KN_PER_MS))
+                                  v, self.fTimes[i], np.radians(cog), sog))
 
         return rteFcst
 
@@ -402,34 +425,37 @@ class RouteForecast(object):
         """
         lat = self.rte.curPos.lat
         lon = self.rte.curPos.lon
-        # latitude dimension is ordered N -> S; need to reverse for bisect:
-        # TODO: Verify that we can rely on sort order N-S for lat/W-E for lon
+
+        # we assume lats are sorted but don't know if S -> N ('normal') or
+        # N -> S ('reverse'):
         sortLat = self.fcst['latitude'].data.copy()
-        sortLat.sort()
-        i = bisect(sortLat, lat)
+        if self.fcst['latitude'].data[0] > self.fcst['latitude'].data[-1]:
+            sortLat.sort()  # sort S -> N
+            i = -1 * bisect(sortLat, lat)
+        else:
+            i = bisect(sortLat, lat)
         j = bisect(self.fcst['longitude'].data, lon)
 
-        if (i == 0 or j == 0 or i == len(self.fcst['latitude'].data) or
+        if (i == 0 or j == 0 or abs(i) == len(self.fcst['latitude'].data) or
                                 j == len(self.fcst['longitude'].data)):
             raise PointNotInsideGrid
-            
-        # latitude index negative b/c bisect was done on reverse order
-        latVec = self.fcst['latitude'].data[-i-1 : -i+1]
-        lonVec = self.fcst['longitude'].data[j-1 : j+1]
-        
+
+        latVec = self.fcst['latitude'].data[i-1:i+1]
+        lonVec = self.fcst['longitude'].data[j-1:j+1]
+
         logger.debug("curPos: %.2f %.2f, lat slice: %s, lon slice: %s" %
                      (lat, lon,  latVec, lonVec))
-        
+
         out = []
         for fVar in fcstVars:
-            box = self.fcst[fVar].data[ timeIndex, -i-1 : -i+1, j-1 : j+1 ]
-        
+            box = self.fcst[fVar].data[timeIndex, i-1:i+1, j-1:j+1]
+
             logger.debug("\n%s-box:\n%s" % (fVar, box))
 
             z = interpol(box, latVec, lonVec, lat, lon)
 
             logger.debug("%s-result: %f" % (fVar, z))
-            
+
             out.append(z)
 
         return tuple(out)
@@ -437,7 +463,7 @@ class RouteForecast(object):
     def exportFcstGPX(self, gpxFile, windApparent=True, timeLabels=True):
         """
         Exports forecast along Route in OpenCPN's gpx XML-format.
-            
+
             gpxFile         -   File object open for writing; must be closed by
                                 calling function
             windApparent    -   If set to 'False' true wind speed and direction
@@ -450,9 +476,9 @@ class RouteForecast(object):
         rteFcst = self.genRteFcst()
         root = ET.fromstring(GPX_WRAPPER)
         for wpCount, fp in enumerate(rteFcst):
-            lat, lon = fp.nautLatLon()
-            wp = ET.SubElement(root, 'wpt', attrib={'lat' : "%.6f" % lat,
-                          'lon' : "%.6f" % lon}) 
+            lat, lon = fp.nautical_latlon()
+            wp = ET.SubElement(root, 'wpt', attrib={'lat': "%.6f" % lat,
+                          'lon': "%.6f" % lon})
 
             wp_time = ET.SubElement(wp, 'time')
             wp_time.text = fp.utc.replace(microsecond=0).isoformat() + 'Z'
@@ -462,10 +488,10 @@ class RouteForecast(object):
             if windApparent:
                 awa, wwSide, aws = appWind(fp.wind, fp.cog, fp.sog)
                 nameStr = "%d%s@%d" % (round(np.degrees(awa)), wwSide,
-                                        round(aws))
+                                        round(aws * KN_PER_MS))
             else:
-                nameStr = "%d@%d" % (round(np.degrees(fp.wind.nautDir())),
-                                     round(fp.wind.speed))
+                nameStr = "%d@%d" % (round(np.degrees(fp.wind.nautical_dir())),
+                                     round(fp.wind.speed * KN_PER_MS))
             if timeLabels:
                 nameStr += " %s" % fp.utc.strftime("%HZ%d%b")
             wp_name.text = nameStr
@@ -495,13 +521,14 @@ def interpol(box, latVec, lonVec, lat, lon):
         latVec      - corner latitudes as np array
         lonVec      - corner longitudes as np array
         lat, lon    - point for which to interpolate
-    
+
     Returns interpolation result.
     """
     x = (lat - latVec[0]) / float(latVec[1] - latVec[0])
     y = (lon - lonVec[0]) / float(lonVec[1] - lonVec[0])
 
     return np.dot(np.dot(np.array([1 - x, x]), box), np.array([1 - y, y]))
+
 
 def appWind(trueWind, cog, sog):
     """
@@ -510,21 +537,25 @@ def appWind(trueWind, cog, sog):
     (green) if apparent wind is from stbd and 'R' (red) if apparent wind is
     from port.
     Arguments:
-        trueWind    -   Wind object with true wind
+        trueWind    -   Wind object with true wind in
         cog         -   Course over ground in radians
-        sog         -   speed over ground in knots
+        sog         -   speed over ground
+
+    trueWind.speed and sog must be in the same unit. Return value will be in
+    the same unit.
     """
-    
-    twa, wwSide = trueWindAngle(cog, trueWind.nautDir())
+
+    twa, wwSide = trueWindAngle(cog, trueWind.nautical_dir())
     aws = np.sqrt(sog**2 + trueWind.speed**2 + 2*sog*trueWind.speed*np.cos(twa))
     awa = np.arccos((sog**2 + aws**2 - trueWind.speed**2) / (2 * aws * sog))
 
     return awa, wwSide, aws
 
+
 def trueWindAngle(cog, twd):
     """
     Returns a tuple with true wind angle in radians (0..pi, relative to boat
-    COG) and the side the wind is from ('G' for stbd, 'R' for port). 
+    COG) and the side the wind is from ('G' for stbd, 'R' for port).
     Arguments:
         cog     -   Boat's COG in radians
         twd     -   True wind direction i radians (0..2*pi)
@@ -546,24 +577,34 @@ def trueWindAngle(cog, twd):
     return twa, wwSide
 
 
+class InvalidInFormatError(Exception):
+
+    """
+    Indicates missing or invalid format specifier for input file.
+    """
+
+
 class InvalidInFileError(Exception):
 
     """
     Indicates missing or invalid data in the input file.
     """
 
+
 class TimeOverlapError(Exception):
-    
+
     """
     Indicates that a time or timeframe does not fall into or overlap with
     another timeframe as required.
     """
 
+
 class RegionOverlapError(Exception):
-    
+
     """
     Indicates that two geographical regions do not overlap as required
     """
+
 
 class PointNotInsideGrid(RegionOverlapError):
 
@@ -572,6 +613,7 @@ class PointNotInsideGrid(RegionOverlapError):
     forecast grid.
     """
 
+
 if __name__ == '__main__':
 
     import zlib
@@ -579,18 +621,3 @@ if __name__ == '__main__':
 
     fmt = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=fmt)
-
-    with open('rtefcst_test.fcst', 'rb') as wb:
-        tinyfcst = zlib.decompress(wb.read())
-    fcst = tinylib.from_beaufort(tinyfcst)
-
-    print fcst
-    
-    with open('rtefcst_test.csv', 'r') as wpf:
-        r = Route(ifh=wpf, inFmt='csv', utcDept=dt.datetime(2014, 2, 2, 18, 0,
-                  0), avrgSpeed=5.0)
-
-    for p in r:
-        print r.wp.lat, rwp.lon, r.speed
-
-

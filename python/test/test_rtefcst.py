@@ -28,6 +28,13 @@ expectedTrueWindOutStr="""<?xml version="1.0" encoding="utf-8" ?>
 
 class RouteTest(unittest.TestCase):
 
+    def testReadCSVInvalidFormatSpecifier(self):
+        tDept = dt.datetime(2014, 2, 1, 12, 0, 0)
+        ifh = StringIO.StringIO(testCSV)
+        kwargs = {'ifh': ifh, 'inFmt': 'xxx', 'utcDept': tDept}
+        self.assertRaises(rtefcst.InvalidInFormatError, rtefcst.Route, **kwargs)
+        ifh.close()
+
     def testReadCSVnoSpeed(self):
         tDept = dt.datetime(2014, 2, 1, 12, 0, 0)
         ifh = StringIO.StringIO(testCSV)
@@ -60,7 +67,7 @@ class RouteTest(unittest.TestCase):
         deltaT = dt.timedelta(0, 30 * 3600)
         course, speed, remT = r.advanceCurPos(deltaT)
         self.assertAlmostEqual(remT.total_seconds(), 0, places=1)
-        self.assertAlmostEqual(course, 105.650454424)
+        self.assertAlmostEqual(course, 105.650454424, places=6)
         self.assertAlmostEqual(speed, 2.05777778036)
         self.assertAlmostEqual(r.curPos.lat, -33.44927136)
 
@@ -76,7 +83,7 @@ class RouteTest(unittest.TestCase):
         # append waypoint and re-check arrival time and bbox
         r.rtePts.append(rtefcst.Route.RtePoint(objects.LatLon(-34.3, 154.3), 5))
         d, t = r.updateUtcArrival()
-        self.assertAlmostEqual(d, 358293.980918)
+        self.assertAlmostEqual(d, 358293.980918, places=2)
         deltaT = r.utcArrival - r.utcDept
         self.assertAlmostEqual(deltaT.total_seconds(), 163533.002444, places=1)
         r.updateBBox()
@@ -90,7 +97,7 @@ class RouteTest(unittest.TestCase):
         self.assertAlmostEqual(p.lat, -33.342428226)
         self.assertAlmostEqual(p.lon, 153.314862881)
         self.assertAlmostEqual(r.curPos.lat, r.rtePts[3].wp.lat)
-        self.assertAlmostEqual(course, 105.650454424)
+        self.assertAlmostEqual(course, 105.650454424, places=6)
         self.assertAlmostEqual(speed, 2.05777778036)
         self.assertRaises(rtefcst.TimeOverlapError, r.getPos, 
                 dt.datetime(2014, 3, 2, 12, 0, 0))
