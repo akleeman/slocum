@@ -19,14 +19,20 @@ class Wind(object):
         # the wind is headed
         self.dir = np.arctan2(-u, -v)
         # Here we bin according to the standard cardinal directions
-        bins = np.arange(-np.pi, np.pi, step=np.pi / 4)
-        names = ['S', 'SE', 'E', 'NE', 'N', 'NW', 'W', 'SW']
-        diffs = np.mod(self.dir - bins, 2 * np.pi)
-        ind = np.argmin(diffs)
-        if diffs[ind] > np.pi / 4:
-            self.readable = '-'
+        # 'S' is anything before first or after last bin
+        bins = np.linspace(-15 * np.pi/16, 15 * np.pi/16, 16)
+        names = ['S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'N', 'NNE',
+                'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S']
+        self.readable = names[bisect(bins, self.dir)]
+
+    def nautical_dir(self):
+        """
+        Returns self.dir mapped onto 0..2*pi range
+        """
+        if self.dir >= 0:
+            return self.dir
         else:
-            self.readable = names[ind]
+            return 2 * np.pi + self.dir
 
 
 class LatLon(object):
@@ -36,8 +42,20 @@ class LatLon(object):
     and lon in [0, 360].
     """
     def __init__(self, lat, lon):
-        self.lat = np.mod(lat + 90, 180) - 90
+        assert -90. <= lat <= 90. # in case anyone is crazy enough to sail
+                                  # there and causes floating-point issues
+        self.lat = lat
         self.lon = np.mod(lon, 360)
+
+    def nautical_latlon(self):
+        """
+        Returns a (lat, lon) tuple with lon in 'nautical' range of -180..180
+        (OpenCPN doesn't handle waypoints with lon > 180 correctly).
+        """
+        if self.lon > 180: 
+            return (self.lat, self.lon - 360)
+        else:
+            return (self.lat, self.lon)
 
     def copy(self):
         return LatLon(self.lat, self.lon)
