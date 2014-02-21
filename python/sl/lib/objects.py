@@ -37,7 +37,7 @@ class LatLon(object):
     """
     def __init__(self, lat, lon):
         self.lat = np.mod(lat + 90, 180) - 90
-        self.lon = np.mod(lon, 360)
+        self.lon = np.mod(lon + 180, 360) - 180
 
     def copy(self):
         return LatLon(self.lat, self.lon)

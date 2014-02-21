@@ -1,8 +1,10 @@
+import os
 import copy
 import zlib
 import numpy as np
 import netCDF4
 import datetime
+import logging
 
 from bisect import bisect
 from collections import OrderedDict
@@ -13,9 +15,25 @@ from sl.lib import objects, units
 
 from scidata import Dataset
 
+logger = logging.getLogger(os.path.basename(__file__))
+logger.setLevel(logging.DEBUG)
+
+# the beaufort scale in m/s
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
-                            33., 40., 47., 55., 63., 75.])
+                            33., 40., 47., 55., 63., 75.]) * 1.94384449
+# precipitation scale in kg.m-2.s-1
+_precip_scale = np.array([1e-8, 1., 5.]) / 3600.
 _direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
+# this pressure scale was derived by taking all the MSL pressures
+# from a forecast run and computing the quantiles (then rounding to
+# more friendly numbers).  We might find that we can add precision
+# by focusing the bins around pressures expected in sailing waters
+# rather than globally ... but for now this should work.
+_pressure_scale = np.array([97500., 99000., 99750,
+                            100500., 100700., 100850.,
+                            101000., 101150., 101350.,
+                            101600., 101900., 102150.,
+                            102500., 103100., 104000.])
 
 _variables = {conv.WIND_SPEED: {'dtype': np.float32,
                                 'dims': (conv.TIME, conv.LAT, conv.LON),
@@ -27,6 +45,16 @@ _variables = {conv.WIND_SPEED: {'dtype': np.float32,
                               'divs': _direction_bins,
                               'bits': 4,
                               'attributes': {conv.UNITS: 'radians'}},
+              conv.PRECIP: {'dtype': np.float32,
+                              'dims': (conv.TIME, conv.LAT, conv.LON),
+                              'divs': _precip_scale,
+                              'bits': 2,
+                              'attributes': {conv.UNITS: 'kg.m-2.s-1'}},
+              conv.PRESSURE: {'dtype': np.float32,
+                              'dims': (conv.TIME, conv.LAT, conv.LON),
+                              'divs': _pressure_scale,
+                              'bits': 4,
+                              'attributes': {conv.UNITS: 'Pa'}},
               conv.LON: {'dtype': np.float64,
                          'dims': (conv.LON, ),
                          'least_significant_digit': 2,
@@ -201,8 +229,8 @@ def tiny_unmasked(arr, bits=None, divs=None):
     # this certainly not the fastest implementation but should do.
     # note that a zero now means that the value was less than all div
     # and a value of n means it was larger than the nth div.
-    bins = np.maximum(np.minimum(np.array([bisect(divs, y)
-                                           for y in arr.flatten()]), n), 1)
+    bins = np.maximum(1, np.minimum(n, np.array([bisect(divs, y)
+                                                 for y in arr.flatten()])))
     bins = bins.astype(np.uint8)
     tiny = pack_ints(bins - 1, bits)
     tiny['divs'] = divs
@@ -348,12 +376,14 @@ def expand_small_time(packed_array, dtype, least_significant_digit):
 
 
 def check_beaufort(obj):
-    # these will fail if UWND or VWND are not variables
-    units.convert_units(obj[conv.UWND], 'knot')
-    units.convert_units(obj[conv.VWND], 'knot')
-    # double check
-    assert obj[conv.UWND].attributes[conv.UNITS] == 'knot'
-    assert obj[conv.VWND].attributes[conv.UNITS] == 'knot'
+    if conv.UWND in obj.variables:
+        units.convert_units(obj[conv.UWND], 'm/s')
+        # we need both UWND and VWND to do anything with wind
+        assert conv.VWND in obj.variables
+        units.convert_units(obj[conv.VWND], 'm/s')
+        # double check
+        assert obj[conv.UWND].attributes[conv.UNITS] == 'm/s'
+        assert obj[conv.VWND].attributes[conv.UNITS] == 'm/s'
     # make sure time is all integers
     np.testing.assert_array_equal(obj[conv.TIME].data.astype('int'),
                                   obj[conv.TIME])
@@ -367,8 +397,12 @@ def check_beaufort(obj):
     assert np.max(obj[conv.LON]) <= 180
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
+    if conv.PRECIP in obj.variables:
+        units.convert_units(obj[conv.PRECIP], 'kg.m-2.s-1')
+
 _variable_order = [conv.TIME, conv.LAT, conv.LON,
-                   conv.WIND_SPEED, conv.WIND_DIR]
+                   conv.WIND_SPEED, conv.WIND_DIR,
+                   conv.PRECIP, conv.PRESSURE]
 
 
 def to_beaufort(obj):
@@ -394,12 +428,14 @@ def to_beaufort(obj):
         small = small_array(obj[v].data[:].astype(_variables[v]['dtype']),
                             _variables[v]['least_significant_digit'])
         encoded_variables[v] = small['packed_array']
+
     # convert the wind speeds to a beaufort scale and store them
     wind = [objects.Wind(*x) for x in zip(uwnd[:].flatten(), vwnd[:].flatten())]
     speeds = np.array([x.speed for x in wind]).reshape(uwnd.shape)
     speeds = speeds.astype(_variables[conv.WIND_SPEED]['dtype'])
     tiny_wind = tiny_array(speeds, bits=4, divs=_beaufort_scale)
     encoded_variables[conv.WIND_SPEED] = tiny_wind['packed_array']
+
     # convert the direction to cardinal directions and store them
     directions = np.array([x.dir for x in wind]).reshape(uwnd.shape)
     directions.astype(_variables[conv.WIND_DIR]['dtype'])
@@ -408,26 +444,14 @@ def to_beaufort(obj):
     encoded_variables[conv.WIND_DIR] = tiny_direction['packed_array']
 
     if conv.PRECIP in obj.variables:
-        is_rainy = obj[conv.PRECIP].data > 2.# greater than 2 mm of rain
-        tiny_precip = tiny_bool(is_rainy, mask=mask)
-        tiny_precip['encoded_array'] = tiny_precip.pop('packed_array').tostring()
-        tiny_precip['attributes'] = dict(obj[conv.PRECIP].attributes)
-        tiny_precip['dims'] = dims
-        encoded_variables[conv.PRECIP] = tiny_precip
-
-    if conv.CLOUD in obj.variables:
-        tiny_cloud = tiny_array(obj[conv.CLOUD].data, bits=4, mask=mask)
-        tiny_cloud['encoded_array'] = tiny_cloud.pop('packed_array').tostring()
-        tiny_cloud['attributes'] = dict(obj[conv.CLOUD].attributes)
-        tiny_cloud['dims'] = dims
-        encoded_variables[conv.CLOUD] = tiny_cloud
+        tiny_precip = tiny_array(obj[conv.PRECIP].data, bits=2.,
+                                 divs=_precip_scale)
+        encoded_variables[conv.PRECIP] = tiny_precip['packed_array']
 
     if conv.PRESSURE in obj.variables:
-        tiny_pres = tiny_array(obj[conv.PRESSURE].data, bits=4, mask=mask)
-        tiny_pres['encoded_array'] = tiny_pres.pop('packed_array').tostring()
-        tiny_pres['attributes'] = dict(obj[conv.PRESSURE].attributes)
-        tiny_pres['dims'] = dims
-        encoded_variables[conv.PRESSURE] = tiny_pres
+        tiny_pres = tiny_array(obj[conv.PRESSURE].data, bits=4,
+                               divs=_pressure_scale)
+        encoded_variables[conv.PRESSURE] = tiny_pres['packed_array']
 
     def stringify(vname, packed):
         vid = _variable_order.index(vname)
@@ -437,11 +461,11 @@ def to_beaufort(obj):
         l0 = (l >> 8) & 0xff
         l1 = l & 0xff
         header = np.array([vid, l0, l1], dtype=np.uint8).tostring()
-        print vid, l
         return ''.join([header, packed])
 
     payload = ''.join(stringify(k, v) for k, v in encoded_variables.iteritems())
-    print "compressed to: ", len(zlib.compress(payload, 9)) / float(len(payload))
+    logger.debug("compression ratio: %f" %
+                 (len(zlib.compress(payload, 9)) / float(len(payload))))
     return zlib.compress(payload, 9)
 
 
@@ -450,7 +474,6 @@ def unstring_beaufort(payload):
     while len(payload):
         vid, l0, l1 = np.fromstring(payload[:3], dtype=np.uint8)
         vlen = (l0 << 8) + l1
-        print vid, vlen
         packed = payload[3:(vlen + 3)]
         payload = payload[(vlen + 3):]
         vname = _variable_order[vid]
@@ -490,9 +513,8 @@ def from_beaufort(payload):
     vwnd = -np.cos(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
     uwnd = -np.sin(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
     out.create_variable(conv.UWND, dims=dims, data=uwnd,
-                        attributes={conv.UNITS: 'knot'})
+                        attributes={conv.UNITS: 'm/s'})
     out.create_variable(conv.VWND, dims=dims, data=vwnd,
-                        attributes={conv.UNITS: 'knot'})
-    out = out.select(conv.UWND, conv.VWND)
+                        attributes={conv.UNITS: 'm/s'})
     return units.normalize_variables(out)
 

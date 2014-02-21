@@ -57,17 +57,13 @@ def get_forecast(query, path=None):
     ur = objects.LatLon(query['domain']['N'], query['domain']['E'])
     ur, ll = poseidon.ensure_corners(ur, ll, expand=False)
     variables = {}
-    if 'wind' in query['vars']:
-        variables['U-component_of_wind_height_above_ground'] = conv.UWND
-        variables['V-component_of_wind_height_above_ground'] = conv.VWND
-    else:
-        raise saildocs.BadQuery("Currently only support wind forecasts")
-#     if 'rain' in query['vars'] or 'precip' in query['vars']:
-#         vars['Total_precipitation'] = conv.PRECIP
-#     if 'cloud' in query['vars']:
-#         vars['Total_cloud_cover'] = conv.CLOUD
-#     if 'pressure' in query['vars']:
-#         vars['Pressure'] = 'mslp'
+    if len(set(['wind']).intersection(query['vars'])):
+        variables['u-component_of_wind_height_above_ground'] = conv.UWND
+        variables['v-component_of_wind_height_above_ground'] = conv.VWND
+    if len(set(['rain', 'precip']).intersection(query['vars'])):
+        variables['Precipitation_rate_surface_Mixed_intervals_Average'] = conv.PRECIP
+    if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
+        variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
 
     # Here we do some crude caching which
     # allows the user to specify a path to a local
@@ -78,7 +74,7 @@ def get_forecast(query, path=None):
         fcst = fcst.stored_to(backends.InMemoryDataStore())
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
-        fcst = poseidon.gfs(ll, ur)
+        fcst = poseidon.gfs(ll, ur, variables=variables)
         if path is not None:
             fcst.dump(path)
 

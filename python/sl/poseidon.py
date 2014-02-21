@@ -59,23 +59,38 @@ def latest(latest_html_url):
     return os.path.join('http://motherlode.ucar.edu/thredds/dodsC', dataset)
 
 
-def subset(nc, ll_crnr, ur_crnr, slicers=None):
+def subset(nc, north, south, west, east, slicers=None):
     """
     Given a forecast (nc) and corners of a spatial subset
     this function returns the corresponding subset of data
     that contains the spatial region.
     """
-    # This actually expans the corners by one degree
-    # to make sure we include the requested corners.
-    ur, ll = ensure_corners(ur_crnr, ll_crnr, expand=False)
+    assert north > south
+    assert east > west or (east % 360) > (west % 360)
     # determine which slice we need for latitude
     lats = nc.variables['lat'][:]
-    inds = np.nonzero(np.logical_and(lats >= ll.lat, lats <= ur.lat))[0]
+    inds = np.nonzero(np.logical_and(lats >= south, lats <= north))[0]
     lat_slice = slice(np.min(inds), np.max(inds) + 1)
-    # determine which slice we need for longitude
+    # determine which slice we need for longitude.  GFS uses longitudes
+    # between 0 and 360, but slocum uses -180 to 180.  Depending on if
+    # the bounding box stradles greenwich or the dateline we want to
+    # prefer one or the other interpretations.
     lons = nc.variables['lon'][:]
-    inds = np.nonzero(np.logical_and(lons >= ll.lon, lons <= ur.lon))[0]
+    if east < 0 and west > 0.:
+        east = east % 360
+        west = west % 360
+    else:
+        lons = np.mod(lons + 180, 360) - 180
+    inds = np.nonzero(np.logical_and(lons >= east, lons <= west))[0]
     lon_slice = slice(np.min(inds), np.max(inds) + 1)
+    assert np.all(lons[lon_slice] >= west)
+    assert np.all(lons[lon_slice] <= east)
+    if east >= 0 and west < 0:
+        # sorry brits, this is going to take a while
+        rhs = subset(nc, north, south, 0., east, slicers=slicers)
+        lhs = subset(nc, north, south, west, 0., slicers=slicers)
+        # TODO, finish splicing objects.
+        raise ValueError("sorry brits.")
     # add lat/lon slicers to any additional slicers
     slicers = {} if slicers is None else slicers
     slicers.update({'lat': lat_slice, 'lon': lon_slice})
@@ -121,14 +136,15 @@ def gefs(ll, ur):
     return fcst
 
 
-def gfs(ll, ur):
+def gfs(ll, ur, variables=None):
     """
     Global Forecast System forecast object
     """
-    vars = {'u-component_of_wind_height_above_ground': conv.UWND,
-            'v-component_of_wind_height_above_ground': conv.VWND,}
+    if variables is None:
+        variables = {'u-component_of_wind_height_above_ground': conv.UWND,
+                     'v-component_of_wind_height_above_ground': conv.VWND,}
     fcst = forecast('gfs')
-    fcst = fcst.select(*vars.keys())
+    fcst = fcst.select(*variables.keys())
     # subset out the 10m wind height
     logger.debug("Selected out variables")
     ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
@@ -138,7 +154,7 @@ def gfs(ll, ur):
     # Remove the height above ground dimension
     fcst = copy.deepcopy(fcst)
     fcst = fcst.squeeze(dimension='height_above_ground4')
-    renames = vars
+    renames = variables
     renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
     renames.update({'lat': conv.LAT,
                     'lon': conv.LON})
