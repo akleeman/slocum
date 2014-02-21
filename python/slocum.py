@@ -17,7 +17,8 @@ logger.addHandler(file_handler)
 console_handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(console_handler)
 
-from sl.lib import emaillib, griblib, tinylib
+from sl import windbreaker
+from sl.lib import griblib, tinylib
 
 
 def handle_grib(args):
@@ -32,7 +33,7 @@ def handle_email(args):
     a saildocs-like request and replying to the sender with
     an packed ensemble forecast.
     """
-    emaillib.windbreaker(args.input.read(), args.ncdf, output=args.output)
+    windbreaker.windbreaker(args.input.read(), args.ncdf, output=args.output)
 
 _task_handler = {'email': handle_email,
                  'grib': handle_grib}

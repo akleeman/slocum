@@ -8,16 +8,18 @@ from __future__ import with_statement
 import os
 import copy
 import numpy as np
-import logging
 import urllib
 import urllib2
+import logging
 import urlparse
 
 from BeautifulSoup import BeautifulSoup
 
-from polyglot import Dataset
+from scidata import Dataset, open_dataset
 
-from sl.lib import conventions, units
+import sl.lib.conventions as conv
+
+from sl.lib import units
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -92,30 +94,30 @@ def forecast(source):
     """
     latest_opendap = latest(_sources[source])
     logger.debug(latest_opendap)
-    return Dataset(latest_opendap)
+    return open_dataset(latest_opendap)
 
 
 def gefs(ll, ur):
     """
     Global Ensemble Forecast System forecast object
     """
-    vars = {'u-component_of_wind_height_above_ground':conventions.UWND,
-            'v-component_of_wind_height_above_ground':conventions.VWND,}
+    vars = {'u-component_of_wind_height_above_ground': conv.UWND,
+            'v-component_of_wind_height_above_ground': conv.VWND,}
     fcst = forecast('gefs')
-    fcst = fcst.select(vars, view=True)
+    fcst = fcst.select(*vars.keys())
     fcst = subset(fcst, ll, ur)
     renames = vars
-    renames.update(dict((d, conventions.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
-    renames.update(dict((d, conventions.TIME) for d in fcst.dimensions if d.startswith('time')))
-    renames.update({'lat': conventions.LAT,
-                    'lon': conventions.LON})
+    renames.update(dict((d, conv.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
+    renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
+    renames.update({'lat': conv.LAT,
+                    'lon': conv.LON})
     fcst = fcst.renamed(renames)
     new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
     new_units = new_units.replace('T', ' ')
     new_units = new_units.replace('Z', '')
     fcst['time'].attributes['units'] = new_units
-    units.normalize_units(fcst[conventions.UWND])
-    units.normalize_units(fcst[conventions.VWND])
+    units.normalize_units(fcst[conv.UWND])
+    units.normalize_units(fcst[conv.VWND])
     return fcst
 
 
@@ -123,27 +125,29 @@ def gfs(ll, ur):
     """
     Global Forecast System forecast object
     """
-    vars = {'u-component_of_wind_height_above_ground': conventions.UWND,
-            'v-component_of_wind_height_above_ground': conventions.VWND,}
+    vars = {'u-component_of_wind_height_above_ground': conv.UWND,
+            'v-component_of_wind_height_above_ground': conv.VWND,}
     fcst = forecast('gfs')
-    fcst = fcst.select(vars, view=True)
+    fcst = fcst.select(*vars.keys())
     # subset out the 10m wind height
+    logger.debug("Selected out variables")
     ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
+    logger.debug("found 10m height")
     fcst = subset(fcst, ll, ur, slicers={'height_above_ground4': slice(ind, ind + 1)})
+    logger.debug("subsetted to the domain")
     # Remove the height above ground dimension
     fcst = copy.deepcopy(fcst)
     fcst = fcst.squeeze(dimension='height_above_ground4')
     renames = vars
-    renames.update(dict((d, conventions.TIME) for d in fcst.dimensions if d.startswith('time')))
-    renames.update({'lat': conventions.LAT,
-                    'lon': conventions.LON})
+    renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
+    renames.update({'lat': conv.LAT,
+                    'lon': conv.LON})
     fcst = fcst.renamed(renames)
     new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
     new_units = new_units.replace('T', ' ')
     new_units = new_units.replace('Z', '')
     fcst['time'].attributes['units'] = new_units
-    units.normalize_units(fcst[conventions.UWND])
-    units.normalize_units(fcst[conventions.VWND])
+    fcst = units.normalize_variables(fcst)
     return fcst
 
 

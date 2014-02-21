@@ -262,7 +262,7 @@ def set_time(source, grib):
     if grib_time_code is None:
         raise ValueError("Unexpected unit")
     gribapi.grib_set_long(grib, 'unitOfTimeRange', 1)
-    vt = np.asscalar(source[conv.TIME][:])
+    vt = np.asscalar(source[conv.TIME].data)
     assert int(vt) == vt
     gribapi.grib_set_long(grib, 'P2', vt)
     # forecast is valid at reference + P2
@@ -287,20 +287,22 @@ def set_grid(source, grib):
     gribapi.grib_set_long(grib, "Ni", source.dimensions[conv.LON])
     gribapi.grib_set_long(grib, "Nj", source.dimensions[conv.LAT])
 
-    lon = source[conv.LON]
-    lat = source[conv.LAT]
+    lon = source[conv.LON].data
+    lat = source[conv.LAT].data
+    assert np.unique(np.diff(lon)).size == 1
+    assert np.unique(np.diff(lat)).size == 1
     assert lon.ndim == 1
     assert lat.ndim == 1
     gribapi.grib_set_long(grib, "jScansPositively", 1)
     gribapi.grib_set_long(grib, "latitudeOfFirstGridPoint",
-                          int(np.min(lat.data[:]) * 1000))
+                          int(np.min(lat) * 1000))
     gribapi.grib_set_long(grib, "latitudeOfLastGridPoint",
-                          int(np.max(lat.data[:]) * 1000))
+                          int(np.max(lat) * 1000))
     gribapi.grib_set_long(grib, "iScansPositively", 1)
     gribapi.grib_set_long(grib, "longitudeOfFirstGridPoint",
-                          int((lon[0] % 360) * 1000))
+                          int(lon[0] * 1000))
     gribapi.grib_set_long(grib, "longitudeOfLastGridPoint",
-                          int((lon[-1] % 360) * 1000))
+                          int(lon[-1] * 1000))
 
 
 def get_varible_name(source):
@@ -371,7 +373,7 @@ def set_data(source, grib):
 
 def save(source, target, append=False, sample_file=_sample_file):
     """
-    Takes a polyglot dataset (source) and writes its contents
+    Takes a dataset (source) and writes its contents
     as grib 1 to file-like target.  Grib 1 is used (instead
     of grib 2) because some older forecast visualization
     software can't read grib 2.
@@ -381,7 +383,7 @@ def save(source, target, append=False, sample_file=_sample_file):
 
     Parameters
     ----------
-    source : polyglot.Dataset
+    source : Dataset
         A netcdf-like file holding the dataset we want to write
         as grib.  This must contain time, longitude and latitude
         coordinates in order to infer the grib grid and time params
@@ -400,7 +402,6 @@ def save(source, target, append=False, sample_file=_sample_file):
         grib_file = target
     else:
         raise ValueError("Can only save grib to filename or writable")
-
     if not conv.LAT in source.variables or not conv.LON in source.variables:
         raise ValueError("Did not find either latitude or longitude.")
     if source[conv.LAT].ndim != 1 or source[conv.LON].ndim != 1:
@@ -408,11 +409,24 @@ def save(source, target, append=False, sample_file=_sample_file):
     if not conv.TIME in source.variables:
         raise ValueError("Expected time coordinate")
     # sort the lats and lons
-    source = source.take(np.argsort(source['latitude'].data), 'latitude')
-    source = source.take(np.argsort(source['longitude'].data), 'longitude')
+    source = source.take(np.argsort(source[conv.LAT].data), 'latitude')
+    lons = source[conv.LON].data
+    if np.any(np.abs(np.diff(lons)) > 180.):
+        # the latitudes must cross the dateline since we only allow 180
+        # degree wide bounding boxes, and there is more than a 180 degree
+        # difference between longitudes.  Instead we try converting to
+        # 0 to 360 degree longitudes before sorting.
+        lons = np.mod(lons, 360)
+        if np.any(np.abs(np.diff(lons)) > 180.):
+            # TODO: I'm sure theres a way to deal with arbitrary longitude
+            # specifications for global data ... but its not a high priority
+            # so that will wait for later.
+            raise ValueError("Longitudes span more than 180 degrees and the dateline?")
+    source[conv.LON].data[:] = lons
+    source = source.take(np.argsort(lons), 'longitude')
     # iterate over variables
     for v in source.noncoordinates.keys():
-        single_var = source.select([v])
+        single_var = source.select(v)
         # then iterate over time slices
         for t, obj in single_var.iterator(conv.TIME):
             # Save this slice to the grib file

@@ -4,7 +4,7 @@ import unittest
 
 from sl.lib import tinylib
 
-from polyglot import Dataset
+from scidata import Dataset
 
 
 class TinylibTest(unittest.TestCase):
