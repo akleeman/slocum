@@ -17,7 +17,7 @@ For a better explanation send an email to info@ensembleweather.com
 """
 
 _supported_commands = ['send']
-_supported_variables = ['wind']
+_supported_variables = ['wind', 'rain', 'press']
 _supported_models = ['gfs']
 
 _send_usage = """

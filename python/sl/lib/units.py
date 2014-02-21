@@ -2,44 +2,29 @@ import numpy as np
 
 import sl.lib.conventions as conv
 
+_precip_rate = {'mm/hr': 3600.,
+                'kg.m-2.s-1': 1.,
+                'kg m-2 s-1': 1.}
+
 _length = {'m': 3.2808399,
            'ft': 1.0}
-_length_unit = 'm'
 
 _speed = {'m/s': 1.94384449,
           'm s-1': 1.94384449,
           'knot': 1.0,
           'mph': 0.868976242}
-_speed_unit = 'm/s'
 
 _longitude = {'degrees_east': 1.,
               'degrees_west': -1.}
-_longitude_unit = 'degrees_east'
 
 _latitude = {'degrees_north': 1.,
               'degrees_south': -1.}
-_latitude_unit = 'degrees_north'
 
-_variables = {'10 metre U wind component': conv.UWND,
-              '10 metre V wind component': conv.VWND,
-              'U-component_of_wind_height_above_ground': conv.UWND,
-              'U-component of wind': conv.UWND,
-              'V-component_of_wind_height_above_ground': conv.VWND,
-              'V-component of wind': conv.VWND,
-              'Mean sea level pressure': conv.PRESSURE,
-              'Significant height of combined wind waves and swell': 'combined_sea_height',
-              'Signific.height,combined wind waves+swell': 'combined_sea_height',
-              'Direction of wind waves': 'wave_dir',
-              'Significant height of wind waves':  'wave_height',
-              'Mean period of wind waves':  'wave_period',
-              'Direction of swell waves':  'swell_dir',
-              'Significant height of swell waves':  'swell_height',
-              'Mean period of swell waves':  'swell_period',
-              'Primary wave direction':  'primary_wave_dir',
-              'Primary wave mean period':  'primary_wave_period',
-              'Secondary wave direction':  'secondary_wave_dir',
-              'Secondary wave mean period':  'secondary_wave_period',
-              }
+_pressure = {'Pa': 1.,
+             'kPa': 1./1000.,
+             'kg m-1 s-2': 1.,
+             'atm': 1./101325.,
+             'bar': 1e-5}
 
 
 def transform_longitude(x):
@@ -52,14 +37,16 @@ def validate_angle(x):
     return x
 
 
-def validate_length(x):
+def validate_positive(x):
     assert np.all(x > 0.)
     return x
 
 _all_units = [(_speed, 'm/s', None),
-              (_length, 'm', validate_length),
+              (_length, 'm', validate_positive),
               (_longitude, 'degrees_east', transform_longitude),
-              (_latitude, 'degrees_north', validate_angle)]
+              (_latitude, 'degrees_north', validate_angle),
+              (_precip_rate, 'kg.m-2.s-1', validate_positive),
+              (_pressure, 'Pa', None)]
 
 
 def _convert(v, possible_units, cur_units, new_units, validate=None):
@@ -78,7 +65,7 @@ def convert_units(v, new_units):
     # convert the units
     if conv.UNITS in v.attributes:
         cur_units = v.attributes[conv.UNITS]
-        for (possible_units, default, validate) in _all_units:
+        for (possible_units, _, _) in _all_units:
             if cur_units in possible_units:
                 return _convert(v, possible_units, cur_units, new_units)
     else:
@@ -109,6 +96,5 @@ def normalize_units(v):
 
 def normalize_variables(dataset):
     for k, v in dataset.variables.iteritems():
-        print k
         normalize_units(v)
     return dataset
