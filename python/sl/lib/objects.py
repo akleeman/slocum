@@ -62,7 +62,7 @@ class NautAngle(float):
     is_south_od(self, other)    - Same logic as for east/west
 
                                   All four comparison methods return True is
-                                  self and other have the same value. 
+                                  self and other have the same value.
 
     is_almost_equal(self, other, places=6)
                                 - True if self is within places digits of other
@@ -78,7 +78,7 @@ class NautAngle(float):
 
     __add__     - Returns (self = other) as a NautAngle object.
     __sub__     - Same as x.distance_to(y)
-    
+
     """
 
     @staticmethod
@@ -107,7 +107,7 @@ class NautAngle(float):
     def __str__(self):
         whole = int(self.degrees)
         minutes = (abs(self.degrees) - abs(whole)) * 60
-        return "%d %09.6f" % (whole, minutes)
+        return "%d %07.4f" % (whole, minutes)
 
     def __repr__(self):
         return str(np.degrees(self.real))
@@ -126,10 +126,9 @@ class NautAngle(float):
         For longitude comparisons: Returns True if - at any given latitude -
         one has to travel east from other to self along the shortest route
         (e.g. 160 deg is east of 150 deg and -170 deg is east of 170 deg).
-        True also if self == other, False oterwise.
+        False otherwise.
         """
-        diff = self.real - NautAngle.normalize(other)
-        if diff % (2 * np.pi) <= np.pi:
+        if self.distance_to(other).real > 0:
             return True
         else:
             return False
@@ -139,10 +138,9 @@ class NautAngle(float):
         For longitude comparisons: Returns True if - at any given latitude -
         one has to travel west from other to self along the shortest route
         (e.g. 20 deg is west of 150 deg and 170 deg is west of -170 deg).
-        True also if self == other, False oterwise.
+        False otherwise.
         """
-        diff = self.real - NautAngle.normalize(other)
-        if diff % (2 * np.pi) >= np.pi:
+        if self.distance_to(other).real < 0:
             return True
         else:
             return False
@@ -155,21 +153,30 @@ class NautAngle(float):
         return abs(diff) < 10**-places
 
     def is_north_of(self, other):
-        return self.is_east_of(other)
+        dist = self.distance_to(other).real
+        if dist > 0:
+            return True
+        elif dist < 0 and self.real > other.real:
+            # 90,-90: dist wraps to -180
+            return True
+        else:
+            return False
 
     def is_south_of(self, other):
-        return self.is_west_of(other)
+        dist = self.distance_to(other).real
+        if dist < 0:
+            return True
+        else:
+            return False
 
     def __lt__(self, other):
-        diff = self.real - NautAngle.normalize(other)
-        return diff != 0 and self.is_west_of(other)
+        return self.is_west_of(other)
 
     def __gt__(self, other):
-        diff = self.real - NautAngle.normalize(other)
-        return diff != 0 and self.is_east_of(other)
+        return self.is_east_of(other)
 
     def __le__(self, other):
-        return self.is_west_of(other)
+        return self.is_west_of(other) or self.is_almost_equal(other)
 
     def __eq__(self, other):
         return self.is_almost_equal(other)
@@ -178,7 +185,7 @@ class NautAngle(float):
         return not self.is_almost_equal(other)
 
     def __ge__(self, other):
-        return self.is_east_of(other)
+        return self.is_east_of(other) or self.is_almost_equal(other)
 
     def __add__(self, other):
         return NautAngle(self.real + float(other))
@@ -236,7 +243,7 @@ class LatLon(object):
         Returns a (lat, lon) tuple with lon in 'nautical' range of -180..180
         (OpenCPN doesn't handle waypoints with lon > 180 correctly).
         """
-        if self.lon > 180: 
+        if self.lon > 180:
             return (self.lat, self.lon - 360)
         else:
             return (self.lat, self.lon)
