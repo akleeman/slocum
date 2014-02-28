@@ -1,10 +1,9 @@
 import sys
+import xray
 import numpy as np
 import unittest
 
 from sl.lib import tinylib
-
-from scidata import Dataset
 
 
 class TinylibTest(unittest.TestCase):
@@ -44,6 +43,15 @@ class TinylibTest(unittest.TestCase):
         self.assertEqual(original_array.shape, recovered.shape)
         self.assertLessEqual(np.max(np.abs(original_array - recovered)),
                              np.max(np.diff(tiny['divs'])))
+
+        precip = np.random.normal(size=3742).astype('float32')
+        precip[precip < 0] = 0.
+        tiny = tinylib.tiny_array(precip, divs=np.array([0., 1e-8, 0.5, 10.]))
+        recovered = tinylib.expand_array(**tiny)
+        self.assertEqual(precip.shape, recovered.shape)
+        self.assertLessEqual(np.max(np.abs(precip - recovered)),
+                             np.max(np.diff(tiny['divs'])))
+
 
     def test_pack_unpack(self):
         # test packing 2 bit ints of odd length
@@ -87,39 +95,48 @@ class TinylibTest(unittest.TestCase):
                                    atol=np.power(10, -least_significant_digit))
 
     def test_small_time(self):
-        ds = Dataset()
-        ds.create_coordinate('time', np.arange(10),
-                    attributes={'units': 'hours since 2013-12-12 12:00:00'})
+        ds = xray.Dataset()
+
+        ds['time'] = xray.XArray(('time'), np.arange(10),
+                                 attributes={'units': 'hours since 2013-12-12 12:00:00'})
         sm_time = tinylib.small_time(ds['time'])
         ret = tinylib.expand_small_time(**sm_time)
         self.assertTrue(np.all(ret[0] == ds['time'].data))
         self.assertTrue(ret[1] == ds['time'].attributes['units'])
 
     def test_beaufort(self):
-        ds = Dataset()
-        ds.create_coordinate('time', np.arange(10),
-                    attributes={'units': 'hours since 2013-12-12 12:00:00'})
-        ds.create_coordinate('longitude', data=np.arange(235., 240.),
-                             attributes={'units': 'degrees east'})
-        ds.create_coordinate('latitude', data=np.arange(35., 40.),
-                             attributes={'units': 'degrees north'})
+        np.random.seed(1982)
+        ds = xray.Dataset()
+
+        ds['time'] = xray.XArray(('time'), data=np.arange(10),
+                           attributes={'units': 'hours since 2013-12-12 12:00:00'})
+        ds['longitude'] = xray.XArray(('longitude'),
+                          data=np.mod(np.arange(235., 240.) + 180, 360) - 180,
+                          attributes={'units': 'degrees east'})
+        ds['latitude'] = xray.XArray('latitude',
+                          data=np.arange(35., 40.),
+                          attributes={'units': 'degrees north'})
+
         shape = tuple([ds.dimensions[x]
                        for x in ['time', 'longitude', 'latitude']])
-        diffs = np.diff(tinylib._beaufort_scale)
-        mids = tinylib._beaufort_scale[:-1] + 0.5 * diffs
+        mids = 0.5 * (tinylib._beaufort_scale[1:] +
+                      tinylib._beaufort_scale[:-1])
         speeds = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
         speeds = speeds.reshape(shape)
         dirs = np.arange(-np.pi, np.pi, step=np.pi / 8) + np.pi / 16
         dirs = dirs[np.random.randint(mids.size, size=10 * 5 * 5)]
         dirs = dirs.reshape(shape)
         uwnd = - speeds * np.sin(dirs)
-        uwnd = uwnd.reshape(shape)
+        uwnd = uwnd.reshape(shape).astype(np.float32)
         vwnd = - speeds * np.cos(dirs)
-        vwnd = vwnd.reshape(shape)
-        ds.create_variable('uwnd', dims=('time', 'longitude', 'latitude'),
-                           data=uwnd, attributes={'units': 'knot'})
-        ds.create_variable('vwnd', dims=('time', 'longitude', 'latitude'),
-                           data=vwnd, attributes={'units': 'knot'})
+        vwnd = vwnd.reshape(shape).astype(np.float32)
+
+        ds['uwnd'] = xray.XArray(('time', 'longitude', 'latitude'),
+                                 data=uwnd,
+                                 attributes={'units': 'm/s'})
+        ds['vwnd'] = xray.XArray(('time', 'longitude', 'latitude'),
+                                 data=vwnd,
+                                 attributes={'units': 'm/s'})
 
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
@@ -127,9 +144,39 @@ class TinylibTest(unittest.TestCase):
                                    rtol=1e-4)
         np.testing.assert_allclose(actual['vwnd'].data, ds['vwnd'].data,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['wind_speed'].data, speeds,
+
+        # now add precip and test everything
+        mids = 0.5 * (tinylib._precip_scale[1:] + tinylib._precip_scale[:-1])
+        precip = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
+
+        ds['precip'] = (('time', 'longitude', 'latitude'),
+                        precip.reshape(shape),
+                        {'units': 'kg.m-2.s-1'})
+        beaufort = tinylib.to_beaufort(ds)
+        actual = tinylib.from_beaufort(beaufort)
+        np.testing.assert_allclose(actual['uwnd'].data, ds['uwnd'].data,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['wind_dir'].data, dirs,
+        np.testing.assert_allclose(actual['vwnd'].data, ds['vwnd'].data,
+                                   rtol=1e-4)
+        np.testing.assert_allclose(actual['precip'].data, ds['precip'].data,
+                                   rtol=1e-4)
+
+        # add pressure and test everything
+        mids = 0.5 * (tinylib._pressure_scale[1:] +
+                      tinylib._pressure_scale[:-1])
+        pres = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
+        ds['pressure'] = (('time', 'longitude', 'latitude'),
+                           pres.reshape(shape),
+                           {'units': 'Pa'})
+        beaufort = tinylib.to_beaufort(ds)
+        actual = tinylib.from_beaufort(beaufort)
+        np.testing.assert_allclose(actual['uwnd'].data, ds['uwnd'].data,
+                                   rtol=1e-4)
+        np.testing.assert_allclose(actual['vwnd'].data, ds['vwnd'].data,
+                                   rtol=1e-4)
+        np.testing.assert_allclose(actual['precip'].data, ds['precip'].data,
+                                   rtol=1e-4)
+        np.testing.assert_allclose(actual['pressure'].data, ds['pressure'].data,
                                    rtol=1e-4)
 
 if __name__ == "__main__":

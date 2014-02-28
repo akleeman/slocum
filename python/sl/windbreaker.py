@@ -6,7 +6,7 @@ import datetime
 
 from cStringIO import StringIO
 
-from scidata import open_dataset, backends
+from xray import open_dataset, backends
 
 from sl import poseidon
 from sl.lib import conventions as conv
@@ -57,17 +57,13 @@ def get_forecast(query, path=None):
     ur = objects.LatLon(query['domain']['N'], query['domain']['E'])
     ur, ll = poseidon.ensure_corners(ur, ll, expand=False)
     variables = {}
-    if 'wind' in query['vars']:
-        variables['U-component_of_wind_height_above_ground'] = conv.UWND
-        variables['V-component_of_wind_height_above_ground'] = conv.VWND
-    else:
-        raise saildocs.BadQuery("Currently only support wind forecasts")
-#     if 'rain' in query['vars'] or 'precip' in query['vars']:
-#         vars['Total_precipitation'] = conv.PRECIP
-#     if 'cloud' in query['vars']:
-#         vars['Total_cloud_cover'] = conv.CLOUD
-#     if 'pressure' in query['vars']:
-#         vars['Pressure'] = 'mslp'
+    if len(set(['wind']).intersection(query['vars'])):
+        variables['u-component_of_wind_height_above_ground'] = conv.UWND
+        variables['v-component_of_wind_height_above_ground'] = conv.VWND
+    if len(set(['rain', 'precip']).intersection(query['vars'])):
+        variables['Precipitation_rate_surface_Mixed_intervals_Average'] = conv.PRECIP
+    if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
+        variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
 
     # Here we do some crude caching which
     # allows the user to specify a path to a local
@@ -75,39 +71,39 @@ def get_forecast(query, path=None):
     # poseidon.
     if path is not None and os.path.exists(path):
         fcst = open_dataset(path)
-        fcst = fcst.stored_to(backends.InMemoryDataStore())
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
-        fcst = poseidon.gfs(ll, ur)
+        fcst = poseidon.gfs(ll, ur, variables=variables)
         if path is not None:
             fcst.dump(path)
 
     # extract all the closest latitudes
     lats = regular_grid(query['domain']['S'], query['domain']['N'],
                         delta=query['grid_delta'][0])
-    lat_inds = arg_closest(lats, fcst['latitude'].data[:])
+    lat_inds = arg_closest(lats, fcst['latitude'].data.values)
     if np.any((fcst['latitude'].data[lat_inds] - lats) > 0.05):
         raise saildocs.BadQuery("Requested latitudes not found in the forecast.")
-    fcst = fcst.take(np.array(lat_inds).astype('int'), 'latitude')
+    fcst = fcst.indexed_by(latitude=lat_inds)
     # extract all the closest longitudes
     lon_range = np.mod(query['domain']['E'] - query['domain']['W'], 360)
     lon_count = lon_range / query['grid_delta'][1] + 1
     lons = query['domain']['W'] + np.arange(lon_count) * query['grid_delta'][1]
     lons = np.mod(lons + 180., 360.) - 180.
-    fcst_lons = np.mod(fcst['longitude'].data[:] + 180., 360.) - 180.
+    fcst_lons = np.mod(fcst['longitude'].data.values + 180., 360.) - 180.
     lon_inds = arg_closest(lons, fcst_lons)
     if np.any((fcst_lons[lon_inds] - lons) > 0.05):
         raise saildocs.BadQuery("Requested longitudes not found in the forecast.")
-    fcst = fcst.take(np.array(lon_inds).astype('int'), 'longitude')
+    fcst = fcst.indexed_by(longitude=lon_inds)
     # next step is parsing out the times
     # we assume that the forecast units are in hours
-    assert fcst[conv.TIME].attributes[conv.UNITS].startswith('hour')
-    # we also assume the first time is the origin
-    assert fcst[conv.TIME][0] == 0.
-    time_inds = arg_closest(query['hours'], fcst['time'].data[:])
-    if np.any((fcst['time'].data[time_inds] - query['hours']) > 0.01):
+    dates = fcst['time'].data.to_pydatetime()
+    ref_time = dates[0]
+    query_times = np.array([ref_time + datetime.timedelta(hours=x)
+                            for x in query['hours']])
+    time_inds = arg_closest(query_times, dates)
+    fcst = fcst.indexed_by(time=time_inds)
+    if np.any((dates[time_inds] - query_times) >= datetime.timedelta(hours=1)):
         raise saildocs.BadQuery("Requested times not found in the forecast.")
-    fcst = fcst.take(time_inds.astype('int'), 'time')
     return fcst
 
 
