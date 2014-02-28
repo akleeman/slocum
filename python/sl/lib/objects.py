@@ -86,7 +86,11 @@ class NautAngle(float):
         return np.mod(rad + np.pi, 2 * np.pi) - np.pi
 
     def __new__(cls, angle):
-        if type(angle) == str:
+        try:
+            strArg = isinstance(angle, basestring)  # Python 2
+        except NameError:
+            strArg = isinstance(angle, str)         # Python 3
+        if strArg:
             name = 'N'
             for s in "NSEW":
                 if s in angle.upper():
