@@ -15,7 +15,7 @@ import urlparse
 
 from BeautifulSoup import BeautifulSoup
 
-from scidata import Dataset, open_dataset
+from xray import Dataset, open_dataset
 
 import sl.lib.conventions as conv
 

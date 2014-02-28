@@ -1,10 +1,9 @@
 import sys
+import xray
 import numpy as np
 import unittest
 
 from sl.lib import tinylib
-
-from scidata import Dataset
 
 
 class TinylibTest(unittest.TestCase):
@@ -96,9 +95,10 @@ class TinylibTest(unittest.TestCase):
                                    atol=np.power(10, -least_significant_digit))
 
     def test_small_time(self):
-        ds = Dataset()
-        ds.create_coordinate('time', np.arange(10),
-                    attributes={'units': 'hours since 2013-12-12 12:00:00'})
+        ds = xray.Dataset()
+
+        ds['time'] = xray.XArray(('time'), np.arange(10),
+                                 attributes={'units': 'hours since 2013-12-12 12:00:00'})
         sm_time = tinylib.small_time(ds['time'])
         ret = tinylib.expand_small_time(**sm_time)
         self.assertTrue(np.all(ret[0] == ds['time'].data))
@@ -106,14 +106,17 @@ class TinylibTest(unittest.TestCase):
 
     def test_beaufort(self):
         np.random.seed(1982)
-        ds = Dataset()
-        ds.create_coordinate('time', np.arange(10),
-                    attributes={'units': 'hours since 2013-12-12 12:00:00'})
-        ds.create_coordinate('longitude',
-                             data=np.mod(np.arange(235., 240.) + 180, 360) - 180,
-                             attributes={'units': 'degrees east'})
-        ds.create_coordinate('latitude', data=np.arange(35., 40.),
-                             attributes={'units': 'degrees north'})
+        ds = xray.Dataset()
+
+        ds['time'] = xray.XArray(('time'), data=np.arange(10),
+                           attributes={'units': 'hours since 2013-12-12 12:00:00'})
+        ds['longitude'] = xray.XArray(('longitude'),
+                          data=np.mod(np.arange(235., 240.) + 180, 360) - 180,
+                          attributes={'units': 'degrees east'})
+        ds['latitude'] = xray.XArray('latitude',
+                          data=np.arange(35., 40.),
+                          attributes={'units': 'degrees north'})
+
         shape = tuple([ds.dimensions[x]
                        for x in ['time', 'longitude', 'latitude']])
         mids = 0.5 * (tinylib._beaufort_scale[1:] +
@@ -127,12 +130,13 @@ class TinylibTest(unittest.TestCase):
         uwnd = uwnd.reshape(shape).astype(np.float32)
         vwnd = - speeds * np.cos(dirs)
         vwnd = vwnd.reshape(shape).astype(np.float32)
-        ds.create_variable('uwnd', dims=('time', 'longitude', 'latitude'),
-                           data=uwnd,
-                           attributes={'units': 'm/s'})
-        ds.create_variable('vwnd', dims=('time', 'longitude', 'latitude'),
-                           data=vwnd,
-                           attributes={'units': 'm/s'})
+
+        ds['uwnd'] = xray.XArray(('time', 'longitude', 'latitude'),
+                                 data=uwnd,
+                                 attributes={'units': 'm/s'})
+        ds['vwnd'] = xray.XArray(('time', 'longitude', 'latitude'),
+                                 data=vwnd,
+                                 attributes={'units': 'm/s'})
 
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
@@ -144,9 +148,10 @@ class TinylibTest(unittest.TestCase):
         # now add precip and test everything
         mids = 0.5 * (tinylib._precip_scale[1:] + tinylib._precip_scale[:-1])
         precip = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
-        ds.create_variable('precip', dims=('time', 'longitude', 'latitude'),
-                           data=precip.reshape(shape),
-                           attributes={'units': 'kg.m-2.s-1'})
+
+        ds['precip'] = (('time', 'longitude', 'latitude'),
+                        precip.reshape(shape),
+                        {'units': 'kg.m-2.s-1'})
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
         np.testing.assert_allclose(actual['uwnd'].data, ds['uwnd'].data,
@@ -160,9 +165,9 @@ class TinylibTest(unittest.TestCase):
         mids = 0.5 * (tinylib._pressure_scale[1:] +
                       tinylib._pressure_scale[:-1])
         pres = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
-        ds.create_variable('pressure', dims=('time', 'longitude', 'latitude'),
-                           data=pres.reshape(shape),
-                           attributes={'units': 'Pa'})
+        ds['pressure'] = (('time', 'longitude', 'latitude'),
+                           pres.reshape(shape),
+                           {'units': 'Pa'})
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
         np.testing.assert_allclose(actual['uwnd'].data, ds['uwnd'].data,

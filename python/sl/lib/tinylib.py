@@ -1,10 +1,11 @@
 import os
 import copy
+import xray
 import zlib
 import numpy as np
 import netCDF4
-import datetime
 import logging
+import datetime
 
 from bisect import bisect
 from collections import OrderedDict
@@ -13,7 +14,7 @@ import sl.lib.conventions as conv
 
 from sl.lib import objects, units
 
-from scidata import Dataset
+from xray import Dataset
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -352,6 +353,7 @@ def expand_small_array(packed_array, dtype, least_significant_digit):
 
 
 def small_time(time_var):
+    time_var = xray.conventions.encode_cf_variable(time_var)
     assert time_var.attributes[conv.UNITS].startswith('hours')
     origin = netCDF4.num2date([0],
                               time_var.attributes[conv.UNITS],
@@ -384,9 +386,6 @@ def check_beaufort(obj):
         # double check
         assert obj[conv.UWND].attributes[conv.UNITS] == 'm/s'
         assert obj[conv.VWND].attributes[conv.UNITS] == 'm/s'
-    # make sure time is all integers
-    np.testing.assert_array_equal(obj[conv.TIME].data.astype('int'),
-                                  obj[conv.TIME])
     # make sure latitudes are in degrees and are on the correct scale
     assert 'degrees' in obj[conv.LAT].attributes[conv.UNITS]
     assert np.min(obj[conv.LAT]) >= -90
@@ -425,7 +424,7 @@ def to_beaufort(obj):
 
     encoded_variables[conv.TIME] = small_time(obj[conv.TIME])['packed_array']
     for v in [conv.LAT, conv.LON]:
-        small = small_array(obj[v].data[:].astype(_variables[v]['dtype']),
+        small = small_array(np.asarray(obj[v].data).astype(_variables[v]['dtype']),
                             _variables[v]['least_significant_digit'])
         encoded_variables[v] = small['packed_array']
 
@@ -492,12 +491,12 @@ def from_beaufort(payload):
                                      info['dtype'],
                                      info['least_significant_digit'])
             info['attributes'] = {conv.UNITS: time_units}
-            out.create_coordinate(vname, data, info.get('attributes', None))
+            out[vname] = ((vname), data, info.get('attributes', None))
         elif vname in [conv.LAT, conv.LON]:
             data = expand_small_array(info['packed_array'],
                                      info['dtype'],
                                      info['least_significant_digit'])
-            out.create_coordinate(vname, data, info.get('attributes', None))
+            out[vname] = (vname, data, info.get('attributes', None))
         else:
             shape = [out.dimensions[d] for d in info['dims']]
             data = expand_array(info['packed_array'],
@@ -505,16 +504,13 @@ def from_beaufort(payload):
                                  shape=shape,
                                  divs=info['divs'],
                                  dtype=info['dtype'])
-            out.create_variable(vname, info['dims'],
-                                data=data,
-                                attributes=info.get('attributes', None))
+            out[vname] = (info['dims'], data,
+                          info.get('attributes', None))
 
     dims = out[conv.WIND_SPEED].dimensions
     vwnd = -np.cos(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
     uwnd = -np.sin(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
-    out.create_variable(conv.UWND, dims=dims, data=uwnd,
-                        attributes={conv.UNITS: 'm/s'})
-    out.create_variable(conv.VWND, dims=dims, data=vwnd,
-                        attributes={conv.UNITS: 'm/s'})
+    out[conv.UWND] = (dims, uwnd, {conv.UNITS: 'm/s'})
+    out[conv.VWND] = (dims, vwnd, {conv.UNITS: 'm/s'})
     return units.normalize_variables(out)
 

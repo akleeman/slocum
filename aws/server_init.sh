@@ -95,8 +95,8 @@ function slocum {
   sudo apt-get install python-scipy python-matplotlib -y
   sudo pip install iris
   cd ~/
-  git clone https://github.com/akleeman/scidata.git
-  echo "export PYTHONPATH=$PYTHONPATH:/home/ubuntu/scidata/src/:/home/ubuntu/slocum/python" >> ~/.bashrc
+  git clone https://github.com/akleeman/xray.git
+  echo "export PYTHONPATH=$PYTHONPATH:/home/ubuntu/xray/src/:/home/ubuntu/slocum/python" >> ~/.bashrc
 }
 
 function swap {

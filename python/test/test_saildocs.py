@@ -93,13 +93,13 @@ class SaildocsTest(unittest.TestCase):
         for order in range(2):
             for sup_vars in itertools.permutations(supported, order + 1):
                 actual, warns = saildocs.validate_variables(sup_vars)
-                self.assertEqual(list(sup_vars), actual)
+                self.assertSetEqual(set(sup_vars), set(actual))
                 self.assertTrue(len(warns) == 0)
 
                 unsup_vars = ['dorado density']
                 unsup_vars.extend(sup_vars)
                 actual, warns = saildocs.validate_variables(unsup_vars)
-                self.assertEqual(list(sup_vars), actual)
+                self.assertSetEqual(set(sup_vars), set(actual))
                 self.assertTrue(len(warns) == 1)
                 self.assertTrue(unsup_vars[0] in warns[0])
 
