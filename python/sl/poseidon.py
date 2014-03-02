@@ -17,6 +17,8 @@ from BeautifulSoup import BeautifulSoup
 
 from xray import Dataset, open_dataset
 
+from sl.lib.objects import NautAngle
+
 import sl.lib.conventions as conv
 
 from sl.lib import units
@@ -59,32 +61,55 @@ def latest(latest_html_url):
     return os.path.join('http://motherlode.ucar.edu/thredds/dodsC', dataset)
 
 
-def subset(nc, north, south, west, east, slicers=None):
+def subset(nc, north, south, east, west, slicers=None):
     """
     Given a forecast (nc) and corners of a spatial subset
     this function returns the corresponding subset of data
     that contains the spatial region.
     """
-    assert north > south
-    assert east > west or (east % 360) > (west % 360)
+    north, south, east, west = map(
+            NautAngle, np.radians([north, south, east, west]))
+    assert north.is_north_of(south)
+    assert east.is_east_of(west)
     # determine which slice we need for latitude
     lats = nc.variables['lat'][:]
-    inds = np.nonzero(np.logical_and(lats >= south, lats <= north))[0]
+    # Note to Alex: Changed the following such that all lat/lon comparisons
+    # will use logic defined in NautAngle in order to keep that logic in one
+    # central spot. Note that the comparison operators below will call the
+    # corresponding NautAngle comparisons.
+    n_inds = [south <= NautAngle(np.radians(lat)) for lat in lats]
+    s_inds = [north >= NautAngle(np.radians(lat)) for lat in lats]
+    inds = np.nonzero(np.logical_and(n_inds, s_inds))[0]
     lat_slice = slice(np.min(inds), np.max(inds) + 1)
     # determine which slice we need for longitude.  GFS uses longitudes
     # between 0 and 360, but slocum uses -180 to 180.  Depending on if
     # the bounding box stradles greenwich or the dateline we want to
     # prefer one or the other interpretations.
+    # Note to Alex: The original logic failed for bounding boxes fully east of
+    # Greenwich. Same logic as for lats now applied here. Since were just
+    # pulling indices it doesn't matter whether lons are [0,360[ or [-180,180[.
     lons = nc.variables['lon'][:]
-    if east < 0 and west > 0.:
-        east = east % 360
-        west = west % 360
-    else:
-        lons = np.mod(lons + 180, 360) - 180
-    inds = np.nonzero(np.logical_and(lons >= east, lons <= west))[0]
+    # TODO: check: east == -10 and west == 10 would result in taking the lon
+    # slice the 'long way around'
+    # if east < 0 and west > 0.:
+    #     east = east % 360
+    #     west = west % 360
+    # else:
+    #     lons = np.mod(lons + 180, 360) - 180
+    # TODO: need to fix, fails for eastern longitudes (e.g. inds will be an
+    # empty array for east = 155 and west = 151
+    e_inds = [west <= NautAngle(np.radians(lon)) for lon in lons]
+    w_inds = [east >= NautAngle(np.radians(lon)) for lon in lons]
+    inds = np.nonzero(np.logical_and(e_inds, w_inds))[0]
     lon_slice = slice(np.min(inds), np.max(inds) + 1)
-    assert np.all(lons[lon_slice] >= west)
-    assert np.all(lons[lon_slice] <= east)
+
+    # assert np.all(lons[lon_slice] >= west)
+    # assert np.all(lons[lon_slice] <= east)
+    assert np.all([west <= NautAngle(np.radians(lon))
+                   for lon in lons[lon_slice]])
+    assert np.all([east >= NautAngle(np.radians(lon))
+                   for lon in lons[lon_slice]])
+    
     if east >= 0 and west < 0:
         # sorry brits, this is going to take a while
         rhs = subset(nc, north, south, 0., east, slicers=slicers)
@@ -98,7 +123,10 @@ def subset(nc, north, south, west, east, slicers=None):
     # end because until this point all the data probably
     # lives on a remote server, so we'd like to download
     # as little as possible.
-    out = nc.views(slicers)
+    # Note to Alex: replaced views (no longer in Dataset) with indexed_by;
+    # eventually, the whole subsetting would be leaner if we used
+    # labeled_by...someday...
+    out = nc.indexed_by(slicers)
     return out
 
 
@@ -120,6 +148,7 @@ def gefs(ll, ur):
             'v-component_of_wind_height_above_ground': conv.VWND,}
     fcst = forecast('gefs')
     fcst = fcst.select(*vars.keys())
+    # TODO: fix signature and call to subset
     fcst = subset(fcst, ll, ur)
     renames = vars
     renames.update(dict((d, conv.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
@@ -136,7 +165,7 @@ def gefs(ll, ur):
     return fcst
 
 
-def gfs(ll, ur, variables=None):
+def gfs(north, south, east, west, variables=None):
     """
     Global Forecast System forecast object
     """
@@ -149,20 +178,28 @@ def gfs(ll, ur, variables=None):
     logger.debug("Selected out variables")
     ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
     logger.debug("found 10m height")
-    fcst = subset(fcst, ll, ur, slicers={'height_above_ground4': slice(ind, ind + 1)})
+    # Note to Alex: Changed call to subset to match new signature with north,
+    # south, west, east
+    # fcst = subset(fcst, ll, ur, slicers={'height_above_ground4': slice(ind, ind + 1)})
+    fcst = subset(
+            fcst, north, south, east, west,
+            slicers={'height_above_ground4': slice(ind, ind + 1)})
     logger.debug("subsetted to the domain")
     # Remove the height above ground dimension
     fcst = copy.deepcopy(fcst)
     fcst = fcst.squeeze(dimension='height_above_ground4')
     renames = variables
+    # was there a specific reason for the 'special treatment' of the tme
+    # dimenesion?
     renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
     renames.update({'lat': conv.LAT,
                     'lon': conv.LON})
     fcst = fcst.renamed(renames)
-    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
-    new_units = new_units.replace('T', ' ')
-    new_units = new_units.replace('Z', '')
-    fcst['time'].attributes['units'] = new_units
+    # xray time indices are datetime subclasses, no mangling required
+    # new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
+    # new_units = new_units.replace('T', ' ')
+    # new_units = new_units.replace('Z', '')
+    # fcst['time'].attributes['units'] = new_units
     fcst = units.normalize_variables(fcst)
     return fcst
 

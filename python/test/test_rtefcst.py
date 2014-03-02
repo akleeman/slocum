@@ -1,6 +1,3 @@
-from sl.lib import rtefcst
-from sl.lib import objects
-from sl.lib import tinylib
 import unittest
 import StringIO
 import datetime as dt
@@ -8,6 +5,10 @@ import logging
 import zlib
 import os.path
 import pickle
+
+from sl.lib import rtefcst
+from sl.lib import objects
+from sl.lib import tinylib
 
 TEST_DIR = 'test'
 

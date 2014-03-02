@@ -61,7 +61,7 @@ class NautAngle(float):
     is_north_of(self, other)
     is_south_od(self, other)    - Same logic as for east/west
 
-                                  All four comparison methods return True is
+                                  All four comparison methods return False is
                                   self and other have the same value.
 
     is_almost_equal(self, other, places=6)
@@ -71,12 +71,12 @@ class NautAngle(float):
 
     __lt__      - True if x is west/south of y
     __le__      - True if x is west/south of or equal to y
-    __eg__      - Same as x.is_almost_equal(y)
+    __eq__      - Same as x.is_almost_equal(y)
     __ne__      - Same as not x.is_almost_equal(y)
     __ge__      - True if x is east/north of or equal to y
     __gt__      - True if x is east/north of y
 
-    __add__     - Returns (self = other) as a NautAngle object.
+    __add__     - Returns (self + other) as a NautAngle object.
     __sub__     - Same as x.distance_to(y)
 
     """
@@ -109,9 +109,16 @@ class NautAngle(float):
         return np.degrees(self.real)
 
     def __str__(self):
-        whole = int(self.degrees)
-        minutes = (abs(self.degrees) - abs(whole)) * 60
-        return "%d %07.4f" % (whole, minutes)
+        # keep simple so we can initialize a NautAngle object with
+        # NautAngle(str(x)), even if we don't know whether x is a float or a
+        # NautAngle object.
+        # TODO: Change constructor to also work for strings like "ddd mm.mmm"
+        #
+        # whole = int(self.degrees)
+        # minutes = (abs(self.degrees) - abs(whole)) * 60
+        # return "%d %07.4f" % (whole, minutes)
+        #
+        return str(np.degrees(self.real))
 
     def __repr__(self):
         return str(np.degrees(self.real))
