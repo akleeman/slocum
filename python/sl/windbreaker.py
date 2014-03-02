@@ -53,21 +53,6 @@ def arg_closest(x, reference):
 
 def get_forecast(query, path=None):
     warnings = []
-    # Note to Alex: Suggest we stick with one system (N, S, E, W) for defining
-    # the bounding box (used by poseidon.subset anyway, so we also avoid having
-    # to convert back and forth). In addition it would allow to eliminate
-    # objects.LatLon should you feel inclined to do so.
-    #
-    # ll = objects.LatLon(query['domain']['S'], query['domain']['W'])
-    # ur = objects.LatLon(query['domain']['N'], query['domain']['E'])
-    
-    # Following the same logic, I think the call to ensure_corners is no longer
-    # needed. If we need to expand the box somewhere, a utility function that
-    # acts on the query['domain'] dictionary or a (N, S, E, W) tuple would
-    # probably be a cleaner solution (or a bbox object with an 'expand'
-    # method)?
-    #
-    # ur, ll = poseidon.ensure_corners(ur, ll, expand=False)
     variables = {}
     if len(set(['wind']).intersection(query['vars'])):
         variables['u-component_of_wind_height_above_ground'] = conv.UWND
@@ -110,8 +95,6 @@ def get_forecast(query, path=None):
     # next step is parsing out the times
     # we assume that the forecast units are in hours
     # TODO: simplify - xray time dimension contains a datetime subclass
-    # Why don't we already slice times in the same way we slice lat/lon when we
-    # get the fcst?
     dates = fcst['time'].data.to_pydatetime()
     ref_time = dates[0]
     query_times = np.array([ref_time + datetime.timedelta(hours=x)
