@@ -11,6 +11,7 @@ from xray import open_dataset, backends
 from sl import poseidon
 from sl.lib import conventions as conv
 from sl.lib import objects, tinylib, saildocs, emaillib
+from sl.lib.objects import NautAngle
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -39,13 +40,13 @@ or send an email to gribinfo@saildocs.com.
 def regular_grid(xmin, xmax, delta):
     """A convenient function around linspace"""
     # Note to Alex: The formula below has trouble with float values. For
-    # example, 
+    # example,
     #
-    #   regular_grid(-9.9999999, -7., -0.5) 
+    #   regular_grid(-9.9999999, -7., -0.5)
     #
-    # results in 
+    # results in
     #
-    #   array([-9.99999999, -9.39999999, -8.79999999, -8.2       , 
+    #   array([-9.99999999, -9.39999999, -8.79999999, -8.2       ,
     #          -7.6       , -7.        ])
     # and
     #
@@ -103,7 +104,7 @@ def get_forecast(query, path=None):
     scheibe_mehr = min(step / 2., (180. - (north - south)) / 2.)
     lats = np.arange(south, north + scheibe_mehr, step)
     lat_inds = arg_closest(lats, fcst['latitude'].data.values)
-    # Notes to Alex: 
+    # Notes to Alex:
     # [1] What if the query string has 'odd' fractional lat/lons
     # that are offset against the GFS grid (e.g. "send GFS:32.3S,36.7S, ...",
     # selected in the Airmail GUI selector)? -> changed threshold to step/2
@@ -121,14 +122,13 @@ def get_forecast(query, path=None):
     # lons = query['domain']['W'] + np.arange(lon_count) * query['grid_delta'][1]
     # lons = np.mod(lons + 180., 360.) - 180.
     step = query['grid_delta'][1]
-    lon_range = east - west   # always in [0, 180[
     scheibe_mehr = min(step / 2., (180. - (east - west)) / 2.)
     lons = [NautAngle(lon)
             for lon in np.arange(west, east + scheibe_mehr, step)]
     # fcst_lons = np.mod(fcst['longitude'].data.values + 180., 360.) - 180.
     fcst_lons = [NautAngle(lon)
                  for lon in fcst['longitude'].data.values]
-    lon_inds = arg_closest(lons, fcst_lons)
+    lon_inds = arg_closest(np.array(lons), np.array(fcst_lons))
 
     if not np.any(abs(fcst_lons[lon_inds] - lons) <= step / 2.):
         raise saildocs.BadQuery("Requested longitudes not found in the forecast.")

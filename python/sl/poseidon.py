@@ -72,7 +72,7 @@ def subset(nc, north, south, east, west, slicers=None):
     assert east.is_east_of(west)
     # determine which slice we need for latitude
     lats = nc.variables['lat'][:]
-    inds = np.nonzero([south <= NautAngle(lat) <= north for lat in lats]([0]
+    inds = np.nonzero([south <= NautAngle(lat) <= north for lat in lats])[0]
     lat_slice = slice(np.min(inds), np.max(inds) + 1)
     # determine which slice we need for longitude.  GFS uses longitudes
     # between 0 and 360, but slocum uses -180 to 180.  Depending on if
