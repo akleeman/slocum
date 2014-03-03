@@ -11,6 +11,7 @@ from xray import open_dataset, backends
 from sl import poseidon
 from sl.lib import conventions as conv
 from sl.lib import objects, tinylib, saildocs, emaillib
+from sl.lib.objects import NautAngle
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -38,6 +39,25 @@ or send an email to gribinfo@saildocs.com.
 
 def regular_grid(xmin, xmax, delta):
     """A convenient function around linspace"""
+    # Note to Alex: The formula below has trouble with float values. For
+    # example,
+    #
+    #   regular_grid(-9.9999999, -7., -0.5)
+    #
+    # results in
+    #
+    #   array([-9.99999999, -9.39999999, -8.79999999, -8.2       ,
+    #          -7.6       , -7.        ])
+    # and
+    #
+    #   regular_grid(0, 3.999999, 2)
+    #
+    # results in
+    #
+    #   array([ 0.      ,  3.999999])
+    #
+    # Have changed the calls to this function to use np.arange instead.
+    #
     return np.linspace(xmin, xmax, (xmax - xmin) / delta + 1)
 
 
@@ -53,9 +73,6 @@ def arg_closest(x, reference):
 
 def get_forecast(query, path=None):
     warnings = []
-    ll = objects.LatLon(query['domain']['S'], query['domain']['W'])
-    ur = objects.LatLon(query['domain']['N'], query['domain']['E'])
-    ur, ll = poseidon.ensure_corners(ur, ll, expand=False)
     variables = {}
     if len(set(['wind']).intersection(query['vars'])):
         variables['u-component_of_wind_height_above_ground'] = conv.UWND
@@ -65,37 +82,60 @@ def get_forecast(query, path=None):
     if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
         variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
 
+    north, south, east, west = [NautAngle(query['domain'][d])
+                                for d in "NSEW"]
+
     # Here we do some crude caching which
     # allows the user to specify a path to a local
     # file that holds the data instead of going through
     # poseidon.
-    if path is not None and os.path.exists(path):
+    if path and os.path.exists(path):
         fcst = open_dataset(path)
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
-        fcst = poseidon.gfs(ll, ur, variables=variables)
+        fcst = poseidon.gfs(north, south, east, west, variables=variables)
         if path is not None:
             fcst.dump(path)
 
     # extract all the closest latitudes
-    lats = regular_grid(query['domain']['S'], query['domain']['N'],
-                        delta=query['grid_delta'][0])
+    step = query['grid_delta'][0]
+    # adding step/2. to upper bound to avoid unintended truncations due to
+    # floating point issues; carefull not to extend range beyond 180 though...
+    scheibe_mehr = min(step / 2., (180. - (north - south)) / 2.)
+    lats = np.arange(south, north + scheibe_mehr, step)
     lat_inds = arg_closest(lats, fcst['latitude'].data.values)
-    if np.any((fcst['latitude'].data[lat_inds] - lats) > 0.05):
+    # Notes to Alex:
+    # [1] What if the query string has 'odd' fractional lat/lons
+    # that are offset against the GFS grid (e.g. "send GFS:32.3S,36.7S, ...",
+    # selected in the Airmail GUI selector)? -> changed threshold to step/2
+    # [2] Why not return fcst wih any lats that overlapped and discard the
+    # rest - ie. 'not np.any(...) <= threshold' raises the exceptions rather
+    # than 'np.any(...) > thershold"? -> changed if clause
+    #
+    # if np.any((fcst['latitude'].data[lat_inds] - lats) > 0.05):
+    if not np.any(abs(fcst['latitude'].data[lat_inds] - lats) <= step / 2.):
         raise saildocs.BadQuery("Requested latitudes not found in the forecast.")
     fcst = fcst.indexed_by(latitude=lat_inds)
     # extract all the closest longitudes
-    lon_range = np.mod(query['domain']['E'] - query['domain']['W'], 360)
-    lon_count = lon_range / query['grid_delta'][1] + 1
-    lons = query['domain']['W'] + np.arange(lon_count) * query['grid_delta'][1]
-    lons = np.mod(lons + 180., 360.) - 180.
-    fcst_lons = np.mod(fcst['longitude'].data.values + 180., 360.) - 180.
-    lon_inds = arg_closest(lons, fcst_lons)
-    if np.any((fcst_lons[lon_inds] - lons) > 0.05):
+    # lon_range = np.mod(query['domain']['E'] - query['domain']['W'], 360)
+    # lon_count = lon_range / query['grid_delta'][1] + 1
+    # lons = query['domain']['W'] + np.arange(lon_count) * query['grid_delta'][1]
+    # lons = np.mod(lons + 180., 360.) - 180.
+    step = query['grid_delta'][1]
+    scheibe_mehr = min(step / 2., (180. - (east - west)) / 2.)
+    lons = [NautAngle(lon)
+            for lon in np.arange(west, east + scheibe_mehr, step)]
+    # fcst_lons = np.mod(fcst['longitude'].data.values + 180., 360.) - 180.
+    fcst_lons = [NautAngle(lon)
+                 for lon in fcst['longitude'].data.values]
+    lon_inds = arg_closest(np.array(lons), np.array(fcst_lons))
+
+    if not np.any(abs(fcst_lons[lon_inds] - lons) <= step / 2.):
         raise saildocs.BadQuery("Requested longitudes not found in the forecast.")
     fcst = fcst.indexed_by(longitude=lon_inds)
     # next step is parsing out the times
     # we assume that the forecast units are in hours
+    # TODO: simplify - xray time dimension contains a datetime subclass
     dates = fcst['time'].data.to_pydatetime()
     ref_time = dates[0]
     query_times = np.array([ref_time + datetime.timedelta(hours=x)

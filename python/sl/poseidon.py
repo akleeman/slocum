@@ -17,6 +17,8 @@ from BeautifulSoup import BeautifulSoup
 
 from xray import Dataset, open_dataset
 
+from sl.lib.objects import NautAngle
+
 import sl.lib.conventions as conv
 
 from sl.lib import units
@@ -59,32 +61,28 @@ def latest(latest_html_url):
     return os.path.join('http://motherlode.ucar.edu/thredds/dodsC', dataset)
 
 
-def subset(nc, north, south, west, east, slicers=None):
+def subset(nc, north, south, east, west, slicers=None):
     """
     Given a forecast (nc) and corners of a spatial subset
     this function returns the corresponding subset of data
     that contains the spatial region.
     """
-    assert north > south
-    assert east > west or (east % 360) > (west % 360)
+    north, south, east, west = map(NautAngle, [north, south, east, west])
+    assert north.is_north_of(south)
+    assert east.is_east_of(west)
     # determine which slice we need for latitude
     lats = nc.variables['lat'][:]
-    inds = np.nonzero(np.logical_and(lats >= south, lats <= north))[0]
+    inds = np.nonzero([south <= NautAngle(lat) <= north for lat in lats])[0]
     lat_slice = slice(np.min(inds), np.max(inds) + 1)
     # determine which slice we need for longitude.  GFS uses longitudes
     # between 0 and 360, but slocum uses -180 to 180.  Depending on if
     # the bounding box stradles greenwich or the dateline we want to
     # prefer one or the other interpretations.
     lons = nc.variables['lon'][:]
-    if east < 0 and west > 0.:
-        east = east % 360
-        west = west % 360
-    else:
-        lons = np.mod(lons + 180, 360) - 180
-    inds = np.nonzero(np.logical_and(lons >= east, lons <= west))[0]
+    inds = np.nonzero([west <= NautAngle(lon) <= east for lon in lons])[0]
     lon_slice = slice(np.min(inds), np.max(inds) + 1)
-    assert np.all(lons[lon_slice] >= west)
-    assert np.all(lons[lon_slice] <= east)
+    assert np.all([west <= NautAngle(lon) <= east for lon in lons[lon_slice]])
+
     if east >= 0 and west < 0:
         # sorry brits, this is going to take a while
         rhs = subset(nc, north, south, 0., east, slicers=slicers)
@@ -98,8 +96,7 @@ def subset(nc, north, south, west, east, slicers=None):
     # end because until this point all the data probably
     # lives on a remote server, so we'd like to download
     # as little as possible.
-    out = nc.views(slicers)
-    return out
+    return nc.indexed_by(slicers)
 
 
 def forecast(source):
@@ -117,9 +114,10 @@ def gefs(ll, ur):
     Global Ensemble Forecast System forecast object
     """
     vars = {'u-component_of_wind_height_above_ground': conv.UWND,
-            'v-component_of_wind_height_above_ground': conv.VWND,}
+            'v-component_of_wind_height_above_ground': conv.VWND, }
     fcst = forecast('gefs')
     fcst = fcst.select(*vars.keys())
+    # TODO: fix signature and call to subset
     fcst = subset(fcst, ll, ur)
     renames = vars
     renames.update(dict((d, conv.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
@@ -136,20 +134,22 @@ def gefs(ll, ur):
     return fcst
 
 
-def gfs(ll, ur, variables=None):
+def gfs(north, south, east, west, variables=None):
     """
     Global Forecast System forecast object
     """
     if variables is None:
         variables = {'u-component_of_wind_height_above_ground': conv.UWND,
-                     'v-component_of_wind_height_above_ground': conv.VWND,}
+                     'v-component_of_wind_height_above_ground': conv.VWND, }
     fcst = forecast('gfs')
     fcst = fcst.select(*variables.keys())
     # subset out the 10m wind height
     logger.debug("Selected out variables")
     ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
     logger.debug("found 10m height")
-    fcst = subset(fcst, ll, ur, slicers={'height_above_ground4': slice(ind, ind + 1)})
+    fcst = subset(
+            fcst, north, south, east, west,
+            slicers={'height_above_ground4': slice(ind, ind + 1)})
     logger.debug("subsetted to the domain")
     # Remove the height above ground dimension
     fcst = copy.deepcopy(fcst)
@@ -159,10 +159,6 @@ def gfs(ll, ur, variables=None):
     renames.update({'lat': conv.LAT,
                     'lon': conv.LON})
     fcst = fcst.renamed(renames)
-    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
-    new_units = new_units.replace('T', ' ')
-    new_units = new_units.replace('Z', '')
-    fcst['time'].attributes['units'] = new_units
     fcst = units.normalize_variables(fcst)
     return fcst
 
