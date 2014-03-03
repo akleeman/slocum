@@ -67,30 +67,21 @@ def subset(nc, north, south, east, west, slicers=None):
     this function returns the corresponding subset of data
     that contains the spatial region.
     """
-    north, south, east, west = map(
-            NautAngle, np.radians([north, south, east, west]))
+    north, south, east, west = map(NautAngle, [north, south, east, west])
     assert north.is_north_of(south)
     assert east.is_east_of(west)
     # determine which slice we need for latitude
     lats = nc.variables['lat'][:]
-    n_inds = [south <= NautAngle(np.radians(lat)) for lat in lats]
-    s_inds = [north >= NautAngle(np.radians(lat)) for lat in lats]
-    inds = np.nonzero(np.logical_and(n_inds, s_inds))[0]
+    inds = np.nonzero([south <= NautAngle(lat) <= north for lat in lats]([0]
     lat_slice = slice(np.min(inds), np.max(inds) + 1)
     # determine which slice we need for longitude.  GFS uses longitudes
     # between 0 and 360, but slocum uses -180 to 180.  Depending on if
     # the bounding box stradles greenwich or the dateline we want to
     # prefer one or the other interpretations.
     lons = nc.variables['lon'][:]
-    e_inds = [west <= NautAngle(np.radians(lon)) for lon in lons]
-    w_inds = [east >= NautAngle(np.radians(lon)) for lon in lons]
-    inds = np.nonzero(np.logical_and(e_inds, w_inds))[0]
+    inds = np.nonzero([west <= NautAngle(lon) <= east for lon in lons])[0]
     lon_slice = slice(np.min(inds), np.max(inds) + 1)
-
-    assert np.all([west <= NautAngle(np.radians(lon))
-                   for lon in lons[lon_slice]])
-    assert np.all([east >= NautAngle(np.radians(lon))
-                   for lon in lons[lon_slice]])
+    assert np.all([west <= NautAngle(lon) <= east for lon in lons[lon_slice]])
 
     if east >= 0 and west < 0:
         # sorry brits, this is going to take a while

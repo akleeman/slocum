@@ -8,16 +8,16 @@ class NautAngle(float):
     """
     Subclasses float to represent a latitude or longitude angle.
 
-    Angles will be normalized to fall into [-pi, pi[ such that longitudes are
-    centered on the Greenwich meridian (east longitude positive, west
+    Angles will be normalized to fall into [-180, 180[ such that longitudes
+    are centered on the Greenwich meridian (east longitude positive, west
     negative) and latitudes are centered on the equator (north latitude
     positive, south negative).
 
-    NautAngle uses radians internally but its __str__ and __repr__ methods
-    provide humanly readable representations in degrees. The following
-    initializations all result in the same value for a NautAngle object:
+    NautAngle stores the angle in degrees and can be initialized by either a
+    numerical value or a string. The following initializations all have the
+    same result:
 
-    >>> NautAngle(np.radians(-45))
+    >>> NautAngle(-45)
     -45.0
     >>> NautAngle("-45")
     -45.0
@@ -26,32 +26,25 @@ class NautAngle(float):
     >>> NautAngle("s 45")
     -45.0
 
-    In all four cases the internal value of the NautAngle object will be
-    -pi/4:
+    The value of a NautAangle object in radians is available as
 
-    >>> np.sin(NautAngle("s 45"))
-    -0.70710678118654746
-
-    The numerical value of a NautAangle object in degrees is available as
-
-    >>> NautAngle("s 45").degrees
+    >>> NautAngle("s 45").radians
     -45.0
-    >>> type(NautAngle("s 45").degrees)
-    numpy.float64
+
 
     NautAngle provides the following methods:
     -----------------------------------------
 
     distance_to(self, other)    - Returns a NautAngle object with the shortest
                                   angular distance between self and other.
-                                  Positive if self is east/north of other,
-                                  negative if self is west/south of other.
-                                    >>> a = NautAngle("-45")
-                                    >>> b = NautAngle("170")
+                                  Positive east/north wards, negative the other
+                                  way.
+                                    >>> a = NautAngle(-45)
+                                    >>> b = NautAngle(170)
                                     >>> a.distance_to(b)
-                                    145.0
-                                    >>> b.distance_to(a)
                                     -145.0
+                                    >>> b.distance_to(a)
+                                    145.0
 
     is_east_of(self, other)     - True if self is east of other "the short way
                                   around"
@@ -77,13 +70,15 @@ class NautAngle(float):
     __gt__      - True if x is east/north of y
 
     __add__     - Returns (self + other) as a NautAngle object.
-    __sub__     - Same as x.distance_to(y)
+    __sub__     - Retruns x.distance_to(y) as a float if y is a NautAngle
+                  object and as a NautAnlgel object is y is something else (int
+                  or float)
 
     """
 
     @staticmethod
-    def normalize(rad):
-        return np.mod(rad + np.pi, 2 * np.pi) - np.pi
+    def normalize(degrees):
+        return np.mod(degrees + 180., 360.) - 180.
 
     def __new__(cls, angle):
         try:
@@ -98,15 +93,15 @@ class NautAngle(float):
                     name = s
                     break
             sign = -1 if name in "SW" else 1
-            rad = np.radians(sign * float(angle))
+            degrees = sign * float(angle)
         else:
-            rad = angle
+            degrees = angle
 
-        return float.__new__(cls, NautAngle.normalize(rad))
+        return float.__new__(cls, NautAngle.normalize(degrees))
 
     @property
-    def degrees(self):
-        return np.degrees(self.real)
+    def radians(self):
+        return np.radians(self.real)
 
     def __str__(self):
         # keep simple so we can initialize a NautAngle object with
@@ -118,19 +113,23 @@ class NautAngle(float):
         # minutes = (abs(self.degrees) - abs(whole)) * 60
         # return "%d %07.4f" % (whole, minutes)
         #
-        return str(np.degrees(self.real))
+        return str(self.real)
 
     def __repr__(self):
-        return str(np.degrees(self.real))
+        return str(self.real)
 
     def distance_to(self, other):
         """
-        Returns a NautAngle object with the shortest angular distance between
+        Returns a float value with the shortest angular distance between
         self and other. Positive if self is east of other, negative if self
         is west of other.
         """
-        diff = self.real - NautAngle.normalize(other)
-        return NautAngle(diff % (2 * np.pi))
+        other = NautAngle.normalize(other)
+        diff = NautAngle.normalize(other - self.real)
+        if diff == -180 and other > self.real:
+            return 180  # so distance from lat=-90 to lat=90 comes out correct
+        else:
+            return diff
 
     def is_east_of(self, other):
         """
@@ -139,7 +138,7 @@ class NautAngle(float):
         (e.g. 160 deg is east of 150 deg and -170 deg is east of 170 deg).
         False otherwise.
         """
-        if self.distance_to(other).real > 0:
+        if self.distance_to(other).real < 0:
             return True
         else:
             return False
@@ -151,7 +150,7 @@ class NautAngle(float):
         (e.g. 20 deg is west of 150 deg and 170 deg is west of -170 deg).
         False otherwise.
         """
-        if self.distance_to(other).real < 0:
+        if self.distance_to(other).real > 0:
             return True
         else:
             return False
@@ -164,10 +163,10 @@ class NautAngle(float):
         return abs(diff) < 10**-places
 
     def is_north_of(self, other):
-        dist = self.distance_to(other).real
-        if dist > 0:
+        dist = self.distance_to(other)
+        if dist < 0:
             return True
-        elif dist < 0 and self.real > other.real:
+        elif dist > 0 and self.real > other.real:
             # 90,-90: dist wraps to -180
             return True
         else:
@@ -175,7 +174,7 @@ class NautAngle(float):
 
     def is_south_of(self, other):
         dist = self.distance_to(other).real
-        if dist < 0:
+        if dist > 0:
             return True
         else:
             return False
@@ -202,7 +201,12 @@ class NautAngle(float):
         return NautAngle(self.real + float(other))
 
     def __sub__(self, other):
-        return self.distance_to(other)
+        if isinstance(other, NautAngle):    # difference between two lats or
+                                            # lons -> return a float
+            return -self.distance_to(other)
+        else:                               # float or int subtracted from self
+                                            # -> return a NautAngle object
+            return NautAngle(-self.distance_to(other))
 
 
 class Wind(object):
