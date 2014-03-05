@@ -44,7 +44,7 @@ def latest(latest_html_url):
     soup = BeautifulSoup(f.read())
 
     def is_latest(x):
-        # checks if the beautiful soup a tag holds the latest href
+        # checks if the beautiful soup 'a' tag holds the latest href
         text = x.fetchText()
         return len(text) == 1 and 'Latest' in str(text[0])
     # get all the possible href links to the latest forecast
@@ -61,42 +61,89 @@ def latest(latest_html_url):
     return os.path.join('http://thredds.ucar.edu/thredds/dodsC', dataset)
 
 
-def subset(nc, north, south, east, west, slicers=None):
+def latitude_slicer(fcst, query):
+    lat_delta, _ = query['grid_delta']
+    domain = query['domain']
+    lats = np.asarray(fcst['latitude'].data, dtype=np.float32)
+    # assume latitudes are equally spaced for now
+    assert np.unique(np.diff(lats)).size == 1
+    native_lat_delta = np.abs(np.unique(np.diff(lats))[0])
+    # round to the nearest native stride but make sure we dont hit zero
+    lat_stride = max(1, int(np.round(lat_delta / native_lat_delta)))
+
+    dist_north_of_domain = lats - domain['N']
+    dist_north_of_domain[lats < domain['N']] = np.nan
+    northern_most = np.nanargmin(dist_north_of_domain)
+
+    dist_south_of_domain = lats - domain['S']
+    dist_south_of_domain[lats > domain['S']] = np.nan
+    southern_most = np.nanargmin(dist_south_of_domain)
+
+    sign = np.sign(southern_most - northern_most)
+    # if the difference is not a multiple of the stride
+    # we could end up chopping the last grid.  By adding
+    # stride - 1 inds to the end we avoid that
+    southern_most = southern_most + sign * (lat_stride - 1)
+    slicer = slice(northern_most, southern_most, sign * lat_stride)
+
+    assert np.all(lats[slicer] <= domain['N'])
+    assert np.all(lats[slicer] >= domain['S'])
+    assert np.any(lats[slicer] >= domain['N'])
+    assert np.any(lats[slicer] <= domain['S'])
+    return slicer
+
+
+def longitude_slicer(fcst, query):
+    _, lon_delta = query['grid_delta']
+    domain = query['domain']
+    lons = np.asarray(fcst['longitude'].data, dtype=np.float32)
+
+    lons = [NautAngle(l) for l in lons]
+    diffs = [x.distance_to(y) for x, y in zip(lons[:-1], lons[1:])]
+    # assume longitudes are equally spaced for now
+    assert np.unique(diffs).size == 1
+    native_lon_delta = np.abs(np.unique(diffs)[0])
+    # round to the nearest native stride but make sure we dont hit zero
+    lon_stride = max(1, int(np.round(lon_delta / native_lon_delta)))
+
+    west = NautAngle(domain['W'])
+    east = NautAngle(domain['E'])
+
+    dist_east_of_domain = np.array([x.distance_to(east) for x in lons])
+    dist_east_of_domain[dist_east_of_domain > 0] = np.nan
+    eastern_most = np.nanargmin(dist_east_of_domain)
+
+    dist_west_of_domain = np.array([x.distance_to(west) for x in lons])
+    dist_west_of_domain[dist_west_of_domain < 0] = np.nan
+    western_most = np.nanargmin(dist_west_of_domain)
+
+    sign = np.sign(eastern_most - western_most)
+    # if the difference is not a multiple of the stride
+    # we could end up chopping the last grid.  By adding
+    # stride - 1 inds to the end we avoid that
+    eastern_most = eastern_most + sign * (lon_stride - 1)
+    slicer = slice(western_most, eastern_most, sign * lon_stride)
+    assert np.all(lons[slicer] <= domain['E'])
+    assert np.all(lons[slicer] >= domain['W'])
+    assert np.any(lons[slicer] >= domain['E'])
+    assert np.any(lons[slicer] <= domain['W'])
+    return slicer
+
+
+def subset(nc, query):
     """
     Given a forecast (nc) and corners of a spatial subset
-    this function returns the corresponding subset of data
-    that contains the spatial region.
+    this function returns the smallest subset of the data
+    which fully contains the region
     """
-    north, south, east, west = map(NautAngle, [north, south, east, west])
-    assert north.is_north_of(south)
-    assert east.is_east_of(west)
-    # determine which slice we need for latitude
-    lats = nc.variables['lat'][:]
-    inds = np.nonzero([south <= NautAngle(lat) <= north for lat in lats])[0]
-    lat_slice = slice(np.min(inds), np.max(inds) + 1)
-    # determine which slice we need for longitude.  GFS uses longitudes
-    # between 0 and 360, but slocum uses -180 to 180.  Depending on if
-    # the bounding box stradles greenwich or the dateline we want to
-    # prefer one or the other interpretations.
-    lons = nc.variables['lon'][:]
-    inds = np.nonzero([west <= NautAngle(lon) <= east for lon in lons])[0]
-    lon_slice = slice(np.min(inds), np.max(inds) + 1)
-    assert np.all([west <= NautAngle(lon) <= east for lon in lons[lon_slice]])
 
-    if east >= 0 and west < 0:
-        # sorry brits, this is going to take a while
-        rhs = subset(nc, north, south, 0., east, slicers=slicers)
-        lhs = subset(nc, north, south, west, 0., slicers=slicers)
-        # TODO, finish splicing objects.
-        raise ValueError("sorry brits.")
-    # add lat/lon slicers to any additional slicers
-    slicers = {} if slicers is None else slicers
-    slicers.update({'lat': lat_slice, 'lon': lon_slice})
+    slicers = {'latitude': latitude_slicer(nc, query),
+              'longitude': longitude_slicer(nc, query)}
     # and pull out the dataset.  This is delayed till the
     # end because until this point all the data probably
     # lives on a remote server, so we'd like to download
     # as little as possible.
-    return nc.indexed_by(slicers)
+    return nc.indexed_by(**slicers)
 
 
 def forecast(source):
@@ -109,51 +156,35 @@ def forecast(source):
     return open_dataset(latest_opendap)
 
 
-def gefs(ll, ur):
-    """
-    Global Ensemble Forecast System forecast object
-    """
-    vars = {'u-component_of_wind_height_above_ground': conv.UWND,
-            'v-component_of_wind_height_above_ground': conv.VWND, }
-    fcst = forecast('gefs')
-    fcst = fcst.select(*vars.keys())
-    # TODO: fix signature and call to subset
-    fcst = subset(fcst, ll, ur)
-    renames = vars
-    renames.update(dict((d, conv.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
-    renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
-    renames.update({'lat': conv.LAT,
-                    'lon': conv.LON})
-    fcst = fcst.renamed(renames)
-    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
-    new_units = new_units.replace('T', ' ')
-    new_units = new_units.replace('Z', '')
-    fcst['time'].attributes['units'] = new_units
-    units.normalize_units(fcst[conv.UWND])
-    units.normalize_units(fcst[conv.VWND])
-    return fcst
-
-
-def gfs(north, south, east, west, variables=None):
+def gfs(query):
     """
     Global Forecast System forecast object
     """
-    if variables is None:
-        variables = {'u-component_of_wind_height_above_ground': conv.UWND,
-                     'v-component_of_wind_height_above_ground': conv.VWND, }
+    variables = {}
+    if len(set(['wind']).intersection(query['vars'])):
+        variables['u-component_of_wind_height_above_ground'] = conv.UWND
+        variables['v-component_of_wind_height_above_ground'] = conv.VWND
+    if len(set(['rain', 'precip']).intersection(query['vars'])):
+        variables['Precipitation_rate_surface_Mixed_intervals_Average'] = conv.PRECIP
+    if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
+        variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
+    if len(variables) == 0:
+        raise ValueError("No valid GFS variables in query")
+
+    north, south, east, west = [NautAngle(query['domain'][d])
+                                for d in "NSEW"]
     fcst = forecast('gfs')
     fcst = fcst.select(*variables.keys())
     # subset out the 10m wind height
     logger.debug("Selected out variables")
     ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
     logger.debug("found 10m height")
-    fcst = subset(
-            fcst, north, south, east, west,
-            slicers={'height_above_ground4': slice(ind, ind + 1)})
+    fcst = subset(fcst, north, south, east, west,
+                  slicers={'height_above_ground4': slice(ind, ind + 1)})
     logger.debug("subsetted to the domain")
     # Remove the height above ground dimension
-    fcst = copy.deepcopy(fcst)
     fcst = fcst.squeeze(dimension='height_above_ground4')
+
     renames = variables
     renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
     renames.update({'lat': conv.LAT,
@@ -161,26 +192,3 @@ def gfs(north, south, east, west, variables=None):
     fcst = fcst.renamed(renames)
     fcst = units.normalize_variables(fcst)
     return fcst
-
-
-def ensure_corners(ur, ll, expand=True):
-    """
-    Makes sure the upper right (ur) corner is actually the upper right.  Same
-    for the lower left (ll).
-    """
-    ur = ur.copy()
-    ll = ll.copy()
-    if ur.lon < ll.lon:
-        tmp = ur.lon
-        ur.lon = ll.lon
-        ll.lon = tmp
-    if ur.lat < ll.lat:
-        tmp = ur.lat
-        ur.lat = ll.lat
-        ll.lat = tmp
-    if expand:
-        ur.lat += 1
-        ur.lon += 1
-        ll.lat -= 1
-        ll.lon -= 1
-    return ur, ll

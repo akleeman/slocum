@@ -87,14 +87,13 @@ def normalize_units(v):
                 _convert(v, possible_units, cur_units, default,
                          validate=validate)
                 break
-        # TODO: is it fair to assume that only time will have units with 'since'?
-        if 'since' in cur_units:
-            # force time to have units of hours
-            assert cur_units.startswith('hours')
     return v
 
 
 def normalize_variables(dataset):
-    for k, v in dataset.variables.iteritems():
+    """
+    Iterates over all variables in a dataset and normalizes their units.
+    """
+    for _, v in dataset.variables.iteritems():
         normalize_units(v)
     return dataset
