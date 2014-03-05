@@ -26,9 +26,9 @@ from sl.lib import units
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
 
-_sources = {'gefs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Global_1p0deg_Ensemble/members/files/latest.html',
-            'nww3': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
-            'gfs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
+_sources = {'gefs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Global_1p0deg_Ensemble/members/files/latest.html',
+            'nww3': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
+            'gfs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
             }
 
 
@@ -58,7 +58,7 @@ def latest(latest_html_url):
     query = dict(urlparse.parse_qsl(urllib.splitquery(atag.get('href'))[1]))
     dataset = query['dataset']
     # the base directory for openDAP data changes to included suffix dodsC
-    return os.path.join('http://motherlode.ucar.edu/thredds/dodsC', dataset)
+    return os.path.join('http://thredds.ucar.edu/thredds/dodsC', dataset)
 
 
 def subset(nc, north, south, east, west, slicers=None):
