@@ -1,4 +1,4 @@
-from sl.lib.objects import NautAngle
+from sl.lib.objects import NautAngle, InvalidAngleFormat
 import numpy as np
 import unittest
 
@@ -23,6 +23,25 @@ class NautAngleTest(unittest.TestCase):
         a = NautAngle(' -45 W')
         self.assertAlmostEqual(a.real, 45)
 
+    def test_init_with_fancy_string(self):
+        a = NautAngle('S 073  12.3456 ')
+        self.assertAlmostEqual(a, -73.20576)
+        a = NautAngle('N -  073  12.3456 ')
+        self.assertAlmostEqual(a, -73.20576)
+        a = NautAngle(' -  073  12.3456 s ')
+        self.assertAlmostEqual(a, 73.20576)
+        a = NautAngle(' -  073  12.3456  e ')
+        self.assertAlmostEqual(a, -73.20576)
+        a = NautAngle(' -  073  12.3456  W ')
+        self.assertAlmostEqual(a, 73.20576)
+
+    def test_init_with_string_failure(self):
+        self.assertRaises(InvalidAngleFormat, NautAngle, ('S 073  123456 '))
+        self.assertRaises(InvalidAngleFormat, NautAngle, ('S 073  12 3456 '))
+        self.assertRaises(InvalidAngleFormat, NautAngle, ('S 1073.12 '))
+        self.assertRaises(InvalidAngleFormat, NautAngle, ('S 73 82.3 '))
+        self.assertRaises(InvalidAngleFormat, NautAngle, ('S 73 54 82.3 '))
+
     def test_init_edge_cases(self):
         a = NautAngle('180')
         self.assertAlmostEqual(a.real, -180)
@@ -31,10 +50,10 @@ class NautAngleTest(unittest.TestCase):
         a = NautAngle('0S')
         self.assertAlmostEqual(a.real, 0)
 
-    def test_string_conversion(self):
-        a = NautAngle('-30.3137')
-        self.assertEqual(str(a), '-30.3137')
-        self.assertEqual(repr(a), '-30.3137')
+    # def test_string_conversion(self):
+    #     a = NautAngle('-30.3137')
+    #     self.assertEqual(str(a), '-30.3137')
+    #     self.assertEqual(repr(a), '-30.3137')
 
     def test_distance_to(self):
         a = NautAngle(-45)
