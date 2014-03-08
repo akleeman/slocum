@@ -61,18 +61,6 @@ def get_forecast(query, path=None):
             fcst.dump(path)
 
     poseidon.subset(fcst, query)
-
-    # next step is parsing out the times
-    # we assume that the forecast units are in hours
-    # TODO: simplify - xray time dimension contains a datetime subclass
-    dates = fcst['time'].data.to_pydatetime()
-    ref_time = dates[0]
-    query_times = np.array([ref_time + datetime.timedelta(hours=x)
-                            for x in query['hours']])
-    time_inds = arg_closest(query_times, dates)
-    fcst = fcst.indexed_by(time=time_inds)
-    if np.any((dates[time_inds] - query_times) >= datetime.timedelta(hours=1)):
-        raise saildocs.BadQuery("Requested times not found in the forecast.")
     return fcst
 
 

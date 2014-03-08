@@ -354,7 +354,7 @@ def expand_small_array(packed_array, dtype, least_significant_digit):
 
 def small_time(time_var):
     time_var = xray.conventions.encode_cf_variable(time_var)
-    assert time_var.attributes[conv.UNITS].startswith('hours')
+    assert time_var.attributes[conv.UNITS].lower().startswith('hour')
     origin = netCDF4.num2date([0],
                               time_var.attributes[conv.UNITS],
                               calendar='standard')[0]
@@ -388,12 +388,12 @@ def check_beaufort(obj):
         assert obj[conv.VWND].attributes[conv.UNITS] == 'm/s'
     # make sure latitudes are in degrees and are on the correct scale
     assert 'degrees' in obj[conv.LAT].attributes[conv.UNITS]
-    assert np.min(obj[conv.LAT]) >= -90
-    assert np.max(obj[conv.LAT]) <= 90
+    assert np.min(np.asarray(obj[conv.LAT].data)) >= -90
+    assert np.max(np.asarray(obj[conv.LAT].data)) <= 90
     # make sure longitudes are in degrees and are on the correct scale
     assert 'degrees' in obj[conv.LON].attributes[conv.UNITS]
-    assert np.min(obj[conv.LON]) >= -180
-    assert np.max(obj[conv.LON]) <= 180
+    assert np.min(np.asarray(obj[conv.LON])) >= -180
+    assert np.max(np.asarray(obj[conv.LON])) <= 180
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
     if conv.PRECIP in obj.variables:
