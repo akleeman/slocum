@@ -56,6 +56,7 @@ def get_forecast(query, path=None):
         fcst = open_dataset(path)
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
+        assert query['model'] == 'gfs'
         fcst = poseidon.gfs(query)
         if path is not None:
             fcst.dump(path)

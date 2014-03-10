@@ -157,6 +157,12 @@ def longitude_slicer(lons, query):
 
 
 def time_slicer(time_coordinate, query):
+    """
+    Returns a slice object that will slice out all times
+    upto the largest query['hours'].  This allows the first
+    slice of the time dimension to be lazy, after which
+    subset_time should be used.
+    """
     # next step is parsing out the times
     # we assume that the forecast units are in hours
     ref_time = time_coordinate.data[0]
@@ -169,6 +175,12 @@ def time_slicer(time_coordinate, query):
 
 
 def subset_time(fcst, hours):
+    """
+    Extracts all the forecast valid times from fcst for lead
+    times of 'hours'.  If used with a remote dataset such as
+    an openDAP server this will download all the data.  Instead
+    consider using time_slicer first.
+    """
     # next step is parsing out the times
     ref_time = np.datetime64(fcst[conv.TIME].data[0])
     # we are assuming that the first time is the reference time
