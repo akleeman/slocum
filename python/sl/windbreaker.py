@@ -12,6 +12,7 @@ from sl import poseidon
 from sl.lib import conventions as conv
 from sl.lib import objects, tinylib, saildocs, emaillib
 from sl.lib.objects import NautAngle
+import json
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -56,12 +57,9 @@ def get_forecast(query, path=None):
         fcst = open_dataset(path)
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
-        assert query['model'] == 'gfs'
-        fcst = poseidon.gfs(query)
+        fcst = poseidon.forecast(query)
         if path is not None:
             fcst.dump(path)
-
-    poseidon.subset(fcst, query)
     return fcst
 
 
@@ -85,14 +83,7 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     logger.debug(query_string)
     query = saildocs.parse_saildocs_query(query_string)
     # log the query so debugging others request failures will be easier.
-    logger.debug("model: %s" % query['model'])
-    domain_str = ','.join(':'.join([k, str(v)])
-                          for k, v in query['domain'].iteritems())
-    logger.debug("domain: %s" % domain_str)
-    logger.debug("grid_delta: %s" % ','.join(map(str, query['grid_delta'])))
-    logger.debug("hours: %s" % ','.join(map(str, query['hours'])))
-    logger.debug("warnings: %s" % '\n'.join(query['warnings']))
-    logger.debug("variables: %s" % ','.join(query['vars']))
+    logger.debug(json.dumps(query))
     # Acquires a forecast corresponding to a query
     fcst = get_forecast(query, path=forecast_path)
     logger.debug('Obtained the forecast')
@@ -155,3 +146,37 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
             raise
+
+def print_spot(spot):
+
+    assert conv.TIME in spot
+    assert conv.LAT in spot
+    assert conv.LON in spot
+
+    variables = [conv.UWND, conv.VWND]
+    variables = [v for v in variables if v in spot]
+
+    uwnd = spot[conv.UWND][1].reshape(-1)
+    vwnd = spot[conv.VWND][1].reshape(-1)
+    winds = [objects.Wind(u, v) for u, v in zip(uwnd, vwnd)]
+
+    units = spot[conv.TIME][2][conv.UNITS]
+    assert units.startswith('hours')
+    ref_time = units.split('since')[1].strip()
+    ref_time = datetime.datetime.strptime(ref_time, '%Y-%m-%d %H:%M:%S')
+    dates = [ref_time + datetime.timedelta(hours=x) for x in spot[conv.TIME][1]]
+    date_strings = [x.strftime('%Y-%m-%d %H:%M UTC') for x in dates]
+
+    fmt = '%20s\t%3.0f%5s'
+    def iter_lines():
+        yield '%20s\t%8s' % ('Date', 'Wind (K)')
+        for d, w in zip(date_strings, winds):
+            yield fmt % (d, w.speed, w.readable)
+
+    print '\n'.join(iter_lines())
+    import ipdb; ipdb.set_trace()
+
+    n = spot[conv.TIME][1].size
+    for i in range(n):
+        objects.Wind(u, v)
+        line = [np.asscalar(spot[v][1][i]) for v in variables]

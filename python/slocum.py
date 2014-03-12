@@ -22,6 +22,13 @@ from sl import windbreaker
 from sl.lib import griblib, tinylib, rtefcst
 
 
+def handle_spot(args):
+    tinyfcst = zlib.decompress(args.input.read())
+    fcst = tinylib.beaufort_to_dict(tinyfcst)
+    windbreaker.print_spot(fcst)
+    import ipdb; ipdb.set_trace()
+
+
 def handle_grib(args):
     """
     Converts a packed ensemble forecast to a standard GRIB
@@ -54,7 +61,7 @@ def handle_rtefcst(args):
     else:
         ut = None
     rte = rtefcst.Route(ifh=args.rtefile, inFmt=args.rtefmt, utcDept=ut,
-                        avrgSpeed=args.speed) 
+                        avrgSpeed=args.speed)
     args.rtefile.close()
 
     rf = rtefcst.RouteForecast(rte, fcst)
@@ -79,6 +86,7 @@ def setup_parser_grib(p):
     p.add_argument('--output', type=argparse.FileType('wb'),
                    default=sys.stdout)
 
+
 def setup_parser_email(p):
     """
     Configures the argument subparser for handle_email.  p is the
@@ -88,6 +96,7 @@ def setup_parser_email(p):
     p.add_argument('--output', type=argparse.FileType('wb'),
                    default=sys.stdout)
     p.add_argument('--ncdf', default=None)
+
 
 def setup_parser_rtefcst(p):
     """
@@ -106,7 +115,7 @@ def setup_parser_rtefcst(p):
     p.add_argument('--rtefmt', metavar='fmt', choices=['csv'], default='csv',
             help='format of route input file; valid formats: csv')
     utNowStr = dt.datetime.utcnow().strftime('%Y-%m-%dT%H:%M')
-    p.add_argument('--utcdept', metavar='YYYY-mm-ddTHH:MM', default=utNowStr, 
+    p.add_argument('--utcdept', metavar='YYYY-mm-ddTHH:MM', default=utNowStr,
             help='utc of departure; default is current utc')
     p.add_argument('--speed', metavar='SOG', type=float, help=
             'expected average speed over ground in kn; can be ommitted if rtefile contains speeds for each leg of the route')
@@ -120,14 +129,15 @@ def setup_parser_rtefcst(p):
 # parser_setup_handler) tuple.  Subparsers are initialized in __main__  (with
 # the handler function's doc string as help text) and then the appropriate
 # setup handler is called to add the details.
-_task_handler = {'email'   : (handle_email, setup_parser_email),
-                 'grib'    : (handle_grib, setup_parser_grib),
-                 'rtefcst' : (handle_rtefcst, setup_parser_rtefcst)}
+_task_handler = {'email': (handle_email, setup_parser_email),
+                 'grib': (handle_grib, setup_parser_grib),
+                 'rtefcst': (handle_rtefcst, setup_parser_rtefcst),
+                 'spot': (handle_spot, setup_parser_grib)}
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="""
-    Slocum -- A tool for ocean passage planning. 
+    Slocum -- A tool for ocean passage planning.
 
     Joshua Slocum (February 20, 1844 -on or shortly after November 14, 1909)
     was a Canadian-American seaman and adventurer, a noted writer, and the
