@@ -38,14 +38,11 @@ import numpy as np
 from netCDF4 import num2date
 from pyproj import Geod
 from objects import LatLon, Wind
+import units
 
 logger = logging.getLogger(__name__)
 if not __name__ == '__main__':
     logger.addHandler(logging.NullHandler())
-
-# conversion constant
-# TODO: fold into sl.lib.units
-KN_PER_MS = 1.94384449
 
 # Sceleton OpenCPN gpx file (used by exportFcstGPX):
 GPX_WRAPPER = """<?xml version="1.0" encoding="utf-8" ?>
@@ -312,8 +309,9 @@ class Route(object):
                 else:
                     r[2] = avrgSpeed
             try:
+                speed = units.normalize_scalar(float(r[2]), 'knot')
                 self.rtePts.append(Route.RtePoint(LatLon(float(r[0]),
-                                   float(r[1])), float(r[2]) / KN_PER_MS))
+                                   float(r[1])), speed))
             except:
                 raise InvalidInFileError
 
@@ -401,12 +399,12 @@ class RouteForecast(object):
                              "on i = %d" % i)
                 continue
 
-            # TODO: delete once standard wind speeds are m/s in units.py;
-            #       or check for != 'm/s' and convert with unit.py dictionary
-            if self.fcst['uwnd'].attributes['units'] == 'knot':
-                u = u / KN_PER_MS
-            if self.fcst['vwnd'].attributes['units'] == 'knot':
-                v = v / KN_PER_MS
+            # TODO: delete afetr checking new xray; all internal units are
+            # asumed to be in default units
+            # if self.fcst['uwnd'].attributes['units'] == 'knot':
+            #    u = u / KN_PER_MS
+            # if self.fcst['vwnd'].attributes['units'] == 'knot':
+            #    v = v / KN_PER_MS
 
             rteFcst.append(FcstWP(self.rte.curPos.lat, self.rte.curPos.lon, u,
                                   v, self.fTimes[i], np.radians(cog), sog))
@@ -487,11 +485,13 @@ class RouteForecast(object):
             # construct name string:
             if windApparent:
                 awa, wwSide, aws = appWind(fp.wind, fp.cog, fp.sog)
+                wspeed = units.covert_from_default(aws, 'knot')
                 nameStr = "%d%s@%d" % (round(np.degrees(awa)), wwSide,
-                                        round(aws * KN_PER_MS))
+                                        round(wspeed))
             else:
+                wspeed = units.covert_from_default(fp.wind.speed, 'knot')
                 nameStr = "%d@%d" % (round(np.degrees(fp.wind.nautical_dir())),
-                                     round(fp.wind.speed * KN_PER_MS))
+                                     round(wspeed))
             if timeLabels:
                 nameStr += " %s" % fp.utc.strftime("%HZ%d%b")
             wp_name.text = nameStr
