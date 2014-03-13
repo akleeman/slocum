@@ -1,6 +1,7 @@
 import numpy as np
 
 from bisect import bisect
+import re
 
 
 class NautAngle(float):
@@ -75,6 +76,59 @@ class NautAngle(float):
                   or float)
 
     """
+    # _string_conversion maps a tuple (compiled regex, handler function) to
+    # each string format that can be used to initialize a  NautAngle instance.
+    # The handler function will receive the match object's groupdict as the
+    # only argument and it needs to return the angle's value (unnormalized) as
+    # a float prior to applying any sign encoded in a N/S/E/W pre-/post-fix.
+    # All re assume that a N/S/E/W character indicatiing the sign has alread
+    # been stripped out of the string and there is no leading or trailing
+    # whitespace.
+    _string_conversion = {}
+
+    # as decimal degrees (ddd.ddd):
+    def __read_deg_str(matchDict):
+        sign = -1 if matchDict['sign'] == '-' else 1
+        return float(matchDict['degrees']) * sign
+
+    _string_conversion['deg'] = (
+            re.compile(r'''(?P<sign>[+-]?)
+                       [ ]*
+                       (?P<degrees>[0-9]{1,3}(\Z|([.][0-9]*)\Z))
+                       ''', re.VERBOSE),
+            __read_deg_str)
+
+    # as degrees and minutes (ddd mm.mmm):
+    def __read_deg_min_str(matchDict):
+        sign = -1 if matchDict['sign'] == '-' else 1
+        return ((float(matchDict['degrees']) + float(matchDict['minutes'])
+                / 60.) * sign)
+
+    _string_conversion['deg_min'] = (
+            re.compile(r'''(?P<sign>[+-]?)
+                       [ ]*
+                       (?P<degrees>[0-9]{1,3})
+                       [ ]+
+                       (?P<minutes>[0-5]?[0-9](\Z|([.][0-9]*)\Z))
+                       ''', re.VERBOSE),
+            __read_deg_min_str)
+
+    # as degrees, minutes and seconds (ddd mm ss.sss):
+    def __read_deg_min_sec_str(matchDict):
+        sign = -1 if matchDict['sign'] == '-' else 1
+        return ((float(matchDict['degrees']) + float(matchDict['minutes'])
+                / 60. + float(matchDict['seconds']) / 3600.) * sign)
+
+    _string_conversion['deg_min_sec'] = (
+            re.compile(r'''(?P<sign>[+-]?)
+                       [ ]*
+                       (?P<degrees>[0-9]{1,3})
+                       [ ]+
+                       (?P<minutes>[0-5]?[0-9])
+                       [ ]+
+                       (?P<seconds>[0-5]?[0-9](\Z|([.][0-9]*\Z)))
+                       ''', re.VERBOSE),
+            __read_deg_min_sec_str)
 
     @staticmethod
     def normalize(degrees):
@@ -86,14 +140,23 @@ class NautAngle(float):
         except NameError:
             strArg = isinstance(angle, str)         # Python 3
         if strArg:
+            _angle = angle
             name = 'N'
             for s in "NSEW":
                 if s in angle.upper():
-                    angle = angle.upper().replace(s, '')
+                    _angle = _angle.upper().replace(s, '').strip()
                     name = s
                     break
             sign = -1 if name in "SW" else 1
-            degrees = sign * float(angle)
+            for r in NautAngle._string_conversion.values():
+                m = r[0].match(_angle)
+                if m:
+                    degrees = sign * r[1](m.groupdict())
+                    break
+            else:
+                raise InvalidAngleFormat(
+                        "Invalid string for initializing NautAngle "
+                        "object: %s" % angle)
         else:
             degrees = angle
 
@@ -103,20 +166,12 @@ class NautAngle(float):
     def radians(self):
         return np.radians(self.real)
 
-    def __str__(self):
-        # keep simple so we can initialize a NautAngle object with
-        # NautAngle(str(x)), even if we don't know whether x is a float or a
-        # NautAngle object.
-        # TODO: Change constructor to also work for strings like "ddd mm.mmm"
-        #
-        # whole = int(self.degrees)
-        # minutes = (abs(self.degrees) - abs(whole)) * 60
-        # return "%d %07.4f" % (whole, minutes)
-        #
-        return str(self.real)
+    # move to some prettyprint method if needed
 
-    def __repr__(self):
-        return str(self.real)
+    # def __str__(self):
+    #     whole = int(self.real)
+    #     minutes = (abs(self.real) - abs(whole)) * 60
+    #     return "%d %07.4f" % (whole, minutes)
 
     def distance_to(self, other):
         """
@@ -209,6 +264,13 @@ class NautAngle(float):
             return NautAngle(-self.distance_to(other))
 
 
+
+class InvalidAngleFormat(Exception):
+    """
+    Indicates invalid string for intializing NautAngle object
+    """
+
+
 class Wind(object):
     """
     An object which holds wind data for a single location,
@@ -228,7 +290,7 @@ class Wind(object):
         # 'S' is anything before first or after last bin
         bins = np.linspace(-15 * np.pi/16, 15 * np.pi/16, 16)
         names = ['S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'N', 'NNE',
-                'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S']
+                 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S']
         self.readable = names[bisect(bins, self.dir)]
 
     def nautical_dir(self):
@@ -248,8 +310,8 @@ class LatLon(object):
     and lon in [-180, 180[.
     """
     def __init__(self, lat, lon):
-        assert -90. <= lat <= 90. # in case anyone is crazy enough to sail
-                                  # there and causes floating-point issues
+        assert -90. <= lat <= 90.  # in case anyone is crazy enough to sail
+                                   # there and causes floating-point issues
         self.lat = lat
         self.lon = np.mod(lon + 180, 360) - 180
 
