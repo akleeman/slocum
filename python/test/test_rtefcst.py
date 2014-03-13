@@ -51,12 +51,12 @@ class RouteTest(unittest.TestCase):
 
         # check basic route set-up:
         self.assertEqual(len(r.rtePts), 4)
-        self.assertAlmostEqual(r.curPos.lat, r.rtePts[0].wp.lat)
-        self.assertAlmostEqual(r.curPos.lon, r.rtePts[0].wp.lon)
-        self.assertAlmostEqual(r.ur.lat, r.rtePts[2].wp.lat)
-        self.assertAlmostEqual(r.ur.lon, r.rtePts[3].wp.lon)
-        self.assertAlmostEqual(r.ll.lat, r.rtePts[0].wp.lat)
-        self.assertAlmostEqual(r.ll.lon, r.rtePts[0].wp.lon)
+        self.assertAlmostEqual(r.curPos.lat, r.rtePts[0].lat)
+        self.assertAlmostEqual(r.curPos.lon, r.rtePts[0].lon)
+        self.assertAlmostEqual(r.bbox.north, r.rtePts[2].lat)
+        self.assertAlmostEqual(r.bbox.east, r.rtePts[3].lon)
+        self.assertAlmostEqual(r.bbox.south, r.rtePts[0].lat)
+        self.assertAlmostEqual(r.bbox.west, r.rtePts[0].lon)
 
         d, t = r.updateUtcArrival()
         self.assertAlmostEqual(float(d) / t, 2.2419884)
@@ -77,33 +77,35 @@ class RouteTest(unittest.TestCase):
         deltaT = dt.timedelta(0, 40 * 3600)
         course, speed, remT = r.advanceCurPos(deltaT)
         self.assertAlmostEqual(remT.total_seconds(), 25769.0, places=1)
-        self.assertAlmostEqual(r.curPos.lat, r.rtePts[-1].wp.lat)
+        self.assertAlmostEqual(r.curPos.lat, r.rtePts[-1].lat)
         self.assertIsNone(course)
         self.assertIsNone(speed)
 
         # append waypoint and re-check arrival time and bbox
-        r.rtePts.append(rtefcst.Route.RtePoint(objects.LatLon(-34.3, 154.3), 5))
+        r.rtePts.append(
+                rtefcst.Route.RtePoint(objects.NautAngle(-34.3),
+                    objects.NautAngle(154.3), 5))
         d, t = r.updateUtcArrival()
         self.assertAlmostEqual(d, 358293.980918, places=2)
         deltaT = r.utcArrival - r.utcDept
         self.assertAlmostEqual(deltaT.total_seconds(), 163533.002444, places=1)
         r.updateBBox()
-        self.assertAlmostEqual(r.ur.lat, r.rtePts[2].wp.lat)
-        self.assertAlmostEqual(r.ur.lon, r.rtePts[4].wp.lon)
-        self.assertAlmostEqual(r.ll.lat, r.rtePts[4].wp.lat)
-        self.assertAlmostEqual(r.ll.lon, r.rtePts[0].wp.lon)
+        self.assertEqual(r.bbox.north, r.rtePts[2].lat)
+        self.assertEqual(r.bbox.east, r.rtePts[4].lon)
+        self.assertEqual(r.bbox.south, r.rtePts[4].lat)
+        self.assertEqual(r.bbox.west, r.rtePts[0].lon)
         
         # getPos:
         p, course, speed = r.getPos(dt.datetime(2014, 2, 2, 12, 0, 0))
         self.assertAlmostEqual(p.lat, -33.342428226)
         self.assertAlmostEqual(p.lon, 153.314862881)
-        self.assertAlmostEqual(r.curPos.lat, r.rtePts[3].wp.lat)
+        self.assertAlmostEqual(r.curPos.lat, r.rtePts[3].lat)
         self.assertAlmostEqual(course, 105.650454424, places=6)
         self.assertAlmostEqual(speed, 2.05777778036)
         self.assertRaises(rtefcst.TimeOverlapError, r.getPos, 
                 dt.datetime(2014, 3, 2, 12, 0, 0))
 
-
+"""
 class RteFcstTest(unittest.TestCase):
 
     with open(os.path.join(TEST_DIR, 'rtefcst_test.fcst'), 'rb') as wb:
@@ -146,7 +148,7 @@ class RteFcstTest(unittest.TestCase):
         outStr = ofh.getvalue()
         ofh.close()
         self.assertEqual(expectedTrueWindOutStr, outStr)
-
+"""
 if __name__ == '__main__':
 
     unittest.main()

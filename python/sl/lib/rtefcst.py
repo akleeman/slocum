@@ -34,10 +34,12 @@ import csv
 import logging
 from bisect import bisect, bisect_left, bisect_right
 import xml.etree.ElementTree as ET
+
 import numpy as np
 from netCDF4 import num2date
 from pyproj import Geod
-from objects import LatLon, Wind
+
+from objects import Wind, NautAngle, Position, BoundingBox, LatLon
 
 logger = logging.getLogger(__name__)
 if not __name__ == '__main__':
@@ -47,7 +49,7 @@ if not __name__ == '__main__':
 # TODO: fold into sl.lib.units
 KN_PER_MS = 1.94384449
 
-# Sceleton OpenCPN gpx file (used by exportFcstGPX):
+# Skeleton OpenCPN gpx file (used by exportFcstGPX):
 GPX_WRAPPER = """<?xml version="1.0" encoding="utf-8" ?>
 <gpx version="1.1" creator="OpenCPN" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" xmlns:opencpn="http://www.opencpn.org">
 </gpx>
@@ -83,7 +85,8 @@ class Route(object):
     """
     # TODO: add parsers for different import formats
 
-    RtePoint = namedtuple('RtePoint', ['wp', 'speed'])
+    # lat/lon, north/south/east/west will be NautAngle objects, speed in m/s
+    RtePoint = namedtuple('RtePoint', ['lat', 'lon', 'speed'])
 
     geod = Geod(ellps='WGS84')
 
@@ -96,11 +99,13 @@ class Route(object):
         leg speeds in the input.  If no ifh is provided the route object will
         be constructed with an empty rtePts list.  If no avrgSpeed > 0 is
         provided and the input file contains missing leg speeds an
-        'InvalidInFileError' will be raised.  Note: longitudes in rtePts will
-        be in range 0..360 (see objects.LatLon).  Use nautical_latlon() method
-        of objects.LatLon to get a (lat, lon) tuple with lon in range
-        -180..180.
+        'InvalidInFileError' will be raised.
+        Note: longitudes in rtePts will be in range [-180, 180[ (see
+        objects.NautAngle).  Use full_circle method of NautAngle to get an
+        angle in the [0, 360[ range.
         """
+        # TODO: Update last part of docstring
+
         self.utcDept = utcDept
         self.rtePts = []
 
@@ -113,31 +118,33 @@ class Route(object):
             raise (InvalidInFormatError,
                    "Invalid route file format specifier: %s" % inFmt)
 
-        self.ur, self.ll = self.updateBBox()
-
-        self.resetCurPos()
+        
+        self.bbox = BoundingBox(*self.updateBBox())
+        self.curPos = Position(*self.resetCurPos())
         self.updateUtcArrival()
 
     def updateBBox(self):
         """
         Determines bounding box for route based on current lat/lon values in
-        self.rtePts, defined as ur and ll corners. Returns (ur, ll) tuple.  If
-        self.ur and self.ll exist they will be updated with the new values.
+        self.rtePts. Returns a tuple with the north, south, east, west values
+        (all as NautAngle objects). If hasattr(self, bbox) it will also update
+        self.bbox.
         """
-        ll = LatLon(90, 359.999999)
+        north = south = self.rtePts[0].lat
+        east = west = self.rtePts[0].lon
 
-        ur = LatLon(-90, 0)
+        for p in self.rtePts[1:]:
+            if p.lat < south: south = p.lat
+            if p.lat > north: north = p.lat
+            if p.lon < west: west = p.lon
+            if p.lon > east: east = p.lon
 
-        for p in self.rtePts:
-            if p.wp.lat < ll.lat: ll.lat = p.wp.lat
-            if p.wp.lat > ur.lat: ur.lat = p.wp.lat
-            if p.wp.lon < ll.lon: ll.lon = p.wp.lon
-            if p.wp.lon > ur.lon: ur.lon = p.wp.lon
+        assert east >= west
 
-        if hasattr(self, 'ur'): self.ur = ur.copy()
-        if hasattr(self, 'll'): self.ll = ll.copy()
+        if hasattr(self, 'bbox'):
+            self.bbox = BoundingBox(north, south, east, west)
 
-        return ur, ll
+        return north, south, east, west
 
     def updateUtcArrival(self):
         """
@@ -152,43 +159,41 @@ class Route(object):
         ttime = 0.                          # total time in seconds
         tdist = 0.                          # total distance in meters
         for cur, nxt in zip(self.rtePts[:-1], self.rtePts[1:]):
-
-            az12, az21, dist = Route.geod.inv(cur.wp.lon, cur.wp.lat,
-                                              nxt.wp.lon, nxt.wp.lat)
+            __, __, dist = Route.geod.inv(cur.lon, cur.lat, nxt.lon, nxt.lat)
             tdist += dist
             ttime += float(dist) / cur.speed
 
+        # TODO: only update if hasattr(self, 'utcArrivel') and return arrival
+        # time (need to eliminate use of current return values in unit test)
         self.utcArrival = self.utcDept + dt.timedelta(0, int(round(ttime)))
 
         return (tdist, ttime)
 
     def getPos(self, utc):
         """
-        Returns a tuple (LatLon, course, speed) with the boat's position as a
-        LatLon object, course over ground in deg true, and SOG in m/s along the
-        route at time utc, a dateime object.  Does not update self.curPos.
-        Raises TimeOverlapError if utc is before self.utcDept or after
-        self.utcArrival of arrival.
+        Returns a tuple (position, course, speed) with the boat's position as a
+        Position namedtuple with lat/lon as two NautAngle objects, course over
+        ground in deg true, and SOG in m/s along the route at time utc, a
+        datetime object.  Does not update self.curPos.  Raises TimeOverlapError
+        if utc is before self.utcDept or after self.utcArrival of arrival.
         """
         if utc < self.utcDept:
             raise (TimeOverlapError,
                    "position requested for time before departure")
-
         self.updateUtcArrival()     # just in case some one messed with the
-                                    # waypoint list
         if utc > self.utcArrival:
             raise TimeOverlapError, "position requested for time after arrival"
 
         deltaT = utc - self.utcDept
-        origCurPos = self.curPos
+        origPos = self.curPos
         origWP = (self.prevWP, self.nextWP)
-        self.curPos = self.rtePts[0].wp.copy()
+        self.curPos = Position(*self.rtePts[0][:2])
         self.prevWP, self.nextWP = (0, 1)
         # TODO: If any exception from advanceCurPos is handled somewhere, the
         # handler needs to restore the orig values
         course, speed, deltaT = self.advanceCurPos(deltaT)
         tmpCurPos = self.curPos
-        self.curPos = origCurPos
+        self.curPos = origPos
         self.prevWP, self.nextWP = origWP
 
         return tmpCurPos, course, speed
@@ -213,8 +218,8 @@ class Route(object):
                                            # forecast time
             az12, __, __ = Route.geod.inv(self.curPos.lon,
                                     self.curPos.lat,
-                                    self.rtePts[self.nextWP].wp.lon,
-                                    self.rtePts[self.nextWP].wp.lat)
+                                    self.rtePts[self.nextWP].lon,
+                                    self.rtePts[self.nextWP].lat)
             logger.debug("exiting advanceCurPos with deltaT: % d sec, "
                     "curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
                         (deltaT.total_seconds(), self.curPos.lat,
@@ -225,12 +230,12 @@ class Route(object):
 
             az12, __, distToNext = Route.geod.inv(self.curPos.lon,
                                             self.curPos.lat,
-                                            self.rtePts[self.nextWP].wp.lon,
-                                            self.rtePts[self.nextWP].wp.lat)
+                                            self.rtePts[self.nextWP].lon,
+                                            self.rtePts[self.nextWP].lat)
 
             # TODO: agree on what's 'at the WP' (100m)?
             if distToNext < 100:
-                self.curPos = self.rtePts[self.nextWP].wp.copy()
+                self.curPos = Position(*self.rtePts[self.nextWP][:2])
                 self.__advancePrevNext()
                 continue
 
@@ -239,9 +244,9 @@ class Route(object):
 
             if deltaT < tToNext:    # new curPos in this iteration
                 dist = deltaT.total_seconds() * self.rtePts[self.prevWP].speed
-                self.curPos.lon, self.curPos.lat, __ = (
-                    Route.geod.fwd(self.curPos.lon, self.curPos.lat, az12,
-                                   dist))
+                lon, lat, __ = Route.geod.fwd(
+                        self.curPos.lon, self.curPos.lat, az12, dist)
+                self.curPos = Position(lat, lon)
                 deltaT = dt.timedelta(0)
                 logger.debug("exiting advanceCurPos with deltaT: % d sec, "
                         "curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
@@ -250,7 +255,7 @@ class Route(object):
                 return az12, self.rtePts[self.prevWP].speed, deltaT
             else:                   # move to next WP
                 deltaT -= tToNext
-                self.curPos = self.rtePts[self.nextWP].wp.copy()
+                self.curPos = Position(*self.rtePts[self.nextWP][:2])
                 prevWP, nextWP = self.__advancePrevNext()
                 if nextWP is None:
                     logger.debug("exiting advanceCurPos with deltaT: % d sec,"
@@ -261,24 +266,30 @@ class Route(object):
 
     def resetCurPos(self):
         """
-        Resets self.curPos to first wp and prevWP and nextWP to 0 and 1
-        respectively (or nextWP = None if route has only one wp).
+        Returns a tuple (lat, lon) with values from the first waypoint
+        in the route. Resets prevWP and nextWP to 0 and 1 respectively (or
+        nextWP = None if route has only one wp). If hasattr(self, 'curPos')
+        self.curPos is also updated.
         """
         if len(self.rtePts) > 0:
-            self.curPos = self.rtePts[0].wp.copy()
+            lat, lon = self.rtePts[0][:2]
             self.prevWP = 0
             if len(self.rtePts) > 1:
                 self.nextWP = 1
-                if not self.utcDept is None:
+                if self.utcDept:
                     self.updateUtcArrival()
                 else:
                     self.utcArrive = self.utcDept
             else:
                 self.nextWP = None
         else:
-            self.curPos = None
-            self.prevWP = None
-            self.nextWP = None
+            lat = lon = None
+            self.prevWP = self.nextWP = None
+
+        if hasattr(self, 'curPos'):
+            self.curPos = Position(lat, lon)
+
+        return lat, lon
 
     def __advancePrevNext(self):
         """
@@ -286,7 +297,7 @@ class Route(object):
         reaches the end of the route nextWP will be set to None.  Returns a
         (prevWP, nextWP) tuple.
         """
-        if self.nextWP is not None:
+        if self.nextWP:
             self.prevWP = self.nextWP
             if self.nextWP == len(self.rtePts) - 1:   # already at the end
                 self.nextWP = None
@@ -312,8 +323,9 @@ class Route(object):
                 else:
                     r[2] = avrgSpeed
             try:
-                self.rtePts.append(Route.RtePoint(LatLon(float(r[0]),
-                                   float(r[1])), float(r[2]) / KN_PER_MS))
+                self.rtePts.append(
+                        Route.RtePoint(NautAngle(r[0]), NautAngle(r[1]),
+                                       float(r[2]) / KN_PER_MS))
             except:
                 raise InvalidInFileError
 
@@ -615,9 +627,6 @@ class PointNotInsideGrid(RegionOverlapError):
 
 
 if __name__ == '__main__':
-
-    import zlib
-    import tinylib
 
     fmt = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
     logging.basicConfig(level=logging.DEBUG, format=fmt)
