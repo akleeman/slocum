@@ -22,6 +22,13 @@ from sl import windbreaker
 from sl.lib import griblib, tinylib, rtefcst
 
 
+def handle_spot(args):
+    tinyfcst = zlib.decompress(args.input.read())
+    fcst = tinylib.beaufort_to_dict(tinyfcst)
+    windbreaker.print_spot(fcst)
+    import ipdb; ipdb.set_trace()
+
+
 def handle_grib(args):
     """
     Converts a packed ensemble forecast to a standard GRIB
@@ -57,7 +64,7 @@ def handle_route_forecast(args):
     else:
         ut = None
     rte = rtefcst.Route(ifh=args.rtefile, inFmt=args.rtefmt, utcDept=ut,
-                        avrgSpeed=args.speed)
+                        avrgSpeed=args.speed) 
     args.rtefile.close()
 
     rf = rtefcst.RouteForecast(rte, fcst)
@@ -81,7 +88,6 @@ def setup_parser_grib(p):
     p.add_argument('--input', type=argparse.FileType('rb'), default=sys.stdin)
     p.add_argument('--output', type=argparse.FileType('wb'),
                    default=sys.stdout)
-
 
 def setup_parser_email(p):
     """
@@ -130,10 +136,10 @@ def setup_parser_route_forecast(p):
 # parser_setup_handler) tuple.  Subparsers are initialized in __main__  (with
 # the handler function's doc string as help text) and then the appropriate
 # setup handler is called to add the details.
-_task_handler = {'email': (handle_email, setup_parser_email),
-                 'grib': (handle_grib, setup_parser_grib),
-                 'route-forecast': (handle_route_forecast,
-                                    setup_parser_route_forecast)}
+_task_handler = {'email'   : (handle_email, setup_parser_email),
+                 'grib'    : (handle_grib, setup_parser_grib),
+                 'rtefcst' : (handle_rtefcst, setup_parser_rtefcst),
+				 'spot': (handle_spot, setup_parser_grib)}
 
 if __name__ == "__main__":
 

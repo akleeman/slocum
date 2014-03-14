@@ -145,7 +145,7 @@ def validate_model(model):
         model = 'gfs'
         warnings.append('Using default model of %s' % model)
     model = model.lower().strip()
-    if not model in _supported_models:
+    if not model in _supported_models and model != 'spot':
         raise BadQuery("Unsupported model %s" % model)
     return model, warnings
 
@@ -173,7 +173,7 @@ def parse_domain(domain_str):
         """ Turns a latlon string into a float """
         sign = -2. * (latlon[-1].lower() in ['s', 'w']) + 1
         return float(latlon[:-1]) * sign
-    corners = domain_str.split(',')
+    corners = domain_str.strip().split(',')
     if not len(corners) == 4:
         raise BadQuery("Expected four comma seperated values "
                        "defining the corners of the domain.")
@@ -215,6 +215,58 @@ def parse_domain(domain_str):
     domain = {'N': lats[1], 'S': lats[0],
               'W': lons[1], 'E': lons[0]}
     return domain
+
+
+def parse_location(location_str):
+    """
+    Parses the location from a string that follows the
+    saildocs format of:
+
+    lat,lon or lon,lat
+
+    each entry must include the direction N,S,E,W.
+
+    Returns
+    -------
+    {'latitude': float, 'longitude': float}
+    """
+    def floatify(latlon):
+        """ Turns a latlon string into a float """
+        sign = -2. * (latlon[-1].lower() in ['s', 'w']) + 1
+        return float(latlon[:-1]) * sign
+    points = location_str.strip().split(',')
+    if not len(points) == 2:
+        raise BadQuery("Expected four comma seperated values "
+                       "defining a single point.")
+
+    is_lat = lambda x: x[-1].lower() in ['n', 's']
+    lat = filter(is_lat, points)
+    if not len(lat) == 1:
+        raise BadQuery("Expected two latitudes (determined by " +
+                       "values ending in 'N' or 'S'")
+    is_lon = lambda x: x[-1].lower() in ['e', 'w']
+    lon = filter(is_lon, points)
+    if not len(lon) == 1:
+        raise BadQuery("Expected two longitudes (determined by " +
+                       "values ending in 'E' or 'W'")
+    lat = floatify(lat[0])
+    lon = floatify(lon[0])
+
+    # make sure latitude is in range.
+    if (lat > 90.) or (lat < -90):
+        raise BadQuery("Latitude must be within -90 and 90, got %s" %
+                       str(lat))
+    # we let the user use either longitudes of 0 to 360
+    # or -180 to 180, then convert to nautical (-180 to 180).
+    if lon > 360. or lon < -180.:
+        raise BadQuery("Longitudes must be within -180 and 360, got %s" %
+                       str(lon))
+    # make sure lons end up in -180 to 180.
+    lon = np.mod(lon + 180., 360.) - 180.
+
+    location = {'latitude': lat,
+              'longitude': lon}
+    return location
 
 
 def parse_hours(hours_str):
@@ -274,6 +326,31 @@ def parse_hours(hours_str):
     return list(iter_hours()), warnings
 
 
+def parse_times(time_str):
+    """
+    spot forecasts use different formats for requesting forecast times.
+    While that is unfortunate, for cross compatibility we do the same.
+
+    Time strings take the form:
+
+        days,interval
+
+    So 4,3 would be every 3 hours for 4 days.
+    """
+    warnings = []
+    days, interval = time_str.split(',')
+    assert int(days) == float(days)
+    days = int(days)
+    assert int(interval) == float(interval)
+    interval = int(interval)
+    if interval < 3:
+        warnings.append('Minimum interval is 3 hours')
+    if days > 14:
+        warnings.append('Maximum spot forecast period is 14 days')
+    hours = np.arange(days * 24 + 1)[::interval]
+    return hours.tolist(), warnings
+
+
 def parse_grid(grid_str):
     """
     Parses a string representation of grid deltas, makes sure
@@ -315,20 +392,20 @@ def parse_grid(grid_str):
     return (np.abs(lat_delta), np.abs(lon_delta)), warnings
 
 
-def parse_send_request(body):
+def split_fields(request, k):
+    fields = re.split(u'[\|\/\u015a]', unicode(request.strip()))
+    return list(itertools.chain(fields, [None] * k))[:k]
+
+
+def parse_forecast_request(request):
     """
-    Parses the a saildoc-like send request and returns
-    a dictionary of attributes from the query.
+
     """
     warnings = []
-    # takes the first 3 '|' separated fields, if fewer than
+    # takes the first 4 '|' separated fields, if fewer than
     # k exist the missing fields are replaced with None
-    iter_fields = itertools.chain(body.strip().split('|'), [None] * 3)
-    model_domain, grid_str, hours_str, variables = list(iter_fields)[:4]
-    # the model and domain are colon separated.
+    model_domain, grid_str, hours_str, variables = split_fields(request, 4)
     model, domain_str = model_domain.split(':')
-    # make sure the model exists
-    model, _ = validate_model(model)
     # parse the domain and make sure its ok
     domain = parse_domain(domain_str)
     # parse the grid_string
@@ -344,12 +421,58 @@ def parse_send_request(body):
         variables = variables.split(',')
     variables, var_warnings = validate_variables(variables)
     warnings.extend(var_warnings)
-    return {'model': model,
-             'domain': domain,
-             'grid_delta': grid_delta,
-             'hours': hours,
-             'vars': variables,
-             'warnings': warnings}
+    return {'type': 'gridded',
+            'model': model.lower().strip(),
+            'domain': domain,
+            'grid_delta': grid_delta,
+            'hours': hours,
+            'vars': variables,
+            'warnings': warnings}
+
+
+def parse_spot_request(request):
+    warnings = []
+    model_domain, time_str, variables = split_fields(request, 3)
+    model, location_str = model_domain.split(':')
+    # TODO: The saildocs style spot requests don't allow you
+    # to specify a forecast provider.  For now we assume GFS, but
+    # in the future it would be nice to allow more flexible requests.
+    model = 'gfs'
+
+    location = parse_location(location_str)
+
+    hours, time_warnings = parse_times(time_str)
+    warnings.extend(time_warnings)
+
+    if variables is None:
+        variables = []
+    else:
+        variables = variables.split(',')
+    variables, var_warnings = validate_variables(variables)
+    warnings.extend(var_warnings)
+
+    return {'type': 'spot',
+            'model': model,
+            'location': location,
+            'hours': hours,
+            'vars': variables,
+            'warnings': warnings}
+
+
+def parse_send_request(body):
+    """
+    Parses the a saildoc-like send request and returns
+    a dictionary of attributes from the query.
+    """
+    # the model and domain are colon separated.
+    model_domain, = split_fields(body, 1)
+    model, _ = model_domain.split(':', 1)
+    # make sure the model exists
+    model, _ = validate_model(model)
+    if model == 'spot':
+        return parse_spot_request(body)
+    else:
+        return parse_forecast_request(body)
 
 
 def parse_saildocs_query(query_str):
@@ -389,5 +512,4 @@ def parse_saildocs_query(query_str):
         query = parse_send_request(args)
     else:
         raise BadQuery("Unknown command handler.")
-
     return query
