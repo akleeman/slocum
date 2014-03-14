@@ -40,14 +40,17 @@ def handle_email(args):
     windbreaker.windbreaker(args.input.read(), args.ncdf, output=args.output)
 
 
-def handle_rtefcst(args):
+def handle_route_forecast(args):
     """
     Generates a gpx waypoint file with wind forecast info along a route
     provided in an input file.
     """
-    tinyfcst = zlib.decompress(args.input.read())
-    args.input.close()
-    fcst = tinylib.from_beaufort(tinyfcst)
+#     tinyfcst = zlib.decompress(args.input.read())
+#     args.input.close()
+#     fcst = tinylib.from_beaufort(tinyfcst)
+
+    import xray
+    fcst = xray.open_dataset(args.input.name)
 
     if args.utcdept:
         ut = dt.datetime.strptime(args.utcdept, '%Y-%m-%dT%H:%M')
@@ -73,7 +76,7 @@ def handle_rtefcst(args):
 def setup_parser_grib(p):
     """
     Configures the argument subparser for handle_grib.  p is the
-    ArgumentParser object for the rtefcst subparser.
+    ArgumentParser object for the route_forecast subparser.
     """
     p.add_argument('--input', type=argparse.FileType('rb'), default=sys.stdin)
     p.add_argument('--output', type=argparse.FileType('wb'),
@@ -83,7 +86,7 @@ def setup_parser_grib(p):
 def setup_parser_email(p):
     """
     Configures the argument subparser for handle_email.  p is the
-    ArgumentParser object for the rtefcst subparser.
+    ArgumentParser object for the route_forecast subparser.
     """
     p.add_argument('--input', type=argparse.FileType('rb'), default=sys.stdin)
     p.add_argument('--output', type=argparse.FileType('wb'),
@@ -91,10 +94,10 @@ def setup_parser_email(p):
     p.add_argument('--ncdf', default=None)
 
 
-def setup_parser_rtefcst(p):
+def setup_parser_route_forecast(p):
     """
-    Configures the argument subparser for handle_rtefcst.  p is the
-    ArgumentParser object for the rtefcst subparser.
+    Configures the argument subparser for handle_route_forecast.  p is the
+    ArgumentParser object for the route_forecast subparser.
     """
     p.add_argument('--input', metavar='fcst_file',
                    type=argparse.FileType('rb'), default=sys.stdin,
@@ -129,7 +132,8 @@ def setup_parser_rtefcst(p):
 # setup handler is called to add the details.
 _task_handler = {'email': (handle_email, setup_parser_email),
                  'grib': (handle_grib, setup_parser_grib),
-                 'rtefcst': (handle_rtefcst, setup_parser_rtefcst)}
+                 'route-forecast': (handle_route_forecast,
+                                    setup_parser_route_forecast)}
 
 if __name__ == "__main__":
 
