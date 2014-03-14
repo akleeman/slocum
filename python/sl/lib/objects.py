@@ -1,7 +1,11 @@
+from collections import namedtuple
+
 import numpy as np
 
 from bisect import bisect
 
+BoundingBox = namedtuple('BoundingBox', ['north', 'south', 'east', 'west'])
+Position = namedtuple('Position', ['lat', 'lon'])
 
 class NautAngle(float):
 
@@ -208,6 +212,11 @@ class NautAngle(float):
                                             # -> return a NautAngle object
             return NautAngle(-self.distance_to(other))
 
+    def full_circle(self):
+        """
+        Returns angle as a float value in the [0, 360[ range.
+        """
+        return self.real % 360.
 
 class Wind(object):
     """

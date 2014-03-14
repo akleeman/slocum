@@ -28,26 +28,25 @@ Utility functions (available at module level):
                         and speed plus boat COG and SOG.
 """
 
-import datetime as dt
-from collections import namedtuple
 import csv
-import logging
-from bisect import bisect, bisect_left, bisect_right
-import xml.etree.ElementTree as ET
 import numpy as np
+import logging
+import datetime as dt
+import xml.etree.ElementTree as ET
+
+from bisect import bisect, bisect_left, bisect_right
+from collections import namedtuple
 from netCDF4 import num2date
 from pyproj import Geod
-from objects import LatLon, Wind
+
+import units
+from objects import Wind, NautAngle, Position, BoundingBox, LatLon
 
 logger = logging.getLogger(__name__)
 if not __name__ == '__main__':
     logger.addHandler(logging.NullHandler())
 
-# conversion constant
-# TODO: fold into sl.lib.units
-KN_PER_MS = 1.94384449
-
-# Sceleton OpenCPN gpx file (used by exportFcstGPX):
+# Skeleton OpenCPN gpx file (used by exportFcstGPX):
 GPX_WRAPPER = """<?xml version="1.0" encoding="utf-8" ?>
 <gpx version="1.1" creator="OpenCPN" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" xmlns:opencpn="http://www.opencpn.org">
 </gpx>
@@ -101,7 +100,7 @@ class Route(object):
         of objects.LatLon to get a (lat, lon) tuple with lon in range
         -180..180.
         """
-        self.utcDept = utcDept
+        self.utcDept = np.datetime64(utcDept)
         self.rtePts = []
 
         if ifh is None:     # in case we want to roll our own
@@ -157,9 +156,7 @@ class Route(object):
                                               nxt.wp.lon, nxt.wp.lat)
             tdist += dist
             ttime += float(dist) / cur.speed
-
-        self.utcArrival = self.utcDept + dt.timedelta(0, int(round(ttime)))
-
+        self.utcArrival = self.utcDept + np.timedelta64(int(round(ttime)), 's')
         return (tdist, ttime)
 
     def getPos(self, utc):
@@ -202,14 +199,14 @@ class Route(object):
         timedelta object (0 if the new position is still before the last WP).
         """
         logger.debug(
-            "advanceCurPos called with deltaT: %d sec, curPos: "
+            "advanceCurPos called with deltaT: sec %d, curPos: "
             "%.3f %.3f, prevWP: %d, nextWP: %d" %
-            (deltaT.total_seconds(), self.curPos.lat, self.curPos.lon,
+            (units.total_seconds(deltaT), self.curPos.lat, self.curPos.lon,
             self.prevWP, self.nextWP))
 
         if self.nextWP is None:     # we're already at the end of the route
             return None, None, deltaT
-        elif deltaT.total_seconds() <= 0:  # utcDept coincides with
+        elif deltaT <= 0:  # utcDept coincides with
                                            # forecast time
             az12, __, __ = Route.geod.inv(self.curPos.lon,
                                     self.curPos.lat,
@@ -217,11 +214,11 @@ class Route(object):
                                     self.rtePts[self.nextWP].wp.lat)
             logger.debug("exiting advanceCurPos with deltaT: % d sec, "
                     "curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
-                        (deltaT.total_seconds(), self.curPos.lat,
+                        (units.total_seconds(deltaT), self.curPos.lat,
                             self.curPos.lon, self.prevWP, self.nextWP))
             return az12, self.rtePts[self.prevWP].speed, deltaT
 
-        while deltaT.total_seconds() > 0:
+        while deltaT > 0:
 
             az12, __, distToNext = Route.geod.inv(self.curPos.lon,
                                             self.curPos.lat,
@@ -234,18 +231,19 @@ class Route(object):
                 self.__advancePrevNext()
                 continue
 
-            tToNext = dt.timedelta(0, distToNext /
-                                   self.rtePts[self.prevWP].speed)
+            tToNext = np.timedelta64(int(distToNext /
+                                         self.rtePts[self.prevWP].speed),
+                                     's')
 
             if deltaT < tToNext:    # new curPos in this iteration
-                dist = deltaT.total_seconds() * self.rtePts[self.prevWP].speed
+                dist = units.total_seconds(deltaT) * self.rtePts[self.prevWP].speed
                 self.curPos.lon, self.curPos.lat, __ = (
                     Route.geod.fwd(self.curPos.lon, self.curPos.lat, az12,
                                    dist))
                 deltaT = dt.timedelta(0)
                 logger.debug("exiting advanceCurPos with deltaT: % d sec, "
                         "curPos: % .3f % .3f, prevWP: % d, nextWP: % d" %
-                            (deltaT.total_seconds(), self.curPos.lat,
+                            (units.total_seconds(deltaT), self.curPos.lat,
                                 self.curPos.lon, self.prevWP, self.nextWP))
                 return az12, self.rtePts[self.prevWP].speed, deltaT
             else:                   # move to next WP
@@ -255,7 +253,7 @@ class Route(object):
                 if nextWP is None:
                     logger.debug("exiting advanceCurPos with deltaT: % d sec,"
                             " curPos: % .3f % .3f, prevWP: % d, nextWP: None"
-                            % (deltaT.total_seconds(), self.curPos.lat,
+                            % (units.total_seconds(deltaT), self.curPos.lat,
                                      self.curPos.lon, self.prevWP))
                     return None, None, deltaT
 
@@ -307,13 +305,16 @@ class Route(object):
         rte = csv.reader(ifh, skipinitialspace=True)
         for r in rte:
             if r[2] == '' or not float(r[2]) > 0:
+                if avrgSpeed is None:
+                    raise ValueError("Expected a non None average speed.")
                 if not avrgSpeed > 0:
                     raise InvalidInFileError
                 else:
                     r[2] = avrgSpeed
             try:
+                speed, new_units = units.normalize_scalar(float(r[2]), 'knot')
                 self.rtePts.append(Route.RtePoint(LatLon(float(r[0]),
-                                   float(r[1])), float(r[2]) / KN_PER_MS))
+                                   float(r[1])), speed))
             except:
                 raise InvalidInFileError
 
@@ -348,10 +349,10 @@ class RouteForecast(object):
         rte:    rtefcst.Route object
         fcst:   polyglot.Dataset object
         """
-        fTimes = num2date(fcst['time'].data[:],
-                          fcst['time'].attributes['units'])
+        fTimes = fcst['time'].data
         # check that forecast times overlap travel time
-        if fTimes[0] > rte.utcArrival or fTimes[-1] < rte.utcDept:
+        if (fTimes[0] > rte.utcArrival or
+            fTimes[-1] < rte.utcDept):
             raise (TimeOverlapError,
                    "Forecast times do not overlap with route times")
 
@@ -403,10 +404,10 @@ class RouteForecast(object):
 
             # TODO: delete once standard wind speeds are m/s in units.py;
             #       or check for != 'm/s' and convert with unit.py dictionary
-            if self.fcst['uwnd'].attributes['units'] == 'knot':
-                u = u / KN_PER_MS
-            if self.fcst['vwnd'].attributes['units'] == 'knot':
-                v = v / KN_PER_MS
+#             if self.fcst['uwnd'].attributes['units'] == 'knot':
+#                 u = u / KN_PER_MS
+#             if self.fcst['vwnd'].attributes['units'] == 'knot':
+#                 v = v / KN_PER_MS
 
             rteFcst.append(FcstWP(self.rte.curPos.lat, self.rte.curPos.lon, u,
                                   v, self.fTimes[i], np.radians(cog), sog))
@@ -481,19 +482,21 @@ class RouteForecast(object):
                           'lon': "%.6f" % lon})
 
             wp_time = ET.SubElement(wp, 'time')
-            wp_time.text = fp.utc.replace(microsecond=0).isoformat() + 'Z'
+            wp_time.text = fp.utc.astype('M8[us]').item().isoformat() + 'Z'
 
             wp_name = ET.SubElement(wp, 'name')
             # construct name string:
             if windApparent:
                 awa, wwSide, aws = appWind(fp.wind, fp.cog, fp.sog)
+                wspeed = units.convert_from_default(aws, 'knot')
                 nameStr = "%d%s@%d" % (round(np.degrees(awa)), wwSide,
-                                        round(aws * KN_PER_MS))
+                                        round(wspeed))
             else:
+                wspeed = units.convert_from_default(fp.wind.speed, 'knot')
                 nameStr = "%d@%d" % (round(np.degrees(fp.wind.nautical_dir())),
-                                     round(fp.wind.speed * KN_PER_MS))
+                                     round(wspeed))
             if timeLabels:
-                nameStr += " %s" % fp.utc.strftime("%HZ%d%b")
+                nameStr += " %s" % fp.utc.astype('M8[us]').item().strftime("%HZ%d%b")
             wp_name.text = nameStr
 
             wp_sym = ET.SubElement(wp, 'sym')
