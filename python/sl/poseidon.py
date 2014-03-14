@@ -6,16 +6,18 @@ This contains tools for accessing data about the future/past state of the seas.
 from __future__ import with_statement
 
 import os
-import copy
 import numpy as np
 import urllib
 import urllib2
 import logging
+import datetime
 import urlparse
 
 from BeautifulSoup import BeautifulSoup
 
-from xray import Dataset, open_dataset
+import xray
+
+from sl.lib.objects import NautAngle
 
 import sl.lib.conventions as conv
 
@@ -24,9 +26,9 @@ from sl.lib import units
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
 
-_sources = {'gefs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Global_1p0deg_Ensemble/members/files/latest.html',
-            'nww3': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
-            'gfs': 'http://motherlode.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
+_sources = {'gefs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Global_1p0deg_Ensemble/members/files/latest.html',
+            'nww3': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
+            'gfs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
             }
 
 
@@ -42,7 +44,7 @@ def latest(latest_html_url):
     soup = BeautifulSoup(f.read())
 
     def is_latest(x):
-        # checks if the beautiful soup a tag holds the latest href
+        # checks if the beautiful soup 'a' tag holds the latest href
         text = x.fetchText()
         return len(text) == 1 and 'Latest' in str(text[0])
     # get all the possible href links to the latest forecast
@@ -56,50 +58,165 @@ def latest(latest_html_url):
     query = dict(urlparse.parse_qsl(urllib.splitquery(atag.get('href'))[1]))
     dataset = query['dataset']
     # the base directory for openDAP data changes to included suffix dodsC
-    return os.path.join('http://motherlode.ucar.edu/thredds/dodsC', dataset)
+    return os.path.join('http://thredds.ucar.edu/thredds/dodsC', dataset)
 
 
-def subset(nc, north, south, west, east, slicers=None):
+def latitude_slicer(lats, query):
+    """
+    Returns a slice object that will slice out the smallest chunk of lats
+    that covers the query domain defined by query['domain']['N'] and
+    query['domain']['S'].
+
+    The resulting slice will result in latitudes which descend from north
+    to south, with a grid delta that is closest to the request grid delta,
+    query['grid_delta'][0].
+    """
+    lat_delta, _ = query['grid_delta']
+    domain = query['domain']
+    # make sure north is actually north of south.
+    assert query['domain']['N'] > query['domain']['S']
+    lats = np.asarray(lats, dtype=np.float32)
+    # assume latitudes are equally spaced for now
+    assert np.unique(np.diff(lats)).size == 1
+    native_lat_delta = np.abs(np.unique(np.diff(lats))[0])
+    # round to the nearest native stride but make sure we dont hit zero
+    lat_stride = max(1, int(np.round(lat_delta / native_lat_delta)))
+
+    dist_north_of_domain = lats - domain['N']
+    dist_north_of_domain[lats < domain['N']] = np.nan
+    northern_most = np.nanargmin(dist_north_of_domain)
+
+    dist_south_of_domain = lats - domain['S']
+    dist_south_of_domain[lats > domain['S']] = np.nan
+    southern_most = np.nanargmax(dist_south_of_domain)
+
+    sign = np.sign(southern_most - northern_most)
+    # if the difference is not a multiple of the stride
+    # we could end up chopping the last grid.  By adding
+    # stride - 1 inds to the end we avoid that.  We then
+    # have to add another + 1 to the slicer to make it inclusive.
+    southern_most = southern_most + sign * lat_stride
+    slicer = slice(northern_most, southern_most, sign * lat_stride)
+
+    assert np.all(lats[slicer] <= domain['N'])
+    assert np.all(lats[slicer] >= domain['S'])
+    assert np.any(lats[slicer] >= domain['N'])
+    assert np.any(lats[slicer] <= domain['S'])
+    return slicer
+
+
+def longitude_slicer(lons, query):
+    """
+    Returns a slice object that will slice out the smallest chunk of lons
+    that covers the query domain defined by query['domain']['W'] and
+    query['domain']['E'].
+
+    The resulting slice will result in longitudes which increase from west
+    to east, with a grid delta that is closest to the request grid delta,
+    query['grid_delta'][1].
+    """
+    _, lon_delta = query['grid_delta']
+    domain = query['domain']
+    lons = np.asarray(lons, dtype=np.float32)
+
+    lons = [NautAngle(l) for l in lons]
+    diffs = [x.distance_to(y) for x, y in zip(lons[:-1], lons[1:])]
+    # assume longitudes are equally spaced for now
+    assert np.unique(diffs).size == 1
+    native_lon_delta = np.abs(np.unique(diffs)[0])
+    # round to the nearest native stride but make sure we dont hit zero
+    lon_stride = max(1, int(np.round(lon_delta / native_lon_delta)))
+
+    west = NautAngle(domain['W'])
+    east = NautAngle(domain['E'])
+
+    assert east.is_east_of(west)
+
+    dist_east_of_domain = np.array([x.distance_to(east) for x in lons])
+    dist_east_of_domain[dist_east_of_domain > 0] = np.nan
+    eastern_most = np.nanargmax(dist_east_of_domain)
+
+    dist_west_of_domain = np.array([x.distance_to(west) for x in lons])
+    dist_west_of_domain[dist_west_of_domain < 0] = np.nan
+    western_most = np.nanargmin(dist_west_of_domain)
+
+    sign = np.sign(eastern_most - western_most)
+    # if the difference is not a multiple of the stride
+    # we could end up chopping the last grid.  By adding
+    # stride - 1 inds to the end we avoid that.   We then
+    # have to add another + 1 to the slicer to make it inclusive.
+    eastern_most = eastern_most + sign * lon_stride
+    slicer = slice(western_most, eastern_most, sign * lon_stride)
+
+    assert np.all([x <= domain['E'] for x in lons[slicer]])
+    assert np.all([x >= domain['W'] for x in lons[slicer]])
+    assert np.any([x >= domain['E'] for x in lons[slicer]])
+    assert np.any([x <= domain['W'] for x in lons[slicer]])
+
+    return slicer
+
+
+def time_slicer(time_coordinate, query):
+    """
+    Returns a slice object that will slice out all times
+    upto the largest query['hours'].  This allows the first
+    slice of the time dimension to be lazy, after which
+    subset_time should be used.
+    """
+    # next step is parsing out the times
+    # we assume that the forecast units are in hours
+    ref_time = time_coordinate.data[0]
+    max_hours = max(query['hours'])
+    assert int(max_hours) == max_hours
+    max_time = ref_time + np.timedelta64(int(max_hours), 'h')
+    max_ind = np.max(np.nonzero(time_coordinate.data <= max_time)[0])
+    assert max_ind > 0
+    return slice(0, max_ind + 1)
+
+
+def subset_time(fcst, hours):
+    """
+    Extracts all the forecast valid times from fcst for lead
+    times of 'hours'.  If used with a remote dataset such as
+    an openDAP server this will download all the data.  Instead
+    consider using time_slicer first.
+    """
+    # next step is parsing out the times
+    ref_time = np.datetime64(fcst[conv.TIME].data[0])
+    # we are assuming that the first time is the reference time
+    # we can check that by converting back to cf units and making
+    # sure that the first cf time is 0.
+    ref_time = xray.utils.decode_cf_datetime(0.,
+                                fcst['time'].encoding['units'],
+                                fcst['time'].encoding.get('calendar', None))
+    hours = np.array(hours)
+    # make sure hours are all integers
+    np.testing.assert_array_almost_equal(hours, hours.astype('int'))
+    times = np.array([ref_time + np.timedelta64(int(x), 'h') for x in hours])
+    return fcst.labeled_by(time=times)
+
+
+def subset(remote_dataset, query, additional_slicers=None):
     """
     Given a forecast (nc) and corners of a spatial subset
-    this function returns the corresponding subset of data
-    that contains the spatial region.
+    this function returns the smallest subset of the data
+    which fully contains the region
     """
-    assert north > south
-    assert east > west or (east % 360) > (west % 360)
-    # determine which slice we need for latitude
-    lats = nc.variables['lat'][:]
-    inds = np.nonzero(np.logical_and(lats >= south, lats <= north))[0]
-    lat_slice = slice(np.min(inds), np.max(inds) + 1)
-    # determine which slice we need for longitude.  GFS uses longitudes
-    # between 0 and 360, but slocum uses -180 to 180.  Depending on if
-    # the bounding box stradles greenwich or the dateline we want to
-    # prefer one or the other interpretations.
-    lons = nc.variables['lon'][:]
-    if east < 0 and west > 0.:
-        east = east % 360
-        west = west % 360
-    else:
-        lons = np.mod(lons + 180, 360) - 180
-    inds = np.nonzero(np.logical_and(lons >= east, lons <= west))[0]
-    lon_slice = slice(np.min(inds), np.max(inds) + 1)
-    assert np.all(lons[lon_slice] >= west)
-    assert np.all(lons[lon_slice] <= east)
-    if east >= 0 and west < 0:
-        # sorry brits, this is going to take a while
-        rhs = subset(nc, north, south, 0., east, slicers=slicers)
-        lhs = subset(nc, north, south, west, 0., slicers=slicers)
-        # TODO, finish splicing objects.
-        raise ValueError("sorry brits.")
-    # add lat/lon slicers to any additional slicers
-    slicers = {} if slicers is None else slicers
-    slicers.update({'lat': lat_slice, 'lon': lon_slice})
-    # and pull out the dataset.  This is delayed till the
-    # end because until this point all the data probably
-    # lives on a remote server, so we'd like to download
-    # as little as possible.
-    out = nc.views(slicers)
-    return out
+
+    slicers = {conv.LAT: latitude_slicer(remote_dataset[conv.LAT], query),
+               conv.LON: longitude_slicer(remote_dataset[conv.LON], query),
+               conv.TIME: time_slicer(remote_dataset[conv.TIME], query)}
+    if not additional_slicers is None:
+        slicers.update(additional_slicers)
+    # Until this point all the data might live on a remote server,
+    # so we'd like to download as little as possible.  As a result
+    # we split the subsetting into two steps, the first can be done
+    # using slicers which minimizes downloading from openDAP servers,
+    # the second pulls out the actual requested domain once the data
+    # has been loaded locally.
+    local_dataset = remote_dataset.indexed_by(**slicers)
+    local_dataset = subset_time(local_dataset, query['hours'])
+    return local_dataset
 
 
 def forecast(source):
@@ -109,82 +226,59 @@ def forecast(source):
     """
     latest_opendap = latest(_sources[source])
     logger.debug(latest_opendap)
-    return open_dataset(latest_opendap)
+    return xray.open_dataset(latest_opendap)
 
 
-def gefs(ll, ur):
-    """
-    Global Ensemble Forecast System forecast object
-    """
-    vars = {'u-component_of_wind_height_above_ground': conv.UWND,
-            'v-component_of_wind_height_above_ground': conv.VWND,}
-    fcst = forecast('gefs')
-    fcst = fcst.select(*vars.keys())
-    fcst = subset(fcst, ll, ur)
-    renames = vars
-    renames.update(dict((d, conv.ENSEMBLE) for d in fcst.dimensions if d.startswith('ens')))
-    renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
-    renames.update({'lat': conv.LAT,
-                    'lon': conv.LON})
-    fcst = fcst.renamed(renames)
-    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
-    new_units = new_units.replace('T', ' ')
-    new_units = new_units.replace('Z', '')
-    fcst['time'].attributes['units'] = new_units
-    units.normalize_units(fcst[conv.UWND])
-    units.normalize_units(fcst[conv.VWND])
-    return fcst
-
-
-def gfs(ll, ur, variables=None):
+def gfs(query):
     """
     Global Forecast System forecast object
     """
-    if variables is None:
-        variables = {'u-component_of_wind_height_above_ground': conv.UWND,
-                     'v-component_of_wind_height_above_ground': conv.VWND,}
+    variables = {}
+    if 'wind' in query['vars']:
+        variables['u-component_of_wind_height_above_ground'] = conv.UWND
+        variables['v-component_of_wind_height_above_ground'] = conv.VWND
+    if len(set(['rain', 'precip']).intersection(query['vars'])):
+        variables['Precipitation_rate_surface_Mixed_intervals_Average'] = conv.PRECIP
+    if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
+        variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
+    if len(variables) == 0:
+        raise ValueError("No valid GFS variables in query")
     fcst = forecast('gfs')
+
+    def lookup_name(possible_names):
+        actual_names = fcst.variables.keys()
+        name = set(possible_names).intersection(actual_names)
+        assert len(name) == 1
+        return name.pop()
+
+    lat_name = lookup_name(['lat', 'latitude'])
+    lon_name = lookup_name(['lon', 'longitude'])
+
+    # reduce the datset to only the variables we care about
     fcst = fcst.select(*variables.keys())
-    # subset out the 10m wind height
-    logger.debug("Selected out variables")
-    ind = np.nonzero(fcst['height_above_ground4'].data[:] == 10.)[0][0]
-    logger.debug("found 10m height")
-    fcst = subset(fcst, ll, ur, slicers={'height_above_ground4': slice(ind, ind + 1)})
-    logger.debug("subsetted to the domain")
-    # Remove the height above ground dimension
-    fcst = copy.deepcopy(fcst)
-    fcst = fcst.squeeze(dimension='height_above_ground4')
-    renames = variables
-    renames.update(dict((d, conv.TIME) for d in fcst.dimensions if d.startswith('time')))
-    renames.update({'lat': conv.LAT,
-                    'lon': conv.LON})
+    renames = variables.copy()
+    renames.update({lat_name: conv.LAT,
+                    lon_name: conv.LON})
     fcst = fcst.renamed(renames)
-    new_units = fcst['time'].attributes['units'].replace('Hour', 'hours')
-    new_units = new_units.replace('T', ' ')
-    new_units = new_units.replace('Z', '')
-    fcst['time'].attributes['units'] = new_units
-    fcst = units.normalize_variables(fcst)
-    return fcst
-
-
-def ensure_corners(ur, ll, expand=True):
-    """
-    Makes sure the upper right (ur) corner is actually the upper right.  Same
-    for the lower left (ll).
-    """
-    ur = ur.copy()
-    ll = ll.copy()
-    if ur.lon < ll.lon:
-        tmp = ur.lon
-        ur.lon = ll.lon
-        ll.lon = tmp
-    if ur.lat < ll.lat:
-        tmp = ur.lat
-        ur.lat = ll.lat
-        ll.lat = tmp
-    if expand:
-        ur.lat += 1
-        ur.lon += 1
-        ll.lat -= 1
-        ll.lon -= 1
-    return ur, ll
+    logger.debug("Selected out variables: %s" % ', '.join(variables.keys()))
+    # wind speed may come at several heights so we find the 10m wind speed
+    additional_slicers = {}
+    dims_to_squeeze = []
+    if 'wind' in query['vars']:
+        height_coordinate = [d for d in fcst[conv.UWND].dimensions
+                             if 'height_above_ground' in d]
+        assert len(height_coordinate) == 1
+        height_coordinate = height_coordinate[0]
+        ind = np.nonzero(fcst[height_coordinate].data[:] == 10.)[0][0]
+        additional_slicers[height_coordinate] = slice(ind, ind + 1)
+        dims_to_squeeze.append(height_coordinate)
+    # reduce the dataset to only the domain we care about
+    # this step may take a while because it may require actually
+    # downloading some of the data
+    fcst = subset(fcst, query, additional_slicers)
+    logger.debug("Subsetted to the domain")
+    # Remove the height above ground dimension
+    if len(dims_to_squeeze):
+        fcst = fcst.squeeze(dims_to_squeeze)
+    # normalize to the expected units etc ...
+    return units.normalize_variables(fcst)

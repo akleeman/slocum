@@ -1,4 +1,5 @@
 import numpy as np
+import datetime
 
 import sl.lib.conventions as conv
 
@@ -87,14 +88,75 @@ def normalize_units(v):
                 _convert(v, possible_units, cur_units, default,
                          validate=validate)
                 break
-        # TODO: is it fair to assume that only time will have units with 'since'?
-        if 'since' in cur_units:
-            # force time to have units of hours
-            assert cur_units.startswith('hours')
     return v
 
 
 def normalize_variables(dataset):
-    for k, v in dataset.variables.iteritems():
+    """
+    Iterates over all variables in a dataset and normalizes their units.
+    """
+    for _, v in dataset.variables.iteritems():
         normalize_units(v)
     return dataset
+
+
+def convert_scalar(s, cur_units, new_units):
+    """
+    Converts a single scalar from cur_units to new_units.
+    """
+    for (possible_units, __, __) in _all_units:
+        if cur_units in possible_units:
+            s *= (possible_units[cur_units] / possible_units[new_units])
+            return s
+    else:
+        raise ValueError("Current unit '%s' not found in %s" % (cur_units,
+                         __file__))
+
+
+def default_units(cur_units):
+    """
+    Returns a string with the default units for cur_units or None if no
+    matching default units are found.
+    """
+    for (possible_units, default, __) in _all_units:
+        if cur_units in possible_units:
+            return default
+    else:
+        return None
+
+
+def  normalize_scalar(s, cur_units):
+    """
+    Converts scalar from cur_units to default units. Returns a tuple
+    (normalized value, default unit). Raises ValueError if no matching default
+    units are found for cur_units.
+    """
+    default = default_units(cur_units)
+    if default:
+        return convert_scalar(s, cur_units, default), default
+    else:
+        raise ValueError("No matching default unit found for '%s'" % cur_units)
+
+
+def convert_from_default(s, new_units):
+    """
+    Converts scalar s from default units to new_units and returns the
+    result.  Raises ValueError if no matching default unit is found for
+    new_units.
+    """
+    default = default_units(new_units)
+    if default:
+        return convert_scalar(s, default, new_units)
+
+    else:
+        raise ValueError("No matching default unit found for '%s'" %
+                new_units)
+
+
+def total_seconds(dt):
+    if isinstance(dt, np.timedelta64):
+        return dt.astype('m8[us]').astype(datetime.datetime).total_seconds()
+    elif isinstance(dt, datetime.timedelta):
+        return dt.total_seconds()
+    else:
+        raise ValueError("expected timedelta or np.timedelta64")

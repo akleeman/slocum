@@ -321,7 +321,7 @@ def parse_send_request(body):
     a dictionary of attributes from the query.
     """
     warnings = []
-    # takes the first k '|' separated fields, if fewer than
+    # takes the first 3 '|' separated fields, if fewer than
     # k exist the missing fields are replaced with None
     iter_fields = itertools.chain(body.strip().split('|'), [None] * 3)
     model_domain, grid_str, hours_str, variables = list(iter_fields)[:4]
