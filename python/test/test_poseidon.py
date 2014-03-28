@@ -1,11 +1,25 @@
 import unittest
-import itertools
 
 import numpy as np
 
 from sl import poseidon
+
 import xray
-import datetime
+
+
+def test_forecast():
+    ds = xray.Dataset(decode_cf=True)
+    ds['longitude'] = ('longitude', np.arange(-180., 180.))
+    ds['latitude'] = ('latitude', np.arange(-90., 90.))
+    u, v = np.meshgrid(np.arange(-90., 90.), np.arange(-180., 180.))
+    u = np.array([u] * 65)
+    v = np.array([v] * 65)
+    time = xray.XArray('time', np.linspace(0, 192, 65),
+                             {'units': 'hours since 2014-03-28'})
+    ds['time'] = xray.conventions.decode_cf_variable(time)
+    ds['uwnd'] = (['time', 'longitude', 'latitude'], u)
+    ds['vwnd'] = (['time', 'longitude', 'latitude'], v)
+    return ds
 
 
 class PoseidonTest(unittest.TestCase):
@@ -83,6 +97,45 @@ class PoseidonTest(unittest.TestCase):
             actual = time.data[slicer][-1] - time.data[slicer][0]
             expected = np.timedelta64(max_hours, 'h')
             self.assertEqual(actual, expected)
+
+    def test_subset(self):
+        query = {'hours': np.array([0., 24, 48, 96]),
+                 'domain': {'N': 10., 'S': -10.,
+                            'E': 10., 'W': -10.},
+                 'grid_delta': (0.5, 0.5)}
+
+        fcst = test_forecast()
+        subset = poseidon.subset(fcst, query)
+        np.testing.assert_array_equal(subset['longitude'].data,
+                                      np.arange(-10., 11.))
+        np.testing.assert_array_equal(subset['latitude'].data,
+                                      -np.arange(-10., 11.))
+
+    def test_spot_forecast(self):
+
+        query = {'location': {'latitude': -20., 'longitude': -154.},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': []}
+
+        poseidon.gfs = lambda x: test_forecast()
+        fcst = poseidon.spot_forecast(query)
+        np.testing.assert_array_equal(fcst['vwnd'].data, -154.)
+        np.testing.assert_array_equal(fcst['uwnd'].data, -20.)
+
+        query = {'location': {'latitude': -20.3, 'longitude': -154.7},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': []}
+
+        poseidon.gfs = lambda x: test_forecast()
+        fcst = poseidon.spot_forecast(query)
+        np.testing.assert_array_equal(fcst['vwnd'].data, -154.7)
+        np.testing.assert_array_equal(fcst['uwnd'].data, -20.3)
 
 if __name__ == "__main__":
     unittest.main()

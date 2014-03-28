@@ -26,7 +26,6 @@ def handle_spot(args):
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.beaufort_to_dict(tinyfcst)
     windbreaker.print_spot(fcst)
-    import ipdb; ipdb.set_trace()
 
 
 def handle_grib(args):
@@ -64,7 +63,7 @@ def handle_route_forecast(args):
     else:
         ut = None
     rte = rtefcst.Route(ifh=args.rtefile, inFmt=args.rtefmt, utcDept=ut,
-                        avrgSpeed=args.speed) 
+                        avrgSpeed=args.speed)
     args.rtefile.close()
 
     rf = rtefcst.RouteForecast(rte, fcst)

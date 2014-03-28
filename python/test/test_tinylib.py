@@ -108,14 +108,14 @@ class TinylibTest(unittest.TestCase):
         np.random.seed(1982)
         ds = xray.Dataset()
 
-        ds['time'] = xray.XArray(('time'), data=np.arange(10),
-                           attributes={'units': 'hours since 2013-12-12 12:00:00'})
-        ds['longitude'] = xray.XArray(('longitude'),
-                          data=np.mod(np.arange(235., 240.) + 180, 360) - 180,
-                          attributes={'units': 'degrees east'})
-        ds['latitude'] = xray.XArray('latitude',
-                          data=np.arange(35., 40.),
-                          attributes={'units': 'degrees north'})
+        ds['time'] = ('time', np.arange(10),
+                      {'units': 'hours since 2013-12-12 12:00:00'})
+        ds['longitude'] = (('longitude'),
+                           np.mod(np.arange(235., 240.) + 180, 360) - 180,
+                           {'units': 'degrees east'})
+        ds['latitude'] = ('latitude',
+                          np.arange(35., 40.),
+                          {'units': 'degrees north'})
 
         shape = tuple([ds.dimensions[x]
                        for x in ['time', 'longitude', 'latitude']])

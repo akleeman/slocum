@@ -252,9 +252,6 @@ def spot_forecast(query):
                                 'E': np.mod(lon + 180.5, 360.) - 180.,
                                 'W': np.mod(lon + 179.5, 360.) - 180.}
 
-    lat = lat + 0.1
-    lon = lon + 0.2
-
     fcst = gfs(modified_query)
 
     def bilinear_weights(grid, x):
@@ -266,7 +263,6 @@ def spot_forecast(query):
         weights[inds] = 1. - dists[inds] / np.sum(dists[inds])
         return weights
 
-    #fcst = gfs(modified_query)
     lat_weights = bilinear_weights(fcst[conv.LAT].data, lat)
     lon_weights = bilinear_weights(fcst[conv.LON].data, lon)
     weights = reduce(np.multiply, np.meshgrid(lat_weights, lon_weights))

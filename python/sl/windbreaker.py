@@ -147,8 +147,8 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
                                  "processed.\n") % query_string, e)
             raise
 
-def print_spot(spot):
 
+def print_spot(spot):
     assert conv.TIME in spot
     assert conv.LAT in spot
     assert conv.LON in spot
@@ -168,6 +168,7 @@ def print_spot(spot):
     date_strings = [x.strftime('%Y-%m-%d %H:%M UTC') for x in dates]
 
     fmt = '%20s\t%3.0f%5s'
+
     def iter_lines():
         yield '%20s\t%8s' % ('Date', 'Wind (K)')
         for d, w in zip(date_strings, winds):
