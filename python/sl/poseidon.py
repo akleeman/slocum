@@ -7,20 +7,21 @@ from __future__ import with_statement
 
 import os
 import numpy as np
+import pandas as pd
 import urllib
 import urllib2
 import logging
 import urlparse
+import datetime
 
 from BeautifulSoup import BeautifulSoup
 
 import xray
 
-from sl.lib.objects import NautAngle
-
 import sl.lib.conventions as conv
 
 from sl.lib import units
+from sl.lib.objects import NautAngle
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -29,6 +30,8 @@ _sources = {'gefs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Glob
             'nww3': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
             'gfs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
             }
+
+_formats = {'gfs': 'http://thredds.ucar.edu/thredds/dodsC/grib/NCEP/GFS/Global_0p5deg/files/GFS_Global_0p5deg_%Y%m%d_%H00.grib2'}
 
 
 def latest(latest_html_url):
@@ -58,6 +61,22 @@ def latest(latest_html_url):
     dataset = query['dataset']
     # the base directory for openDAP data changes to included suffix dodsC
     return os.path.join('http://thredds.ucar.edu/thredds/dodsC', dataset)
+
+
+def fallback(source):
+    # start at an overestimate of the most recent forecast and backtrack
+    # until one is found.
+    start = datetime.datetime.utcnow().strftime('%Y-%m-%d 18:00')
+    for d in pd.date_range(start, periods=12, freq='-6H'):
+        try:
+            url = d.strftime(_formats[source])
+            logger.info("Trying to load %s" % url)
+            ds = xray.open_dataset(url)
+            return ds
+        except:
+            pass
+    raise ValueError("Could not find a valid forecast. "
+                     "Perhaps the server is down?")
 
 
 def latitude_slicer(lats, query):
@@ -236,7 +255,7 @@ def spot_forecast(query):
     lat = lat + 0.1
     lon = lon + 0.2
 
-    fcst = xray.open_dataset('spot.nc')
+    fcst = gfs(modified_query)
 
     def bilinear_weights(grid, x):
         # take the two closest points
@@ -276,9 +295,14 @@ def opendap_forecast(source):
     A convenience wrapper which will looked up the uri
     to the latest openDAP dataset for source.
     """
-    latest_opendap = latest(_sources[source])
-    logger.debug(latest_opendap)
-    return xray.open_dataset(latest_opendap)
+    try:
+        latest_opendap = latest(_sources[source])
+        logger.debug(latest_opendap)
+        raise RuntimeError()
+        ds = xray.open_dataset(latest_opendap)
+    except RuntimeError:
+        ds = fallback(source)
+    return ds
 
 
 def gfs(query):
