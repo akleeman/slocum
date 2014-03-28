@@ -138,8 +138,8 @@ def setup_parser_route_forecast(p):
 # setup handler is called to add the details.
 _task_handler = {'email'   : (handle_email, setup_parser_email),
                  'grib'    : (handle_grib, setup_parser_grib),
-                 'rtefcst' : (handle_rtefcst, setup_parser_rtefcst),
-				 'spot': (handle_spot, setup_parser_grib)}
+                 'route-forecast' : (handle_route_forecast, setup_parser_route_forecast),
+		 'spot': (handle_spot, setup_parser_grib)}
 
 if __name__ == "__main__":
 
