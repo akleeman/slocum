@@ -392,8 +392,7 @@ def check_beaufort(obj):
     assert np.max(np.asarray(obj[conv.LAT].data)) <= 90
     # make sure longitudes are in degrees and are on the correct scale
     assert 'degrees' in obj[conv.LON].attributes[conv.UNITS]
-    assert np.min(np.asarray(obj[conv.LON])) >= -180
-    assert np.max(np.asarray(obj[conv.LON])) <= 180
+    obj[conv.LON].data[:] = np.mod(obj[conv.LON].data + 180., 360) - 180.
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
     if conv.PRECIP in obj.variables:

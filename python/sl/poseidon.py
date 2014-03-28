@@ -259,7 +259,7 @@ def gfs(query):
     renames = variables.copy()
     renames.update({lat_name: conv.LAT,
                     lon_name: conv.LON})
-    fcst = fcst.renamed(renames)
+    fcst = fcst.rename(renames)
     logger.debug("Selected out variables: %s" % ', '.join(variables.keys()))
     # wind speed may come at several heights so we find the 10m wind speed
     additional_slicers = {}
