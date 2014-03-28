@@ -480,10 +480,9 @@ def unstring_beaufort(payload):
         yield vname, info
 
 
-def from_beaufort(payload):
+def beaufort_to_dict(payload):
     variables = list(unstring_beaufort(payload))
-
-    out = Dataset()
+    out = {}
     for vname, info in variables:
         if vname == conv.TIME:
             data, time_units = expand_small_time(info['packed_array'],
@@ -497,7 +496,7 @@ def from_beaufort(payload):
                                      info['least_significant_digit'])
             out[vname] = (vname, data, info.get('attributes', None))
         else:
-            shape = [out.dimensions[d] for d in info['dims']]
+            shape = [out[d][1].size for d in info['dims']]
             data = expand_array(info['packed_array'],
                                  bits=info['bits'],
                                  shape=shape,
@@ -505,11 +504,19 @@ def from_beaufort(payload):
                                  dtype=info['dtype'])
             out[vname] = (info['dims'], data,
                           info.get('attributes', None))
-
-    dims = out[conv.WIND_SPEED].dimensions
-    vwnd = -np.cos(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
-    uwnd = -np.sin(out[conv.WIND_DIR].data) * out[conv.WIND_SPEED].data
+    dims = out[conv.WIND_SPEED][0]
+    vwnd = -np.cos(out[conv.WIND_DIR][1]) * out[conv.WIND_SPEED][1]
+    uwnd = -np.sin(out[conv.WIND_DIR][1]) * out[conv.WIND_SPEED][1]
     out[conv.UWND] = (dims, uwnd, {conv.UNITS: 'm/s'})
     out[conv.VWND] = (dims, vwnd, {conv.UNITS: 'm/s'})
+    return out
+
+
+def from_beaufort(payload):
+    variables = beaufort_to_dict(payload)
+    out = Dataset()
+    for k, v in variables.iteritems():
+        out[k] = v
+
     return units.normalize_variables(out)
 

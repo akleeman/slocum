@@ -125,11 +125,12 @@ class SaildocsTest(unittest.TestCase):
         self.assertEquals(default, 'gfs')
         self.assertTrue(len(warns) == 1)
 
-    def test_parse_send_request(self):
+    def test_parse_forecast_request(self):
 
         tests = [('GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND',
                   {'domain': saildocs.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
+                   'type': 'gridded',
                    'grid_delta': (0.5, 0.5),
                    'hours': list(np.arange(41.) * 3),
                    'vars': ['wind'],
@@ -137,13 +138,15 @@ class SaildocsTest(unittest.TestCase):
                  ('GFS:14S,20S,154W,146W|0.5,0.5|0,3..120',
                   {'domain': saildocs.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
+                   'type': 'gridded',
                    'grid_delta': (0.5, 0.5),
                    'hours': list(np.arange(41.) * 3),
                    'vars': ['wind'],
                    'warnings': ['No variable requested, defaulting to WIND']}),
-                 ('GFS:14S,20S,154W,146W|0.5,0.5',
+                 (u'GFS:14S,20S,154W,146W\u015a0.5,0.5',
                   {'domain': saildocs.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
+                   'type': 'gridded',
                    'grid_delta': (0.5, 0.5),
                    'hours': [24., 48., 72.],
                    'vars': ['wind'],
@@ -152,15 +155,17 @@ class SaildocsTest(unittest.TestCase):
                  ('GFS:14S,20S,154W,146W',
                   {'domain': saildocs.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
+                   'type': 'gridded',
                    'grid_delta': (2., 2.),
                    'hours': [24., 48., 72.],
                    'vars': ['wind'],
                    'warnings': ['No grid size defined, defaulted to 2 degrees',
                                 'No hours defined, using default of 24,48,72',
                                 'No variable requested, defaulting to WIND']}),
-                 ('GFS : 14S,20S,154W, 146W|  0.5, 0.5 |0, 3.. 120| WIND,',
+                 ('GFS : 14S,20S,154W, 146W/  0.5, 0.5 |0, 3.. 120| WIND,',
                   {'domain': saildocs.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
+                   'type': 'gridded',
                    'grid_delta': (0.5, 0.5),
                    'hours': list(np.arange(41.) * 3),
                    'vars': ['wind'],
@@ -168,7 +173,39 @@ class SaildocsTest(unittest.TestCase):
 
         for request, expected in tests:
             self.maxDiff = 3000
-            actual = saildocs.parse_send_request(request)
+            actual = saildocs.parse_forecast_request(request)
+            self.assertDictEqual(actual, expected)
+
+    def test_parse_spot_request(self):
+
+        tests = [('spot:20S,154W|4,3',
+                  {'location': {'latitude': -20., 'longitude':-154.},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': ['No variable requested, defaulting to WIND']}),
+                 ('spot: 20S,154W |4 ,3',
+                  {'location': {'latitude': -20., 'longitude':-154.},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': ['No variable requested, defaulting to WIND']}),
+                 ('spot:20S,154W|4,3|wind',
+                  {'location': {'latitude': -20., 'longitude':-154.},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': []}),
+                 ]
+
+        for request, expected in tests:
+            self.maxDiff = 3000
+            actual = saildocs.parse_spot_request(request)
+            np.testing.assert_array_equal(actual.pop('hours'),
+                                          expected.pop('hours'))
             self.assertDictEqual(actual, expected)
 
 

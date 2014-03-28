@@ -1,4 +1,5 @@
 import numpy as np
+import datetime
 
 import sl.lib.conventions as conv
 
@@ -151,3 +152,11 @@ def convert_from_default(s, new_units):
         raise ValueError("No matching default unit found for '%s'" %
                 new_units)
 
+
+def total_seconds(dt):
+    if isinstance(dt, np.timedelta64):
+        return dt.astype('m8[us]').astype(datetime.datetime).total_seconds()
+    elif isinstance(dt, datetime.timedelta):
+        return dt.total_seconds()
+    else:
+        raise ValueError("expected timedelta or np.timedelta64")

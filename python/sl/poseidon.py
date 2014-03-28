@@ -10,7 +10,6 @@ import numpy as np
 import urllib
 import urllib2
 import logging
-import datetime
 import urlparse
 
 from BeautifulSoup import BeautifulSoup
@@ -71,7 +70,6 @@ def latitude_slicer(lats, query):
     to south, with a grid delta that is closest to the request grid delta,
     query['grid_delta'][0].
     """
-    lat_delta, _ = query['grid_delta']
     domain = query['domain']
     # make sure north is actually north of south.
     assert query['domain']['N'] > query['domain']['S']
@@ -79,6 +77,7 @@ def latitude_slicer(lats, query):
     # assume latitudes are equally spaced for now
     assert np.unique(np.diff(lats)).size == 1
     native_lat_delta = np.abs(np.unique(np.diff(lats))[0])
+    lat_delta, _ = query.get('grid_delta', (native_lat_delta, None))
     # round to the nearest native stride but make sure we dont hit zero
     lat_stride = max(1, int(np.round(lat_delta / native_lat_delta)))
 
@@ -115,7 +114,6 @@ def longitude_slicer(lons, query):
     to east, with a grid delta that is closest to the request grid delta,
     query['grid_delta'][1].
     """
-    _, lon_delta = query['grid_delta']
     domain = query['domain']
     lons = np.asarray(lons, dtype=np.float32)
 
@@ -124,6 +122,7 @@ def longitude_slicer(lons, query):
     # assume longitudes are equally spaced for now
     assert np.unique(diffs).size == 1
     native_lon_delta = np.abs(np.unique(diffs)[0])
+    _, lon_delta = query.get('grid_delta', (None, native_lon_delta))
     # round to the nearest native stride but make sure we dont hit zero
     lon_stride = max(1, int(np.round(lon_delta / native_lon_delta)))
 
@@ -219,7 +218,60 @@ def subset(remote_dataset, query, additional_slicers=None):
     return local_dataset
 
 
-def forecast(source):
+def forecast(query):
+    forecast_fetchers = {'gridded': gridded_forecast,
+                         'spot': spot_forecast,}
+    return forecast_fetchers[query['type']](query)
+
+
+def spot_forecast(query):
+    modified_query = query.copy()
+    lat = query['location']['latitude']
+    lon = query['location']['longitude']
+    modified_query['domain'] = {'N': lat + 0.5,
+                                'S': lat - 0.5,
+                                'E': np.mod(lon + 180.5, 360.) - 180.,
+                                'W': np.mod(lon + 179.5, 360.) - 180.}
+
+    lat = lat + 0.1
+    lon = lon + 0.2
+
+    fcst = xray.open_dataset('spot.nc')
+
+    def bilinear_weights(grid, x):
+        # take the two closest points
+        assert grid.ndim == 1
+        weights = np.zeros(grid.size)
+        dists = np.abs(grid - x)
+        inds = np.argsort(dists)[:2]
+        weights[inds] = 1. - dists[inds] / np.sum(dists[inds])
+        return weights
+
+    #fcst = gfs(modified_query)
+    lat_weights = bilinear_weights(fcst[conv.LAT].data, lat)
+    lon_weights = bilinear_weights(fcst[conv.LON].data, lon)
+    weights = reduce(np.multiply, np.meshgrid(lat_weights, lon_weights))
+    weights /= np.sum(weights)
+
+    spot = fcst.indexed_by(**{conv.LAT: [0]})
+    spot = spot.indexed_by(**{conv.LON: [0]})
+    spatial_variables = [k for k, v in spot.variables.iteritems()
+                            if (conv.LAT in v.dimensions and
+                                conv.LON in v.dimensions)]
+    for k in spatial_variables:
+        interpolated = np.sum(np.sum(fcst[k].data * weights, axis=1), axis=1)
+        spot[k].data[:] = interpolated[:, np.newaxis, np.newaxis]
+    spot[conv.LAT].data[:] = lat
+    spot[conv.LON].data[:] = lon
+    return spot
+
+
+def gridded_forecast(query):
+    assert query['model'] == 'gfs'
+    return gfs(query)
+
+
+def opendap_forecast(source):
     """
     A convenience wrapper which will looked up the uri
     to the latest openDAP dataset for source.
@@ -243,7 +295,7 @@ def gfs(query):
         variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
     if len(variables) == 0:
         raise ValueError("No valid GFS variables in query")
-    fcst = forecast('gfs')
+    fcst = opendap_forecast('gfs')
 
     def lookup_name(possible_names):
         actual_names = fcst.variables.keys()
