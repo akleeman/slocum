@@ -1,8 +1,9 @@
 from collections import namedtuple
+from bisect import bisect
 
 import numpy as np
 
-from bisect import bisect
+from sl.lib import units
 
 BoundingBox = namedtuple('BoundingBox', ['north', 'south', 'east', 'west'])
 Position = namedtuple('Position', ['lat', 'lon'])
@@ -218,6 +219,35 @@ class NautAngle(float):
         """
         return self.real % 360.
 
+    def compass_dir(self):
+        """
+        Returns 'rounded' compass direction as a tuple (rounded angle, name)
+        where name is a string 'N', 'NNE', 'NE', ... and rounded angle is the
+        compass angle for the name in range [0..360[.
+
+            >>> NautAngle(30).compass_dir()
+            (22.5, 'NNE')
+            >>> NautAngle(275).compass_dir()
+            (270, 'W')
+            >>> NautAngle(-85).compass_dir()
+            (270, 'W')
+        """
+        # Bin according to the standard cardinal directions
+        # 'S' is anything before first or after last bin
+        bins = np.linspace(-15 * 180./16., 15 * 180./16., 16)
+        names = ['S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'N', 'NNE',
+                'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S']
+        i = bisect(bins, self.real)
+        j = (i-1) % 16
+        i = i % 16
+        if j > i:   # wrap around at S
+            center_dir = np.average(np.mod([bins[i], bins[j]], 360.))
+        else:
+            center_dir = np.average(bins[j:i+1])
+
+        return center_dir % 360., names[i]
+
+
 class Wind(object):
     """
     An object which holds wind data for a single location,
@@ -233,12 +263,8 @@ class Wind(object):
         # we actually want to know where the wind is coming from not where
         # the wind is headed
         self.dir = np.arctan2(-u, -v)
-        # Here we bin according to the standard cardinal directions
-        # 'S' is anything before first or after last bin
-        bins = np.linspace(-15 * np.pi/16, 15 * np.pi/16, 16)
-        names = ['S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'N', 'NNE',
-                'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S']
-        self.readable = names[bisect(bins, self.dir)]
+        __, name = NautAngle(np.degrees(self.dir)).compass_dir()
+        self.readable = name
 
     def nautical_dir(self):
         """

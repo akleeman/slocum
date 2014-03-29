@@ -22,10 +22,16 @@ _latitude = {'degrees_north': 1.,
               'degrees_south': -1.}
 
 _pressure = {'Pa': 1.,
+             'hPa': 100.,
              'kPa': 1./1000.,
              'kg m-1 s-2': 1.,
              'atm': 1./101325.,
              'bar': 1e-5}
+
+_angle = {'radians': 180./np.pi,
+          'rad': 180./np.pi,
+          'degrees': 1.,
+          'deg': 1.}
 
 
 def transform_longitude(x):
@@ -47,7 +53,8 @@ _all_units = [(_speed, 'm/s', None),
               (_longitude, 'degrees_east', transform_longitude),
               (_latitude, 'degrees_north', validate_angle),
               (_precip_rate, 'kg.m-2.s-1', validate_positive),
-              (_pressure, 'Pa', None)]
+              (_pressure, 'Pa', None),
+              (_angle, 'degrees', None)]
 
 
 def _convert(v, possible_units, cur_units, new_units, validate=None):
@@ -160,3 +167,4 @@ def total_seconds(dt):
         return dt.total_seconds()
     else:
         raise ValueError("expected timedelta or np.timedelta64")
+
