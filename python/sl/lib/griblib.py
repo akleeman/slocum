@@ -1,12 +1,7 @@
 import os
 import numpy as np
-import coards
-import gribapi
 import logging
 import netCDF4 as nc4
-import itertools
-
-from datetime import datetime
 
 import sl.lib.conventions as conv
 
@@ -14,6 +9,13 @@ from sl.lib import units
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
+
+try:
+    # because gribapi is so difficult to install we make it optional.
+    import gribapi
+except ImportError:
+    logger.warn("gribapi is not install, grib creation will not work.")
+    pass
 
 _sample_file = os.path.join(os.path.dirname(__file__),
                         '../../../data/GFS20131226164503639.grb')
@@ -158,76 +160,6 @@ level = {"u-component of wind": 10,
          "v-component of wind": 10}
 
 _sec_per_hour = 3600
-
-
-def degrib(fn):
-    """
-    Takes a sequence of grib messages and converts them into a sequence of
-    data objects grouped such that each data object contains all variables that
-    share lat long grids.
-
-    It is assumed that all messages for each group of grids have the same times.
-    If this is not the case an exception is thrown
-    """
-    raise NotImplementedError("This function will be useful but needs some work")
-
-    if not os.path.exists(fn):
-        raise ValueError("grib file %s does not exist" % fn)
-
-    #gribs = pygrib.open(fn)
-
-    def get_grid(x):
-        # extracts the stringified lat long variables from a message
-        return "%s\t%s" % (x.distinctLatitudes.tostring(),
-                           x.distinctLongitudes.tostring())
-    # the actual order doesn't matter we just want to make sure they're grouped
-    gribs = sorted(gribs, key=get_grid)
-    for grid, group in itertools.groupby(gribs, key=get_grid):
-        # create a new object for each grid
-        obj = core.Data()
-        lats, lons = [np.fromstring(x) for x in grid.split('\t')]
-        obj.create_coordinate(conv.LAT, lats)
-        obj.create_coordinate(conv.LON, lons)
-
-        var = lambda x: x.name
-        for var, var_group in itertools.groupby(group, key=var):
-            # iterate over all messages with the same variable name, turning
-            # each var into core.variable
-            def iterate():
-                # processes each message returning the date and values
-                g = var_group.next()
-                for g in itertools.chain([g], var_group):
-                    assert g.unitOfTimeRange == 1
-                    pre_format = '%s %.4d' % (g.validityDate, float(g.validityTime))
-                    valid_time = datetime.strptime(pre_format, '%Y%m%d %H%M')
-                    yield valid_time, g.values
-
-            # extract all the dates so we can make the time coordinate
-            iter_times = list(iterate())
-            dates = [x[0] for x in iter_times]
-            start_date = min(dates)
-            udunit = coards.to_udunits(start_date,
-                                        'hours since %Y-%m-%d %H:%M:%S')
-            uddates = [coards.datetime_to_udunits(d, udunit) for d in dates]
-            # create an empty data object and fill it
-            data = np.zeros((len(uddates), lats.size, lons.size))
-            for i, (_, x) in enumerate(iter_times):
-                data[i, :, :] = x
-            # if the time coordinate exists make sure it matches
-            if conv.TIME in obj.variables:
-                if not np.all(uddates == obj[conv.TIME].data):
-                    # overlap_dates = sorted(set(uddates).intersection(obj[conv.TIME].data))
-                    raise ValueError("expected all time variables to match")
-            else:
-                obj.create_coordinate(conv.TIME, uddates, record=True,
-                                      attributes={conv.UNITS: udunit})
-
-            obj.create_variable(var, dim=(conv.TIME, conv.LAT, conv.LON), data=data)
-        neg_lon = obj[conv.LON].data <= 0
-        obj[conv.LON].data[neg_lon] = 360. + obj[conv.LON].data[neg_lon]
-        if 'unknown' in obj.variables:
-            obj.delete_variable('unknown')
-        yield units.normalize_data(obj)
 
 
 def set_time(source, grib):
