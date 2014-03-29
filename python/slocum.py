@@ -28,6 +28,15 @@ def handle_spot(args):
     windbreaker.spot_message(fcst, args.output)
 
 
+def handle_netcdf(args):
+    """
+    Converts a packed ensemble forecast to a standard GRIB
+    """
+    tinyfcst = zlib.decompress(args.input.read())
+    fcst = tinylib.from_beaufort(tinyfcst)
+    fcst.dump(args.output)
+
+
 def handle_grib(args):
     """
     Converts a packed ensemble forecast to a standard GRIB
@@ -51,10 +60,6 @@ def handle_route_forecast(args):
     Generates a gpx waypoint file with wind forecast info along a route
     provided in an input file.
     """
-#     tinyfcst = zlib.decompress(args.input.read())
-#     args.input.close()
-#     fcst = tinylib.from_beaufort(tinyfcst)
-
     import xray
     fcst = xray.open_dataset(args.input.name)
 
@@ -87,6 +92,7 @@ def setup_parser_grib(p):
     p.add_argument('--input', type=argparse.FileType('rb'), default=sys.stdin)
     p.add_argument('--output', type=argparse.FileType('wb'),
                    default=sys.stdout)
+
 
 def setup_parser_email(p):
     """
@@ -135,10 +141,12 @@ def setup_parser_route_forecast(p):
 # parser_setup_handler) tuple.  Subparsers are initialized in __main__  (with
 # the handler function's doc string as help text) and then the appropriate
 # setup handler is called to add the details.
-_task_handler = {'email'   : (handle_email, setup_parser_email),
-                 'grib'    : (handle_grib, setup_parser_grib),
-                 'route-forecast' : (handle_route_forecast, setup_parser_route_forecast),
-		 'spot': (handle_spot, setup_parser_grib)}
+_task_handler = {'email': (handle_email, setup_parser_email),
+                 'grib': (handle_grib, setup_parser_grib),
+                 'netcdf': (handle_netcdf, setup_parser_grib),
+                 'route-forecast': (handle_route_forecast,
+                                    setup_parser_route_forecast),
+                 'spot': (handle_spot, setup_parser_grib)}
 
 if __name__ == "__main__":
 
