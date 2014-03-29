@@ -25,7 +25,7 @@ from sl.lib import griblib, tinylib, rtefcst
 def handle_spot(args):
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.beaufort_to_dict(tinyfcst)
-    windbreaker.print_spot(fcst)
+    windbreaker.spot_message(fcst, args.output)
 
 
 def handle_grib(args):

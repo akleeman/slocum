@@ -1,4 +1,5 @@
 import os
+import sys
 import zlib
 import numpy as np
 import logging
@@ -9,7 +10,7 @@ from cStringIO import StringIO
 from xray import open_dataset, backends
 
 from sl import poseidon
-from sl.lib import conventions as conv
+from sl.lib import conventions as conv, units
 from sl.lib import objects, tinylib, saildocs, emaillib
 from sl.lib.objects import NautAngle
 import json
@@ -148,7 +149,11 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
             raise
 
 
-def print_spot(spot):
+def spot_message(spot, out=sys.stdout):
+    """
+    Dumps the readble spot message held in forecast 'spot'
+    to the file-like output.
+    """
     assert conv.TIME in spot
     assert conv.LAT in spot
     assert conv.LON in spot
@@ -156,28 +161,39 @@ def print_spot(spot):
     variables = [conv.UWND, conv.VWND]
     variables = [v for v in variables if v in spot]
 
-    uwnd = spot[conv.UWND][1].reshape(-1)
-    vwnd = spot[conv.VWND][1].reshape(-1)
+    scale_to_knots = units._speed[spot['uwnd'][2][conv.UNITS]]
+    uwnd = spot[conv.UWND][1].reshape(-1) * scale_to_knots
+    vwnd = spot[conv.VWND][1].reshape(-1) * scale_to_knots
     winds = [objects.Wind(u, v) for u, v in zip(uwnd, vwnd)]
 
-    units = spot[conv.TIME][2][conv.UNITS]
-    assert units.startswith('hours')
-    ref_time = units.split('since')[1].strip()
+    time_units = spot[conv.TIME][2][conv.UNITS]
+    assert time_units.startswith('hours')
+    ref_time = time_units.split('since')[1].strip()
     ref_time = datetime.datetime.strptime(ref_time, '%Y-%m-%d %H:%M:%S')
     dates = [ref_time + datetime.timedelta(hours=x) for x in spot[conv.TIME][1]]
     date_strings = [x.strftime('%Y-%m-%d %H:%M UTC') for x in dates]
 
-    fmt = '%20s\t%3.0f%5s'
+    fmt = '%20s\t%7s%5s\t%s'
+    beaufort_in_knots = tinylib._beaufort_scale * scale_to_knots
+
+    speeds = np.array([w.speed for w in winds])
+    forces = np.digitize(speeds, beaufort_in_knots)
+
+    pressures = np.digitize(spot['pressure'][1].reshape(-1),
+                            tinylib._pressure_scale)
 
     def iter_lines():
-        yield '%20s\t%8s' % ('Date', 'Wind (K)')
-        for d, w in zip(date_strings, winds):
-            yield fmt % (d, w.speed, w.readable)
+        yield '%20s\t%9s\t%9s' % ('Date', ' Wind (Knots)', 'MSL Press (Pa)')
+        for d, w, f, p in zip(date_strings, winds, forces, pressures):
+            speeds = '%d-%d' % (beaufort_in_knots[f - 1],
+                                beaufort_in_knots[f])
+            press = '%d-%d' % (tinylib._pressure_scale[p - 1],
+                               tinylib._pressure_scale[p])
+            yield fmt % (d, speeds, w.readable, press)
 
-    print '\n'.join(iter_lines())
-    import ipdb; ipdb.set_trace()
+    ref_time = time_units.split(' since ')[1]
 
-    n = spot[conv.TIME][1].size
-    for i in range(n):
-        objects.Wind(u, v)
-        line = [np.asscalar(spot[v][1][i]) for v in variables]
+    out.write("The forecast used for this SPOT forecast was run on %s UTC\n" %
+              ref_time)
+    out.write('\n'.join(iter_lines()))
+    return out

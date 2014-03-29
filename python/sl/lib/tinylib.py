@@ -21,7 +21,7 @@ logger.setLevel(logging.DEBUG)
 
 # the beaufort scale in m/s
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
-                            33., 40., 47., 55., 63., 75.]) * 1.94384449
+                            33., 40., 47., 55., 63., 75.]) / 1.94384449
 # precipitation scale in kg.m-2.s-1
 _precip_scale = np.array([1e-8, 1., 5.]) / 3600.
 _direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
@@ -40,7 +40,7 @@ _variables = {conv.WIND_SPEED: {'dtype': np.float32,
                                 'dims': (conv.TIME, conv.LAT, conv.LON),
                                 'divs': _beaufort_scale,
                                 'bits': 4,
-                                'attributes': {conv.UNITS: 'knot'}},
+                                'attributes': {conv.UNITS: 'm/s'}},
               conv.WIND_DIR: {'dtype': np.float32,
                               'dims': (conv.TIME, conv.LAT, conv.LON),
                               'divs': _direction_bins,
@@ -227,12 +227,9 @@ def tiny_unmasked(arr, bits=None, divs=None):
     assert bits <= 4
     n = np.power(2., bits)
     # for each element of the array, count how many divs are less than the elem
-    # this certainly not the fastest implementation but should do.
     # note that a zero now means that the value was less than all div
     # and a value of n means it was larger than the nth div.
-    bins = np.maximum(1, np.minimum(n, np.array([bisect(divs, y)
-                                                 for y in arr.flatten()])))
-    bins = bins.astype(np.uint8)
+    bins = np.digitize(arr.reshape(-1), divs)
     tiny = pack_ints(bins - 1, bits)
     tiny['divs'] = divs
     tiny['shape'] = arr.shape
@@ -359,11 +356,12 @@ def small_time(time_var):
                               time_var.attributes[conv.UNITS],
                               calendar='standard')[0]
     diffs = np.diff(np.concatenate([[0], time_var.data[:]]))
+    np.testing.assert_array_equal(diffs.astype('int'), diffs)
     fromordinal = datetime.datetime.fromordinal(origin.toordinal())
     seconds = int(datetime.timedelta.total_seconds(origin - fromordinal))
     augmented = np.concatenate([[origin.toordinal(),
                                  seconds],
-                                diffs])
+                                diffs.astype('int')])
     return small_array(augmented, least_significant_digit=0)
 
 
@@ -426,10 +424,13 @@ def to_beaufort(obj):
         small = small_array(np.asarray(obj[v].data).astype(_variables[v]['dtype']),
                             _variables[v]['least_significant_digit'])
         encoded_variables[v] = small['packed_array']
-
     # convert the wind speeds to a beaufort scale and store them
     wind = [objects.Wind(*x) for x in zip(uwnd[:].flatten(), vwnd[:].flatten())]
     speeds = np.array([x.speed for x in wind]).reshape(uwnd.shape)
+    assert (obj[conv.UWND].attributes[conv.UNITS] ==
+            _variables[conv.WIND_SPEED]['attributes'][conv.UNITS])
+    assert (obj[conv.VWND].attributes[conv.UNITS] ==
+            _variables[conv.WIND_SPEED]['attributes'][conv.UNITS])
     speeds = speeds.astype(_variables[conv.WIND_SPEED]['dtype'])
     tiny_wind = tiny_array(speeds, bits=4, divs=_beaufort_scale)
     encoded_variables[conv.WIND_SPEED] = tiny_wind['packed_array']

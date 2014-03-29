@@ -45,15 +45,15 @@ def latest(latest_html_url):
     f = urllib2.urlopen(latest_html_url)
     soup = BeautifulSoup(f.read())
 
-    def is_latest(x):
+    def is_grib(x):
         # checks if the beautiful soup 'a' tag holds the latest href
         text = x.fetchText()
-        return len(text) == 1 and 'Latest' in str(text[0])
+        return len(text) == 1 and 'grib2' in str(text[0])
     # get all the possible href links to the latest forecast
-    atag = [x for x in soup.findAll("a") if is_latest(x)]
+    atag = [x for x in soup.findAll("a") if is_grib(x)]
     # we expect there to be only one match
     if len(atag) != 1:
-        raise ValueError("Expected at least one tag with Latest in the name:" +
+        raise ValueError("Expected at only one link to the latest forecast,"
                          "instead got %s" % str(atag))
     atag = atag[0]
     # pull out the query from the atag
@@ -245,6 +245,7 @@ def forecast(query):
 
 def spot_forecast(query):
     modified_query = query.copy()
+    modified_query['vars'] = ['wind', 'press']
     lat = query['location']['latitude']
     lon = query['location']['longitude']
     modified_query['domain'] = {'N': lat + 0.5,
@@ -294,9 +295,8 @@ def opendap_forecast(source):
     try:
         latest_opendap = latest(_sources[source])
         logger.debug(latest_opendap)
-        raise RuntimeError()
         ds = xray.open_dataset(latest_opendap)
-    except RuntimeError:
+    except:
         ds = fallback(source)
     return ds
 
@@ -310,7 +310,7 @@ def gfs(query):
         variables['u-component_of_wind_height_above_ground'] = conv.UWND
         variables['v-component_of_wind_height_above_ground'] = conv.VWND
     if len(set(['rain', 'precip']).intersection(query['vars'])):
-        variables['Precipitation_rate_surface_Mixed_intervals_Average'] = conv.PRECIP
+        variables['Precipitation_rate_surface_Mixed_Intervals_Average'] = conv.PRECIP
     if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
         variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
     if len(variables) == 0:
@@ -329,8 +329,16 @@ def gfs(query):
     # reduce the datset to only the variables we care about
     fcst = fcst.select(*variables.keys())
     renames = variables.copy()
+    # sometimes the time coordinate has a suffix number
+    time_name = [d for d in fcst.dimensions if d.startswith('time')]
+    if len(time_name) != 1:
+        import ipdb; ipdb.set_trace()
+        raise ValueError("Expected a single time dimension")
+    time_name = time_name[0]
     renames.update({lat_name: conv.LAT,
-                    lon_name: conv.LON})
+                    lon_name: conv.LON,
+                    time_name: conv.TIME,
+                    })
     fcst = fcst.rename(renames)
     logger.debug("Selected out variables: %s" % ', '.join(variables.keys()))
     # wind speed may come at several heights so we find the 10m wind speed
