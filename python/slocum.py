@@ -19,10 +19,19 @@ console_handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(console_handler)
 
 from sl import windbreaker
-from sl.lib import griblib, tinylib, rtefcst
+from sl.lib import griblib, tinylib, rtefcst, plotlib
+
+
+def handle_plot(args):
+    tinyfcst = zlib.decompress(args.input.read())
+    fcst = tinylib.from_beaufort(tinyfcst)
+    plotlib.wind_forecast(fcst)
 
 
 def handle_spot(args):
+    """
+    Expands and prints the content of a spot file.
+    """
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.beaufort_to_dict(tinyfcst)
     windbreaker.spot_message(fcst, args.output)
@@ -146,7 +155,8 @@ _task_handler = {'email': (handle_email, setup_parser_email),
                  'netcdf': (handle_netcdf, setup_parser_grib),
                  'route-forecast': (handle_route_forecast,
                                     setup_parser_route_forecast),
-                 'spot': (handle_spot, setup_parser_grib)}
+                 'spot': (handle_spot, setup_parser_grib),
+                 'plot': (handle_plot, setup_parser_grib)}
 
 if __name__ == "__main__":
 

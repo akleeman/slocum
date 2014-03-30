@@ -296,7 +296,9 @@ def opendap_forecast(source):
         latest_opendap = latest(_sources[source])
         logger.debug(latest_opendap)
         ds = xray.open_dataset(latest_opendap)
-    except:
+    except None:
+        import ipdb; ipdb.set_trace(
+                                    )
         ds = fallback(source)
     return ds
 

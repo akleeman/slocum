@@ -72,6 +72,7 @@ def _convert(v, possible_units, cur_units, new_units, validate=None):
 def convert_units(v, new_units):
     # convert the units
     if conv.UNITS in v.attributes:
+        v = v.copy()
         cur_units = v.attributes[conv.UNITS]
         for (possible_units, _, _) in _all_units:
             if cur_units in possible_units:

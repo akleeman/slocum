@@ -101,6 +101,7 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
         output.write(forecast_attachment.getvalue())
     # creates the new mime email
     file_fmt = 'windbreaker_%Y-%m-%d_%H%m.fcst'
+    import ipdb; ipdb.set_trace()
     filename = datetime.datetime.today().strftime(file_fmt)
     weather_email = emaillib.create_email(reply_to, _windbreaker_email,
                               _email_body,
