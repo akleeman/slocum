@@ -79,6 +79,10 @@ class Route(object):
             route constructor; if speed is provided for any leg it will
             overwrite avrgSpeed for that leg
 
+        'gpx'
+            XML file with a route exported from OpenCPN. avrgSpeed argument
+            must be provided to Route constructor.
+
     """
     # TODO: add parsers for different import formats
 
@@ -120,6 +124,8 @@ class Route(object):
 
         if inFmt == 'csv':
             self.read_csv(ifh, avrgSpeed)
+        elif inFmt == 'gpx':
+            self.read_gpx(ifh, avrgSpeed)
         else:
             raise (InvalidInFormatError,
                    "Invalid route file format specifier: %s" % inFmt)
@@ -340,7 +346,7 @@ class Route(object):
                 else:
                     r[2] = avrgSpeed
             try:
-                speed, new_units = units.normalize_scalar(float(r[2]), 'knot')
+                speed, __ = units.normalize_scalar(float(r[2]), 'knot')
                 self.rtePts.append(Route.RtePoint(NautAngle(r[0]),
                                    NautAngle(r[1]), speed))
             except:
@@ -348,6 +354,35 @@ class Route(object):
                         "Could not process line\n"
                         "%s\n"
                         "in %s" % (str(r), fn))
+
+    def read_gpx(self, ifo, avrgSpeed):
+        """
+        Reads route from gpx XML file, iterating over rtept elements. Since
+        OpenCPN route files don't include leg speed, avrgSpeed will be used for
+        all legs.
+        """
+        # XML name space
+        ns_string = 'http://www.topografix.com/GPX/1/1'
+
+        if isinstance(ifo, file):
+            fn = ifo.name
+        else:
+            fn = "route input"
+
+        if avrgSpeed is None:
+            raise ValueError(
+                    "Expected a non None average speed to process %s as gpx."
+                    % fn)
+        if not avrgSpeed > 0:
+            raise ValueError(
+                    "Expected an average speed > 0 to process %s as gpx." % f)
+
+        norm_speed, __ = units.normalize_scalar(avrgSpeed, 'knot')
+        root = ET.fromstring(ifo.read())
+        for rp in root.iter("{%s}rtept" % ns_string):
+            lat = NautAngle(rp.attrib['lat'])
+            lon = NautAngle(rp.attrib['lon'])
+            self.rtePts.append(Route.RtePoint(lat, lon, norm_speed))
 
     def queryDict(self, model=u'gfs', fc_type='gridded', grid_delta=(0.5, 0.5),
             fc_vars=[conv.PRESSURE, conv.PRECIP, conv.WIND]):
