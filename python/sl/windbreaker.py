@@ -100,8 +100,9 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
         logger.debug("dumping file to output")
         output.write(forecast_attachment.getvalue())
     # creates the new mime email
-    file_fmt = 'windbreaker_%Y-%m-%d_%H%m.fcst'
+    file_fmt = '%Y-%m-%d_%H%m.fcst'
     filename = datetime.datetime.today().strftime(file_fmt)
+    filename = '_'.join([query['type'], filename])
     weather_email = emaillib.create_email(reply_to, _windbreaker_email,
                               _email_body,
                               subject=query_string,
