@@ -227,10 +227,10 @@ def tiny_unmasked(arr, bits=None, divs=None):
     assert bits <= 4
     n = np.power(2., bits)
     # for each element of the array, count how many divs are less than the elem
-    # note that a zero now means that the value was less than all div
+    # note that a zero after shifting means that the value was less than all div
     # and a value of n means it was larger than the nth div.
-    bins = np.digitize(arr.reshape(-1), divs)
-    tiny = pack_ints(bins - 1, bits)
+    bins = np.maximum(0, np.digitize(arr.reshape(-1), divs) - 1)
+    tiny = pack_ints(bins, bits)
     tiny['divs'] = divs
     tiny['shape'] = arr.shape
     tiny['dtype'] = str(arr.dtype)
