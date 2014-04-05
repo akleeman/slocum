@@ -128,7 +128,8 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
                             "Your email should contain only one body")
     # Turns a query string into a dict of params
     logger.debug("About to parse saildocs")
-    queries = list(saildocs.iterate_queries(email_body[0]))
+    # The set makes sure there aren't duplicate queries.
+    queries = set(list(saildocs.iterate_queries(email_body[0])))
     # if there are no queries let the sender know
     if len(queries) == 0:
         emaillib.send_error(reply_to,
@@ -143,11 +144,26 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
             # in an email even if some of them failed, but a hard fail on
             # the first error will make sure we never accidentally send
             # tons of error emails to the user.
+            logger.error(e)
+            emaillib.send_error('akleeman@gmail.com',
+                                ('Bad query: %s.' % query_string), e,
+                                reply_to)
             emaillib.send_error(reply_to,
                                 ("Error processing %s.  If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
-            raise
+        except Exception, e:
+            logger.error(e)
+            emaillib.send_error('akleeman@gmail.com',
+                                ('Query %s just failed.' % query_string), e,
+                                reply_to)
+            emaillib.send_error(reply_to,
+                                ("Error processing %s.  Alex just got an urgent"
+                                 "e-mail, he's looking into the problem. "
+                                 "If there were other " +
+                                 "queries in the same email they won't be " +
+                                 "processed.\n") % query_string, e)
+
 
 
 def spot_message(spot, out=sys.stdout):

@@ -166,10 +166,10 @@ def longitude_slicer(lons, query):
     eastern_most = eastern_most + sign * lon_stride
     slicer = slice(western_most, eastern_most, sign * lon_stride)
 
-    assert np.all([x <= domain['E'] for x in lons[slicer]])
-    assert np.all([x >= domain['W'] for x in lons[slicer]])
-    assert np.any([x >= domain['E'] for x in lons[slicer]])
-    assert np.any([x <= domain['W'] for x in lons[slicer]])
+#     assert np.all([x <= domain['E'] for x in lons[slicer]])
+#     assert np.all([x >= domain['W'] for x in lons[slicer]])
+#     assert np.any([x >= domain['E'] for x in lons[slicer]])
+#     assert np.any([x <= domain['W'] for x in lons[slicer]])
 
     return slicer
 
@@ -220,7 +220,6 @@ def subset(remote_dataset, query, additional_slicers=None):
     this function returns the smallest subset of the data
     which fully contains the region
     """
-
     slicers = {conv.LAT: latitude_slicer(remote_dataset[conv.LAT], query),
                conv.LON: longitude_slicer(remote_dataset[conv.LON], query),
                conv.TIME: time_slicer(remote_dataset[conv.TIME], query)}
@@ -275,7 +274,7 @@ def spot_forecast(query):
                             if (conv.LAT in v.dimensions and
                                 conv.LON in v.dimensions)]
     for k in spatial_variables:
-        interpolated = np.sum(np.sum(fcst[k].data * weights, axis=1), axis=1)
+        interpolated = np.sum(np.sum(fcst[k].data * weights.T, axis=1), axis=1)
         spot[k].data[:] = interpolated[:, np.newaxis, np.newaxis]
     spot[conv.LAT].data[:] = lat
     spot[conv.LON].data[:] = lon
