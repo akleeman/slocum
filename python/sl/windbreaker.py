@@ -152,6 +152,7 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
                                 ("Error processing %s.  If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
+            raise
         except Exception, e:
             logger.error(e)
             emaillib.send_error('akleeman@gmail.com',
@@ -163,6 +164,7 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
                                  "If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
+            raise
 
 
 
