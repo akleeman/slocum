@@ -26,15 +26,35 @@ from sl.lib.objects import NautAngle
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
 
-_sources = {'gefs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GEFS/Global_1p0deg_Ensemble/members/files/latest.html',
-            'nww3': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/WW3/Global/files/latest.html',
-            'gfs': 'http://thredds.ucar.edu/thredds/catalog/grib/NCEP/GFS/Global_0p5deg/files/latest.html',
+_servers = ['http://unidata2-new.ssec.wisc.edu',
+            'http://thredds.ucar.edu']
+
+_models = {'gefs': 'NCEP/GEFS/Global_1p0deg_Ensemble/member',
+            'nww3': '/NCEP/WW3/Global/files/',
+            'gfs': '/NCEP/GFS/Global_0p5deg/member',
             }
 
-_formats = {'gfs': 'http://thredds.ucar.edu/thredds/dodsC/grib/NCEP/GFS/Global_0p5deg/files/GFS_Global_0p5deg_%Y%m%d_%H00.grib2'}
+_files = {'gfs': 'NCEP/GFS/Global_0p5deg/files/GFS_Global_0p5deg_%Y%m%d_%H00.grib2',
+          'gefs': 'NCEP/GEFS/Global_1p0deg_Ensemble/files/Global_1p0deg_Ensemble_%Y%m%d_%H00.grib2'}
 
 
-def latest(latest_html_url):
+def latest_url(model, server):
+    return os.path.join(server, 'thredds/catalog/',
+                        _models[model], 'latest.html')
+
+
+def file_format(model, server):
+    return os.path.join(server, 'thredds/dodsC/grib/', _files[model])
+
+
+def best_url(model, server):
+    """
+    Despite the name, this is often the oldest forecast.
+    """
+    return os.path.join(server, 'thredds/dodsC/grib', model, 'best.html')
+
+
+def latest(model, server):
     """
     UCAR's thredds server provides access to the latest forecasts
     using a latest.html web page.  Here we parse that page to
@@ -42,13 +62,14 @@ def latest(latest_html_url):
     recent forecast.
     """
     # create a beatiful soup
-    f = urllib2.urlopen(latest_html_url)
+    f = urllib2.urlopen(latest_url(model, server))
     soup = BeautifulSoup(f.read())
 
     def is_grib(x):
         # checks if the beautiful soup 'a' tag holds the latest href
         text = x.fetchText()
-        return len(text) == 1 and 'grib2' in str(text[0])
+        return len(text) == 1 and ('grib2' in str(text[0]) or
+                                   'latest' in str(text[0]).lower())
     # get all the possible href links to the latest forecast
     atag = [x for x in soup.findAll("a") if is_grib(x)]
     # we expect there to be only one match
@@ -60,23 +81,26 @@ def latest(latest_html_url):
     query = dict(urlparse.parse_qsl(urllib.splitquery(atag.get('href'))[1]))
     dataset = query['dataset']
     # the base directory for openDAP data changes to included suffix dodsC
-    return os.path.join('http://thredds.ucar.edu/thredds/dodsC', dataset)
+    return os.path.join(server, 'thredds/dodsC', dataset)
 
 
-def fallback(source):
+def fallback(model, server):
     # start at an overestimate of the most recent forecast and backtrack
     # until one is found.
     start = datetime.datetime.utcnow().strftime('%Y-%m-%d 18:00')
     for d in pd.date_range(start, periods=12, freq='-6H'):
         try:
-            url = d.strftime(_formats[source])
+            url = d.strftime(file_format(model, server))
             logger.info("Trying to load %s" % url)
             ds = xray.open_dataset(url)
             return ds
         except:
             pass
-    raise ValueError("Could not find a valid forecast. "
-                     "Perhaps the server is down?")
+    try:
+        return xray.open_dataset(best_url(model, server))
+    except:
+        raise ValueError("Could not find a valid forecast. "
+                         "Perhaps the server is down?")
 
 
 def latitude_slicer(lats, query):
@@ -116,10 +140,10 @@ def latitude_slicer(lats, query):
     southern_most = southern_most + sign * lat_stride
     slicer = slice(northern_most, southern_most, sign * lat_stride)
 
-    assert np.all(lats[slicer] <= domain['N'])
-    assert np.all(lats[slicer] >= domain['S'])
-    assert np.any(lats[slicer] >= domain['N'])
-    assert np.any(lats[slicer] <= domain['S'])
+#     assert np.all(lats[slicer] <= domain['N'])
+#     assert np.all(lats[slicer] >= domain['S'])
+#     assert np.any(lats[slicer] >= domain['N'])
+#     assert np.any(lats[slicer] <= domain['S'])
     return slicer
 
 
@@ -252,7 +276,7 @@ def spot_forecast(query):
                                 'E': np.mod(lon + 180.5, 360.) - 180.,
                                 'W': np.mod(lon + 179.5, 360.) - 180.}
 
-    fcst = gfs(modified_query)
+    fcst = gridded_forecast(modified_query)
 
     def bilinear_weights(grid, x):
         # take the two closest points
@@ -274,64 +298,79 @@ def spot_forecast(query):
                             if (conv.LAT in v.dimensions and
                                 conv.LON in v.dimensions)]
     for k in spatial_variables:
-        interpolated = np.sum(np.sum(fcst[k].data * weights.T, axis=1), axis=1)
-        spot[k].data[:] = interpolated[:, np.newaxis, np.newaxis]
+        assert conv.LAT in fcst[k].dimensions[-2:]
+        assert conv.LON in fcst[k].dimensions[-2:]
+        interpolated = np.sum(np.sum(fcst[k].data * weights.T, axis=-1), axis=-1)
+        spot[k].data[:] = interpolated.reshape(spot[k].data.shape)
     spot[conv.LAT].data[:] = lat
     spot[conv.LON].data[:] = lon
     return spot
 
 
-def gridded_forecast(query):
-    assert query['model'] == 'gfs'
-    return gfs(query)
-
-
-def opendap_forecast(source):
+def opendap_forecast(model):
     """
     A convenience wrapper which will looked up the uri
     to the latest openDAP dataset for source.
     """
-    try:
-        latest_opendap = latest(_sources[source])
-        logger.debug(latest_opendap)
-        ds = xray.open_dataset(latest_opendap)
-    except:
-        ds = fallback(source)
-    return ds
+    for server in _servers:
+        try:
+            latest_opendap = latest(model, server)
+            logger.debug(latest_opendap)
+            return xray.open_dataset(latest_opendap)
+        except Exception, e:
+            logger.warn("Attempt to fetch %s on %s failed."
+                        % (model, server))
+            logger.warn(str(e))
+            pass
+
+    for server in _servers:
+        try:
+            ds = fallback(model, server)
+            return ds
+        except Exception, e:
+            logger.warn("Attempt to directly access %s files on %s failed."
+                        % (model, server))
+    raise ValueError("Couldn't access %s data on %s" %
+                     (model, ' or '.join(_servers)))
 
 
-def gfs(query):
+def gridded_forecast(query):
     """
-    Global Forecast System forecast object
+
     """
-    variables = {}
-    if 'wind' in query['vars']:
-        variables['u-component_of_wind_height_above_ground'] = conv.UWND
-        variables['v-component_of_wind_height_above_ground'] = conv.VWND
-    if len(set(['rain', 'precip']).intersection(query['vars'])):
-        variables['Precipitation_rate_surface_Mixed_Intervals_Average'] = conv.PRECIP
-    if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
-        variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
-    if len(variables) == 0:
-        raise ValueError("No valid GFS variables in query")
-    fcst = opendap_forecast('gfs')
+    fcst = opendap_forecast(query['model'])
 
     def lookup_name(possible_names):
         actual_names = fcst.variables.keys()
-        name = set(possible_names).intersection(actual_names)
+        possible_names = [x.lower() for x in possible_names]
+        name = [x for x in actual_names if x.lower() in possible_names]
         assert len(name) == 1
         return name.pop()
 
+    variables = {}
+    if 'wind' in query['vars']:
+        uwnd_name = lookup_name(['u-component_of_wind_height_above_ground'])
+        variables[uwnd_name] = conv.UWND
+        vwnd_name = lookup_name(['v-component_of_wind_height_above_ground'])
+        variables[vwnd_name] = conv.VWND
+    if len(set(['rain', 'precip']).intersection(query['vars'])):
+        precip_name = lookup_name(['Precipitation_rate_surface_Mixed_Intervals_Average'])
+        variables[precip_name] = conv.PRECIP
+    if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
+        press_name = lookup_name(['Pressure_reduced_to_MSL_msl',
+                                  'Pressure_reduced_to_MSL'])
+        variables[press_name] = conv.PRESSURE
+    if len(variables) == 0:
+        raise ValueError("No valid variables in query")
+
     lat_name = lookup_name(['lat', 'latitude'])
     lon_name = lookup_name(['lon', 'longitude'])
-
     # reduce the datset to only the variables we care about
     fcst = fcst.select(*variables.keys())
     renames = variables.copy()
     # sometimes the time coordinate has a suffix number
     time_name = [d for d in fcst.dimensions if d.startswith('time')]
     if len(time_name) != 1:
-        import ipdb; ipdb.set_trace()
         raise ValueError("Expected a single time dimension")
     time_name = time_name[0]
     renames.update({lat_name: conv.LAT,

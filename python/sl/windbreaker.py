@@ -2,6 +2,7 @@ import os
 import sys
 import zlib
 import numpy as np
+import base64
 import logging
 import datetime
 
@@ -88,7 +89,12 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     # Acquires a forecast corresponding to a query
     fcst = get_forecast(query, path=forecast_path)
     logger.debug('Obtained the forecast')
-    tiny_fcst = tinylib.to_beaufort(fcst)
+    if 'ens' in fcst.dimensions:
+        tinys = [tinylib.to_beaufort(fcst.indexed_by(ens=i))
+                 for i in range(fcst.dimensions['ens'])]
+        tiny_fcst = '\t'.join([base64.b64encode(x) for x in tinys])
+    else:
+        tiny_fcst = tinylib.to_beaufort(fcst)
     compressed_forecast = zlib.compress(tiny_fcst, 9)
     logger.debug("Compressed Size: %d" % len(compressed_forecast))
     # Make sure the forecast file isn't too large for sailmail
@@ -112,12 +118,13 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     logger.debug('Email sent.')
 
 
-def windbreaker(mime_text, ncdf_weather=None, output=None):
+def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
     """
     Takes a mime_text email that contains one or several saildoc-like
     requests and replies to the sender with emails containing the
     desired compressed forecasts.
     """
+    exceptions = None if fail_hard else Exception
     logger.debug('Wind Breaker')
     logger.debug(mime_text)
     email_body = emaillib.get_body(mime_text)
@@ -149,22 +156,21 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
                                 ('Bad query: %s.' % query_string), e,
                                 reply_to)
             emaillib.send_error(reply_to,
-                                ("Error processing %s.  If there were other " +
+                                ("Error processing '%s'.  If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
-            raise
-        except Exception, e:
+            if fail_hard:
+                raise
+        except exceptions, e:
             logger.error(e)
             emaillib.send_error('akleeman@gmail.com',
-                                ('Query %s just failed.' % query_string), e,
-                                reply_to)
+                                ('Query %s just failed.' % query_string), e)
             emaillib.send_error(reply_to,
                                 ("Error processing %s.  Alex just got an urgent"
                                  "e-mail, he's looking into the problem. "
                                  "If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
-            raise
 
 
 

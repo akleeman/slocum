@@ -52,7 +52,9 @@ def handle_email(args):
     a saildocs-like request and replying to the sender with
     an packed ensemble forecast.
     """
-    windbreaker.windbreaker(args.input.read(), args.ncdf, output=args.output)
+    windbreaker.windbreaker(args.input.read(), args.ncdf,
+                            output=args.output,
+                            fail_hard=args.fail_hard)
 
 
 def handle_route_forecast(args):
@@ -103,6 +105,7 @@ def setup_parser_email(p):
     p.add_argument('--output', type=argparse.FileType('wb'),
                    default=sys.stdout)
     p.add_argument('--ncdf', default=None)
+    p.add_argument('--fail-hard', default=False, action='store_true')
 
 
 def setup_parser_route_forecast(p):
