@@ -107,6 +107,21 @@ def normalize_variables(dataset):
     return dataset
 
 
+def convert_array(v, cur_units, new_units):
+    """
+    Converts an array from cur_units to new_units.  Same as convert_units but
+    can be used if v has no 'attributes' attribute (e.g. spot forecasts).
+    Conversion is done in place.
+    """
+    for (possible_units, _, _) in _all_units:
+        if cur_units in possible_units:
+            mult = (possible_units[cur_units] / possible_units[new_units])
+            v[:] *= mult
+            return v
+    else:
+        raise ValueError("No units found so convertion doesn't make sense")
+
+
 def convert_scalar(s, cur_units, new_units):
     """
     Converts a single scalar from cur_units to new_units.
