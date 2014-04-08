@@ -1,27 +1,28 @@
-import sys
-import os.path
-import zlib
-import base64
-import argparse
+#!/usr/bin/python2.7
+
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import xray
-from sl.lib import tinylib
 from sl.lib import units
 from sl.lib import conventions as conv
 
+display_units = {
+        conv.WIND_SPEED: 'knot',
+        conv.PRESSURE: 'hPa'
+        }
 
-def display_espot(fcsts, f_var, plot_cols, source):
+def display_espot(fcsts, f_var, source, plot_type='box'):
     """
     Plots the spread of values for forecast variable f_var in an ensemble
     forecast along the forecast times contained in fcsts, a list of
-    dictionaries with members of the ensemble. source is a string denoting the
-    source for the data (e.g. a file name - will be included in figure title).
+    dictionaries with members of the ensemble. plot_type is either 'bar' or
+    'box', source is a string denoting the source for the data (e.g. a file
+    name - will be included in figure title).
     """
-    display_units = {
-            conv.WIND_SPEED: 'knot',
-            conv.PRESSURE: 'hPa'
+    plot_handler = {
+            'bar': plot_bar,
+            'box': plot_box
             }
 
     f0 = fcsts[0]
@@ -32,9 +33,21 @@ def display_espot(fcsts, f_var, plot_cols, source):
     f_times = xray.decode_cf_datetime(t[1], t[2][conv.UNITS])
     f_times = f_times.astype('M8[h]')
 
+    title = ("SPOT Ensemble for lat: %.1f lon: %.1f\n(source: %s)" %
+            (lat, lon, source))
+
     data = [units.convert_array(f[f_var][1].ravel(), fv_units,
             display_units[f_var]) for f in fcsts]
+
+    plot_handler[plot_type](f_var, data, f_times, title)
+
+
+def plot_bar(f_var, data, f_times, title):
+
+    plot_cols = 4
+
     df = pd.DataFrame(data, columns=f_times)
+
     dcount = df.apply(pd.value_counts).fillna(0)
     new_index = np.array(dcount.index).astype('f8').round().astype('i4')
     dcount.index = new_index
@@ -42,9 +55,7 @@ def display_espot(fcsts, f_var, plot_cols, source):
 
     plot_rows = int(np.ceil(len(f_times) / float(plot_cols)))
     fig, axes =  plt.subplots(plot_rows, plot_cols, sharex=True, sharey=True)
-    fig.suptitle(
-            "SPOT Ensemble for lat: %.1f lon: %.1f (source: %s)" %
-            (lat, lon, source))
+    fig.suptitle(title)
 
     i, j = (0, 0)
     for count, t in enumerate(f_times):
@@ -60,22 +71,44 @@ def display_espot(fcsts, f_var, plot_cols, source):
     plt.show()
     plt.close()
 
-def setup_parser(p, script):
-    variable_choices=[conv.WIND_SPEED, conv.PRESSURE]
-    p.add_argument(
-            '--input', metavar='FILE', required='True',
-            type=argparse.FileType('rb'), help="input file with windbreaker "
-            "SPOT forecast ensemble")
-    p.add_argument(
-            '--variable', metavar='VARIABLE', required='True',
-            choices=variable_choices, help="forecast variable for which to "
-            "create plot; valid choices: %s" % ', '.join(variable_choices))
-    p.add_argument(
-            '--plotcol', metavar='NUMBER', type=int, default=4,
-            help="number of columns for plot grid")
+def plot_box(f_var, data, f_times, title):
+
+    fig, ax = plt.subplots()
+    ax.boxplot(np.array(data))
+    x_labels = [ft.item().strftime('%d/%HZ') for ft in f_times]
+    ax.set_xticklabels(x_labels, rotation='vertical')
+    ax.set_ylabel("%s [%s]" % (f_var, display_units[f_var]))
+    ax.grid(axis='y')
+    ax.set_title(title)
+
+    plt.show()
+    plt.close()
 
 
 if __name__ == '__main__':
+
+    import sys
+    import os.path
+    import zlib
+    import base64
+    import argparse
+    from sl.lib import tinylib
+
+    def setup_parser(p, script):
+        variable_choices=[conv.WIND_SPEED, conv.PRESSURE]
+        p.add_argument(
+                '--input', metavar='FILE', required='True',
+                type=argparse.FileType('rb'), help="input file with "
+                "windbreaker SPOT forecast ensemble")
+        p.add_argument(
+                '--variable', metavar='VARIABLE', required='True',
+                choices=variable_choices, help="forecast variable for which "
+                "to create plot; valid choices: %s" %
+                ', '.join(variable_choices))
+        p.add_argument(
+                '--plot', metavar='TYPE', choices=['box', 'bar'],
+                default='box', help="plot type to be created "
+                "('bar'|'box'), defaults to 'box'")
 
     script = os.path.basename(__file__)
     parser = argparse.ArgumentParser(description="""
@@ -90,4 +123,4 @@ if __name__ == '__main__':
     fcsts = [base64.b64decode(x) for x in zlib.decompress(payload).split('\t')]
     fcsts = [tinylib.beaufort_to_dict(f) for f in fcsts]
 
-    display_espot(fcsts, args.variable, args.plotcol, source)
+    display_espot(fcsts, args.variable, source, args.plot)
