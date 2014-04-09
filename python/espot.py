@@ -12,13 +12,12 @@ display_units = {
         conv.PRESSURE: 'hPa'
         }
 
-def display_espot(fcsts, f_var, source, plot_type='box'):
+def display_espot(fcsts, f_var, plot_type='box'):
     """
     Plots the spread of values for forecast variable f_var in an ensemble
     forecast along the forecast times contained in fcsts, a list of
     dictionaries with members of the ensemble. plot_type is either 'bar' or
-    'box', source is a string denoting the source for the data (e.g. a file
-    name - will be included in figure title).
+    'box'.
     """
     plot_handler = {
             'bar': plot_bar,
@@ -28,13 +27,15 @@ def display_espot(fcsts, f_var, source, plot_type='box'):
     f0 = fcsts[0]
     fv_units = f0[f_var][2][conv.UNITS]
     t = f0[conv.TIME]
+    t0_stamp = np.datetime64(
+            t[2][conv.UNITS].replace('hours since ', '') + 'Z')
     lat = f0[conv.LAT][1][0]
     lon = f0[conv.LON][1][0]
     f_times = xray.decode_cf_datetime(t[1], t[2][conv.UNITS])
     f_times = f_times.astype('M8[h]')
 
-    title = ("SPOT Ensemble for lat: %.1f lon: %.1f\n(source: %s)" %
-            (lat, lon, source))
+    title = ("SPOT Ensemble for lat: %.1f lon: %.1f\n($t_0$ = %s)" %
+            (lat, lon, t0_stamp.item().strftime('%Y-%m-%dT%HZ')))
 
     data = [units.convert_array(f[f_var][1].ravel(), fv_units,
             display_units[f_var]) for f in fcsts]
@@ -101,6 +102,10 @@ if __name__ == '__main__':
                 type=argparse.FileType('rb'), help="input file with "
                 "windbreaker SPOT forecast ensemble")
         p.add_argument(
+                '--b64', action='store_true', help="if specified, input file "
+                "is expected to base64 encoded (as extracted from Sailmail "
+                "email)")
+        p.add_argument(
                 '--variable', metavar='VARIABLE', required='True',
                 choices=variable_choices, help="forecast variable for which "
                 "to create plot; valid choices: %s" %
@@ -117,10 +122,11 @@ if __name__ == '__main__':
     setup_parser(parser, script)
     args = parser.parse_args()
 
-    source = args.input.name
     payload = args.input.read()
     args.input.close()
+    if args.b64:
+        payload = base64.b64decode(payload)
     fcsts = [base64.b64decode(x) for x in zlib.decompress(payload).split('\t')]
     fcsts = [tinylib.beaufort_to_dict(f) for f in fcsts]
 
-    display_espot(fcsts, args.variable, source, args.plot)
+    display_espot(fcsts, args.variable, args.plot)
