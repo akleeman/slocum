@@ -7,17 +7,16 @@ import xray
 from sl.lib import units
 from sl.lib import conventions as conv
 
-display_units = {
-        conv.WIND_SPEED: 'knot',
-        conv.PRESSURE: 'hPa'
-        }
+fcst_vars = [(conv.WIND_SPEED, 'knot'),
+             (conv.PRESSURE, 'hPa')]
 
-def display_espot(fcsts, f_var, plot_type='box'):
+def display_espot(fcsts, f_var=None, plot_type='box'):
     """
     Plots the spread of values for forecast variable f_var in an ensemble
     forecast along the forecast times contained in fcsts, a list of
     dictionaries with members of the ensemble. plot_type is either 'bar' or
-    'box'.
+    'box'. If no variable is specified, a combined plot for pressure and wind
+    will be generated
     """
     plot_handler = {
             'bar': plot_bar,
@@ -25,7 +24,6 @@ def display_espot(fcsts, f_var, plot_type='box'):
             }
 
     f0 = fcsts[0]
-    fv_units = f0[f_var][2][conv.UNITS]
     t = f0[conv.TIME]
     t0_stamp = np.datetime64(
             t[2][conv.UNITS].replace('hours since ', '') + 'Z')
@@ -37,13 +35,34 @@ def display_espot(fcsts, f_var, plot_type='box'):
     title = ("SPOT Ensemble for lat: %.1f lon: %.1f\n($t_0$ = %s)" %
             (lat, lon, t0_stamp.item().strftime('%Y-%m-%dT%HZ')))
 
-    data = [units.convert_array(f[f_var][1].ravel(), fv_units,
-            display_units[f_var]) for f in fcsts]
+    data_list = []      # not pretty but works for now
+    for var, plot_units in fcst_vars:
+        fv_units = f0[var][2][conv.UNITS]
+        data = [units.convert_array(f[var][1].ravel(), fv_units,
+                plot_units) for f in fcsts]
+        if var == f_var:
+            plot_handler[plot_type](f_var, data, plot_units, f_times, title)
+            break
+        else:
+            data_list.append(data)
+    if f_var:
+        return
 
-    plot_handler[plot_type](f_var, data, f_times, title)
+    fig, axes = plt.subplots(2, 1, sharex=True)
+    fig.suptitle(title)
+    for i, (var, plot_units) in enumerate(fcst_vars):
+        ax = axes[i]
+        ax.boxplot(np.array(data_list[i]))
+        x_labels = [ft.item().strftime('%d/%HZ') for ft in f_times]
+        ax.set_ylabel("%s [%s]" % (var, plot_units))
+        ax.grid(axis='y')
+    ax.set_xticklabels(x_labels, rotation='vertical')
+
+    plt.show()
+    plt.close()
 
 
-def plot_bar(f_var, data, f_times, title):
+def plot_bar(f_var, data, plot_units, f_times, title):
 
     plot_cols = 4
 
@@ -65,20 +84,20 @@ def plot_bar(f_var, data, f_times, title):
         dcount[t].plot(kind='barh', ax=axes[i, j], xlim=xlim, title="%s"
                 % t, color='k', alpha=0.7)
         if j == 0:
-            axes[i, j].set_ylabel("%s [%s]" % (f_var, display_units[f_var]))
+            axes[i, j].set_ylabel("%s [%s]" % (f_var, plot_units))
         if i == plot_rows - 1:
             axes[i, j].set_xlabel("ensemble members [count]")
 
     plt.show()
     plt.close()
 
-def plot_box(f_var, data, f_times, title):
+def plot_box(f_var, data, plot_units, f_times, title):
 
     fig, ax = plt.subplots()
     ax.boxplot(np.array(data))
     x_labels = [ft.item().strftime('%d/%HZ') for ft in f_times]
     ax.set_xticklabels(x_labels, rotation='vertical')
-    ax.set_ylabel("%s [%s]" % (f_var, display_units[f_var]))
+    ax.set_ylabel("%s [%s]" % (f_var, plot_units))
     ax.grid(axis='y')
     ax.set_title(title)
 
@@ -96,7 +115,7 @@ if __name__ == '__main__':
     from sl.lib import tinylib
 
     def setup_parser(p, script):
-        variable_choices=[conv.WIND_SPEED, conv.PRESSURE]
+        variable_choices = [fv[0] for fv in fcst_vars]
         p.add_argument(
                 '--input', metavar='FILE', required='True',
                 type=argparse.FileType('rb'), help="input file with "
@@ -106,9 +125,9 @@ if __name__ == '__main__':
                 "is expected to base64 encoded (as extracted from Sailmail "
                 "email)")
         p.add_argument(
-                '--variable', metavar='VARIABLE', required='True',
-                choices=variable_choices, help="forecast variable for which "
-                "to create plot; valid choices: %s" %
+                '--variable', metavar='VARIABLE', choices=variable_choices,
+                help="forecast variable for which to create plot; valid "
+                "choices: %s; combined plot will be created if not specified" %
                 ', '.join(variable_choices))
         p.add_argument(
                 '--plot', metavar='TYPE', choices=['box', 'bar'],
