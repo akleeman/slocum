@@ -2,6 +2,7 @@
 import os
 import sys
 import zlib
+import base64
 import logging
 import argparse
 import datetime as dt
@@ -19,10 +20,24 @@ console_handler = logging.StreamHandler(sys.stdout)
 logger.addHandler(console_handler)
 
 from sl import windbreaker
-from sl.lib import griblib, tinylib, rtefcst
+from sl.lib import griblib, tinylib, rtefcst, enslib
+
+def handle_spot_ensemble(args):
+    """
+    Unpacks a spot ensemble forecast and plots the distribution of forecast
+    values.
+    """
+    payload = args.input.read()
+    args.input.close()
+    fcsts = [base64.b64decode(x) for x in zlib.decompress(payload).split('\t')]
+    fcsts = [tinylib.beaufort_to_dict(f) for f in fcsts]
+    enslib.plot_spot_ensemble(fcsts, args.variable, args.plot, args.export)
 
 
 def handle_spot(args):
+    """
+    Converts a packed spot forecast to a spot text message.
+    """
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.beaufort_to_dict(tinyfcst)
     windbreaker.spot_message(fcst, args.output)
@@ -30,7 +45,7 @@ def handle_spot(args):
 
 def handle_netcdf(args):
     """
-    Converts a packed ensemble forecast to a standard GRIB
+    Converts a packed ensemble forecast to a netCDF4 file.
     """
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.from_beaufort(tinyfcst)
@@ -39,7 +54,7 @@ def handle_netcdf(args):
 
 def handle_grib(args):
     """
-    Converts a packed ensemble forecast to a standard GRIB
+    Converts a packed ensemble forecast to a standard GRIB.
     """
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.from_beaufort(tinyfcst)
@@ -142,6 +157,28 @@ def setup_parser_route_forecast(p):
                    help=('if specified, time labels will be ommitted from '
                          'forecast waypoint names'))
 
+def setup_parser_spot_ensemble(p):
+
+    variable_choices = [fv[0] for fv in enslib._fcst_vars]
+    p.add_argument(
+            '--input', metavar='FILE', required='True',
+            type=argparse.FileType('rb'), help="input file with "
+            "windbreaker SPOT forecast ensemble")
+    p.add_argument(
+            '--variable', metavar='VARIABLE', choices=variable_choices,
+            help="forecast variable for which to create plot; valid "
+            "choices: %s; combined plot will be created if not specified" %
+            ', '.join(variable_choices))
+    p.add_argument(
+            '--plot', metavar='TYPE', choices=['box', 'bar'],
+            default='box', help="plot type to be created ('bar'|'box'), "
+            "defaults to 'box'; ignored if no forecast variable is specified "
+            "in which case boxplots for wind and pressure will be created")
+    p.add_argument(
+            '--export', metavar='PATH', help="if specified, the plot "
+            "will be saved to the directory specified by PATH under the "
+            "name 'se_<lat-lon>_<t0>_<plot type>.svg'")
+
 
 # The _task_handler dictionary maps each 'command' to a (task_handler,
 # parser_setup_handler) tuple.  Subparsers are initialized in __main__  (with
@@ -152,7 +189,9 @@ _task_handler = {'email': (handle_email, setup_parser_email),
                  'netcdf': (handle_netcdf, setup_parser_grib),
                  'route-forecast': (handle_route_forecast,
                                     setup_parser_route_forecast),
-                 'spot': (handle_spot, setup_parser_grib)}
+                 'spot': (handle_spot, setup_parser_grib),
+                 'spot-ensemble': (handle_spot_ensemble,
+                                   setup_parser_spot_ensemble)}
 
 if __name__ == "__main__":
 

@@ -229,6 +229,7 @@ def subset_time(fcst, hours):
     # we can check that by converting back to cf units and making
     # sure that the first cf time is 0.
     ref_time = xray.utils.decode_cf_datetime(0.,
+    # ref_time = xray.decode_cf_datetime(0.,
                                 fcst['time'].encoding['units'],
                                 fcst['time'].encoding.get('calendar', None))
     hours = np.array(hours)
