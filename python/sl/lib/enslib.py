@@ -171,30 +171,6 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, moment, normalizer):
     A copy of fcst_gfs with the 'wind speed spread indicator' as an additional
     variable (conv.ENS_SPREAD_WIND_SPEED)
     """
-    pass
-
-def plot_gridded_ensemble(fcst_gfsx, cols=2, save_path=None):
-    """
-    Plots the average windspeed deviation of ensemble forecast members over
-    the published GSF forecast for each grid point and forecast time.
-    The result is (for each forecast time) a color filled contour plot
-    indicating the ensemble deviation superimposed over the usual wind barbs
-    with the published GFS forecast vectors.
-
-    Parameters:
-    -----------
-    fcst_gfsx: xray.Dataset
-        Dataset with the GFS forecast for windspeed (uwnd and vwnd) and
-        ensemble forecast deviation (other forecast variables will be ignored
-        if present).
-    cols: int
-        Number of columns for subplot layout
-    save_path: string
-        If specified the plot will be saved into this directory with file
-        name ``ens_<bounding box>_<t0>.svg`` where *bounding box* is
-        specified as *ll_lat, ll_lon - ur_lat, ur_lon*.  If not specified or
-        ``None`` the plot will be displayed interactively.
-    """
     assert fcst_ens[conv.UWND].dimensions[0] == conv.ENSEMBLE
     assert fcst_ens[conv.VWND].dimensions[0] == conv.ENSEMBLE
     # for now we require ensemble member and gfs to have the same coordinates
@@ -225,7 +201,62 @@ def plot_gridded_ensemble(fcst_gfsx, cols=2, save_path=None):
             fcst_gfs['uwnd'].dimensions, ws_spread, {'power': moment,
                 'normalizer': normalizer})
 
-    # now the plot:
+    return gfsx
+
+
+def _ens_spread_high(delta, moment, normalizer):
+    """
+    Calculates indicator for ensemble spread, considering only positive
+    deviations.
+
+    Parameter:
+    ----------
+    delta: array
+        Array with differentces between ensemble and GFS forecast values for
+        all ensemble members.  First dimension must be ensembles. Only
+        positive differences (ensemble value higher than GFS) will be
+        considered in calculation.
+    normalizer: float
+        Used to make delta values dimensionless (division by normalizer).
+    moment: float
+        'Moment' to be used in the calculation. Positive deltas (divided by
+        normalizer) will taken to the *moment*th power, summed across all
+        ensemble members, and then the *power*th root will be taken of the
+        sum, before dividing by the number of ensemble members.
+
+    Returns:
+    --------
+    Array with ensemble deviation indicator for each forecast time at each
+    grid point. Shape is delta.shape[1:].
+    """
+    pos_delta_norm = np.power(
+            np.where(delta > 0, delta, 0) / float(normalizer), moment)
+    return (np.power(
+            pos_delta_norm.sum(0), 1. / moment) / float(delta.shape[0]))
+
+
+def plot_gridded_ensemble(gfsx, cols=2, save_path=None):
+    """
+    Plots the average windspeed deviation of ensemble forecast members over
+    the published GSF forecast for each grid point and forecast time.
+    The result is (for each forecast time) a color filled contour plot
+    indicating the ensemble deviation superimposed over the usual wind barbs
+    with the published GFS forecast vectors.
+
+    Parameters:
+    -----------
+    fcst_gfsx: xray.Dataset
+        Dataset with the GFS forecast for windspeed (uwnd and vwnd) and
+        ensemble forecast deviation (other forecast variables will be ignored
+        if present).
+    cols: int
+        Number of columns for subplot layout
+    save_path: string
+        If specified the plot will be saved into this directory with file
+        name ``ens_<bounding box>_<t0>.svg`` where *bounding box* is
+        specified as *ll_lat, ll_lon - ur_lat, ur_lon*.  If not specified or
+        ``None`` the plot will be displayed interactively.
+    """
     f_times = gfsx[conv.TIME].data
     for v in (conv.UWND, conv.VWND):
         units.convert_units(gfsx[v], 'knot').data
@@ -322,34 +353,3 @@ def plot_gridded_ensemble(fcst_gfsx, cols=2, save_path=None):
         plt.show()
 
     plt.close()
-
-
-def _ens_spread_high(delta, moment, normalizer):
-    """
-    Calculates indicator for ensemble spread, considering only positive
-    deviations.
-
-    Parameter:
-    ----------
-    delta: array
-        Array with differentces between ensemble and GFS forecast values for
-        all ensemble members.  First dimension must be ensembles. Only
-        positive differences (ensemble value higher than GFS) will be
-        considered in calculation.
-    normalizer: float
-        Used to make delta values dimensionless (division by normalizer).
-    moment: float
-        'Moment' to be used in the calculation. Positive deltas (divided by
-        normalizer) will taken to the *moment*th power, summed across all
-        ensemble members, and then the *power*th root will be taken of the
-        sum, before dividing by the number of ensemble members.
-
-    Returns:
-    --------
-    Array with ensemble deviation indicator for each forecast time at each
-    grid point. Shape is delta.shape[1:].
-    """
-    pos_delta_norm = np.power(
-            np.where(delta > 0, delta, 0) / float(normalizer), moment)
-    return (np.power(
-            pos_delta_norm.sum(0), 1. / moment) / float(delta.shape[0]))
