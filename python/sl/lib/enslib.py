@@ -15,7 +15,6 @@ from sl.lib.objects import NautAngle
 _fcst_vars = [(conv.WIND_SPEED, 'knot'),
              (conv.PRESSURE, 'hPa')]
 
-
 def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path='None'):
     """
     Plots the spread of values for forecast variable f_var in an ensemble
@@ -138,7 +137,7 @@ def _plot_box(f_var, data, plot_units, f_times, title):
     ax.set_title(title)
 
 
-def make_gridded_ensemble(fcst_gfs, fcst_ens, moment, normalizer):
+def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
     """
     Calculates the average windspeed deviation of ensemble forecast members
     over the published GSF forecast for each grid point and forecast time
@@ -155,22 +154,24 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, moment, normalizer):
         Dataset with the GFS ensemble members that correspond to the uwnd and
         vwnd data in fcst_gfs. 'ens' must be the first dimension for
         fcst_ens['uwnd'] and fcst_ens['vwnd'].
-    moment: float
-        The exponent to be used in calculating the average deviation of
-        ensemble wind speeds from GFS forecast windspeeds. See function
-        ``_ens_spread_high`` for details.
-    normalizer: float
-        A windspeed in default units that will be used to make the ensemble
-        deviations dimensionless.  Each positive deviation will be divided by
-        normalizer before being raised to the *moment*th power and summed
-        across all ensemble members. See function ``_ens_spread_high`` for
-        details.
+    spread_func: string
+        The function to be called to evaluate the ensemble spread (see
+        ``_ens_spread_funs`` for valid values). This function will receive an
+        array with all ensemble wind wpeeds reduced by the corresponding gfs
+        forecast wind speeds as its first argument. *kwargs* will be passed
+        to override defaults for any additional keyword arguments which will
+        depend on the selected *spread_fun*.
+    kwargs
+        Will be passed straight on to the function specified by *spread_func*.
 
     Returns:
     --------
     A copy of fcst_gfs with the 'wind speed spread indicator' as an additional
     variable (conv.ENS_SPREAD_WIND_SPEED)
     """
+    _ens_spread_funcs = {'moments': _pos_dev_moment,
+                         'topx': _top_x_mean}
+
     assert fcst_ens[conv.UWND].dimensions[0] == conv.ENSEMBLE
     assert fcst_ens[conv.VWND].dimensions[0] == conv.ENSEMBLE
     # for now we require ensemble member and gfs to have the same coordinates
@@ -193,18 +194,43 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, moment, normalizer):
     ws_ens = wind_speed(fcst_ens[conv.UWND].data, fcst_ens[conv.VWND].data)
     # you gotta love numpy broadcasting...
     delta_ws = ws_ens - ws_gfs
-    ws_spread = _ens_spread_high(delta_ws, moment, normalizer)
+    ws_spread, attr = _ens_spread_funcs[spread_func](delta_ws, **kwargs)
 
     # add spread data to copy of fcst_gfs:
     gfsx = fcst_gfs.copy()
+    attr['spread_func'] = spread_func
     gfsx[conv.ENS_SPREAD_WIND_SPEED] = (
-            fcst_gfs['uwnd'].dimensions, ws_spread, {'power': moment,
-                'normalizer': normalizer})
+            fcst_gfs['uwnd'].dimensions, ws_spread, attr)
 
     return gfsx
 
 
-def _ens_spread_high(delta, moment, normalizer):
+def _top_x_mean(delta, top_x=2):
+    """
+    Calculates max(0, mean of top_x deltas) across ensemble members for each
+    lat / lon / time step.
+
+    delta: array
+        Array with differentces between ensemble and GFS forecast values for
+        all ensemble members.  First dimension must be ensembles. Only
+        positive differences (ensemble value higher than GFS) will be
+        considered in calculation.
+    top_x: int
+        Number of deltas to use for mean.
+
+    Returns:
+    --------
+    Tuple consisting of:
+        Array with ensemble deviation indicator for each forecast time at
+            each grid point. Shape is delta.shape[1:].
+        Dictionary with key 'top', providing value of *top* used in
+            calculation.
+    """
+    out_arr = np.sort(delta, axis=0)[-top_x:].mean(axis=0)
+    return np.where(out_arr > 0, out_arr, 0), {'top_x': top_x}
+
+
+def _pos_dev_moment(delta, moment=2, normalizer=5/1.944):
     """
     Calculates indicator for ensemble spread, considering only positive
     deviations.
@@ -226,16 +252,20 @@ def _ens_spread_high(delta, moment, normalizer):
 
     Returns:
     --------
-    Array with ensemble deviation indicator for each forecast time at each
-    grid point. Shape is delta.shape[1:].
+    Tuple consisting of:
+        Array with ensemble deviation indicator for each forecast time at
+            each grid point. Shape is delta.shape[1:].
+        Dictionary with keys 'moment' and 'normalizer', to which the
+            respective values used in the calculation will be mapped.
     """
     pos_delta_norm = np.power(
             np.where(delta > 0, delta, 0) / float(normalizer), moment)
     return (np.power(
-            pos_delta_norm.sum(0), 1. / moment) / float(delta.shape[0]))
+            pos_delta_norm.sum(0), 1. / moment) / float(delta.shape[0]),
+            {'moment': moment, 'normalizer': normalizer})
 
 
-def plot_gridded_ensemble(gfsx, cols=2, save_path=None):
+def plot_gridded_ensemble(gfsx, max_level=None, cols=2, save_path=None):
     """
     Plots the average windspeed deviation of ensemble forecast members over
     the published GSF forecast for each grid point and forecast time.
@@ -249,14 +279,18 @@ def plot_gridded_ensemble(gfsx, cols=2, save_path=None):
         Dataset with the GFS forecast for windspeed (uwnd and vwnd) and
         ensemble forecast deviation (other forecast variables will be ignored
         if present).
+    max_level: float
+        Heatmap/contour plot top level.
     cols: int
-        Number of columns for subplot layout
+        Number of columns for subplot layout.
     save_path: string
         If specified the plot will be saved into this directory with file
         name ``ens_<bounding box>_<t0>.svg`` where *bounding box* is
         specified as *ll_lat, ll_lon - ur_lat, ur_lon*.  If not specified or
         ``None`` the plot will be displayed interactively.
     """
+    assert(max_level is not None)
+
     f_times = gfsx[conv.TIME].data
     for v in (conv.UWND, conv.VWND):
         units.convert_units(gfsx[v], 'knot').data
@@ -298,7 +332,7 @@ def plot_gridded_ensemble(gfsx, cols=2, save_path=None):
 
     # heatmap color scaling and levels
     # TODO: calculate levels as function of moment and normalizer
-    spread_levels = np.linspace(0., 0.1, 50)
+    spread_levels = np.linspace(0., max_level, 50)
 
     m = Basemap(projection='merc', llcrnrlon=lons[0], llcrnrlat=lats[0],
             urcrnrlon=lons[-1], urcrnrlat=lats[-1], resolution='l')
@@ -334,7 +368,7 @@ def plot_gridded_ensemble(gfsx, cols=2, save_path=None):
         udat, vdat, xv, yv = m.transform_vector(
                 u, v, lons, lats, nxv, nyv, returnxy=True)
         # plot barbs.
-        m.barbs(xv, yv, udat, vdat, ax=ax, length=barb_length, barbcolor='k',
+        m.barbs(xv, yv, udat, vdat, ax=ax, length=barb_length, barbcolor='w',
                 flagcolor='r', linewidth=0.5)
 
         ax.set_title(t.astype('M8[h]').item().strftime('%Y-%m-%dT%H:%MZ'))
