@@ -156,11 +156,11 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
         fcst_ens['uwnd'] and fcst_ens['vwnd'].
     spread_func: string
         The function to be called to evaluate the ensemble spread (see
-        ``_ens_spread_funs`` for valid values). This function will receive an
-        array with all ensemble wind wpeeds reduced by the corresponding gfs
-        forecast wind speeds as its first argument. *kwargs* will be passed
-        to override defaults for any additional keyword arguments which will
-        depend on the selected *spread_fun*.
+        ``meta`` dictionary below for valid values). This function will receive
+        an array with all ensemble wind wpeeds reduced by the corresponding gfs
+        forecast wind speeds as its first argument. *kwargs* will be passed to
+        override defaults for any additional keyword arguments which will
+        depend on the selected *spread_func*.
     kwargs
         Will be passed straight on to the function specified by *spread_func*.
 
@@ -169,8 +169,19 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
     A copy of fcst_gfs with the 'wind speed spread indicator' as an additional
     variable (conv.ENS_SPREAD_WIND_SPEED)
     """
-    _ens_spread_funcs = {'moments': _pos_dev_moment,
-                         'topx': _top_x_mean}
+    # meta contains information about functions that can be called to calculate
+    # the ensemble spread. 1st tuple element is function name, 2nd element is a
+    # 'long name' that will added to the variable's attributes, and 3rd element
+    # indicates the units which will be returned by the function
+    # (None=dimensionless, 'default': same as underlying forecast variables;
+    # alternatively a string with a unit that will be understood by
+    # sl.lib.units).
+    meta = {'moments': (_pos_dev_moment, "Normalized moments of "
+                        "(ens - gfs) wind speeds for ens - gfs "
+                        "> 0", None),
+            'topx':    (_top_x_mean, "Mean of top x [ens - gfs] "
+                        "deltas", 'default')
+           }
 
     assert fcst_ens[conv.UWND].dimensions[0] == conv.ENSEMBLE
     assert fcst_ens[conv.VWND].dimensions[0] == conv.ENSEMBLE
@@ -183,7 +194,8 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
     assert fcst_ens[conv.UWND].shape[1:] == fcst_gfs[conv.UWND].shape
     assert fcst_ens[conv.TIME].data[0] == fcst_gfs[conv.TIME].data[0]
 
-    # just in case and because normalizer will be in default units:
+    # ensemble and gfs may not have same units;
+    # also normalizer will be in default units:
     units.normalize_variables(fcst_ens)
     units.normalize_variables(fcst_gfs)
 
@@ -194,11 +206,18 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
     ws_ens = wind_speed(fcst_ens[conv.UWND].data, fcst_ens[conv.VWND].data)
     # you gotta love numpy broadcasting...
     delta_ws = ws_ens - ws_gfs
-    ws_spread, attr = _ens_spread_funcs[spread_func](delta_ws, **kwargs)
+    ws_spread, attr = meta[spread_func][0](delta_ws, **kwargs)
 
     # add spread data to copy of fcst_gfs:
     gfsx = fcst_gfs.copy()
     attr['spread_func'] = spread_func
+    attr['long_name'] = meta[spread_func][1]
+    if meta[spread_func][2]:    # units specified
+        if meta[spread_func][2] == 'default':
+            attr[conv.UNITS] = fcst_gfs[conv.UWND].attributes.get(conv.UNITS)
+        else:
+            attr[conv.UNITS] = meta[spread_func][2]
+
     gfsx[conv.ENS_SPREAD_WIND_SPEED] = (
             fcst_gfs['uwnd'].dimensions, ws_spread, attr)
 
@@ -210,25 +229,24 @@ def _top_x_mean(delta, top_x=2):
     Calculates max(0, mean of top_x deltas) across ensemble members for each
     lat / lon / time step.
 
-    delta: array
+    delta: xray.DataArray
         Array with differentces between ensemble and GFS forecast values for
-        all ensemble members.  First dimension must be ensembles. Only
-        positive differences (ensemble value higher than GFS) will be
-        considered in calculation.
+        all ensemble members.  First dimension must be ensembles.
     top_x: int
         Number of deltas to use for mean.
 
     Returns:
     --------
     Tuple consisting of:
-        Array with ensemble deviation indicator for each forecast time at
-            each grid point. Shape is delta.shape[1:].
-        Dictionary with key 'top', providing value of *top* used in
+        Numpy array with ensemble deviation indicator for each forecast time at
+            each grid point (only positive deviations). Shape is
+            delta.data.shape[1:].
+        Dictionary with key 'top_x:', providing value of *top* used in
             calculation.
     """
     out_arr = np.sort(delta, axis=0)[-top_x:].mean(axis=0)
-    return np.where(out_arr > 0, out_arr, 0), {'top_x': top_x}
-
+    attr = {'top_x': top_x}
+    return np.where(out_arr > 0, out_arr, 0), attr
 
 def _pos_dev_moment(delta, moment=2, normalizer=5/1.944):
     """
@@ -265,7 +283,8 @@ def _pos_dev_moment(delta, moment=2, normalizer=5/1.944):
             {'moment': moment, 'normalizer': normalizer})
 
 
-def plot_gridded_ensemble(gfsx, max_level=None, cols=2, save_path=None):
+def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
+        barb_units='knot', cols=2, save_path=None, save_fmt='svg'):
     """
     Plots the average windspeed deviation of ensemble forecast members over
     the published GSF forecast for each grid point and forecast time.
@@ -279,59 +298,82 @@ def plot_gridded_ensemble(gfsx, max_level=None, cols=2, save_path=None):
         Dataset with the GFS forecast for windspeed (uwnd and vwnd) and
         ensemble forecast deviation (other forecast variables will be ignored
         if present).
+    contour_units: str
+        The units in which to plot the ensemble spread indicator (heatmap). If
+        specified, the data sets current unit must be convertible into the
+        desired unit by sl.lib.units. If not specified the exsiting units in
+        the data set will be used.
     max_level: float
-        Heatmap/contour plot top level.
+        Heatmap/contour plot maximum level. Minimum level is assumed to be 0.
+        Values greater tha max_level will be mapped onto the max_level color.
+        If not specified, the maximum value found in the data set will be used
+        as the upper end of the color bar.
+    barb_units: str
+        Units in which to plot the GFS wind speed/direction forecast data (wind
+        bars). If specified, the data sets current unit must be convertible
+        into the desired unit by sl.lib.units.
     cols: int
         Number of columns for subplot layout.
-    save_path: string
+    save_path: str
         If specified the plot will be saved into this directory with file
         name ``ens_<bounding box>_<t0>.svg`` where *bounding box* is
         specified as *ll_lat, ll_lon - ur_lat, ur_lon*.  If not specified or
         ``None`` the plot will be displayed interactively.
+    save_fmt: str
+        Format under which to save the image (only relevant if *save_path* is
+        specified). Can be any image file extension that plt.savefig() will
+        recognize as a valid format.
     """
-    assert(max_level is not None)
+    # adjust units as requested:
+    for v in (conv.UWND, conv.VWND):
+        units.convert_units(gfsx[v], barb_units)
+    if contour_units:
+        units.convert_units(gfsx[conv.ENS_SPREAD_WIND_SPEED], contour_units)
+    if not max_level:
+        max_level = gfsx[conv.ENS_SPREAD_WIND_SPEED].data.max()
 
     f_times = gfsx[conv.TIME].data
-    for v in (conv.UWND, conv.VWND):
-        units.convert_units(gfsx[v], 'knot').data
     lats = gfsx[conv.LAT].data
     lons = gfsx[conv.LON].data
+
     # Basemap.transform_vector requires lats and lons each to be in ascending
     # order:
     lat_inds = range(len(lats))
     lon_inds = range(len(lons))
     if NautAngle(lats[0]).is_north_of(NautAngle(lats[-1])):
-        lat_inds = list(reversed(lat_inds))
+        lat_inds.reverse()
         lats = lats[lat_inds]
     if NautAngle(lons[0]).is_east_of(NautAngle(lons[-1])):
-        lon_inds = list(reversed(lon_inds))
+        lon_inds.reverse()
         lons = lons[lon_inds]
 
     # determine layout:
     fig_width_inches = 10
-    plot_aspect_ratio = 4./3.
+    plot_aspect_ratio = (abs(lons[-1] - lons[0]) /
+                         float(abs(lats[-1] - lats[0])))
     rows = int(np.ceil(gfsx.dimensions[conv.TIME] / float(cols)))
     fig_height_inches = (fig_width_inches / (float(cols) * plot_aspect_ratio)
                          * rows + 2)
     fig = plt.figure(figsize=(fig_width_inches, fig_height_inches))
-    grid = AxesGrid(fig, [0.05, 0.01, 0.95, 0.99],
+    fig.suptitle("GFS wind forecast in %s and "
+                 "ensemble wind speed deviation" % barb_units,
+                 fontsize=12)
+    grid = AxesGrid(fig, [0.01, 0.01, 0.95, 0.93],
                     nrows_ncols=(rows, cols),
-                    axes_pad=0.7,
+                    axes_pad=0.8,
                     cbar_mode='single',
                     cbar_pad=0.0,
-                    cbar_size=0.3,
+                    cbar_size=0.2,
                     cbar_location='bottom',
                     share_all=True,)
 
-    t0_str = f_times[0].astype('M8[h]').item().strftime('%Y-%m-%dT%H:%MZ')
-
-    # figure title
-    # plt.figtext(0.5,0.97,
-    #        "GFS wind forecast and ensemble wind speed deviation",
-    #        horizontalalignment='center',fontsize=16)
+    # size for lat/lon labels, timestamp:
+    label_fontsize = 'medium' if cols <= 2 else 'small'
+    # format string for colorbar labels:
+    decimals = max(0, int(2 - np.floor(np.log10(max_level))))
+    cb_label_fmt = '%.' + '%d' % decimals + 'f'
 
     # heatmap color scaling and levels
-    # TODO: calculate levels as function of moment and normalizer
     spread_levels = np.linspace(0., max_level, 50)
 
     m = Basemap(projection='merc', llcrnrlon=lons[0], llcrnrlat=lats[0],
@@ -340,10 +382,11 @@ def plot_gridded_ensemble(gfsx, max_level=None, cols=2, save_path=None):
     for t_step, t in enumerate(f_times):
 
         ax = grid[t_step]
-        p_title = t.astype('M8[h]').item().strftime('%Y-%m-%dT%H:%MZ')
         m.drawcoastlines(ax=ax)
-        m.drawparallels(lats,labels=[1,0,0,0], ax=ax)
-        m.drawmeridians(lons,labels=[0,0,0,1], ax=ax)
+        m.drawparallels(lats,labels=[1,0,0,0], ax=ax,
+                fontsize=label_fontsize)
+        m.drawmeridians(lons,labels=[0,0,0,1], ax=ax,
+                fontsize=label_fontsize, rotation='vertical')
 
         # ensemble spread heatmap:
         x, y = m(*np.meshgrid(lons, lats))
@@ -351,7 +394,8 @@ def plot_gridded_ensemble(gfsx, max_level=None, cols=2, save_path=None):
         data = data.indexed_by(**{conv.TIME: t_step})
         data = data.indexed_by(**{conv.LAT: lat_inds})
         data = data.indexed_by(**{conv.LON: lon_inds}).data
-        cs = m.contourf(x, y, data, spread_levels, ax=ax, cmap=cm.jet)
+        cs = m.contourf(x, y, data, spread_levels, ax=ax, extend='max',
+                cmap=cm.jet)
 
         # wind barbs:
         u = gfsx[conv.UWND].indexed_by(**{conv.TIME: t_step})
@@ -364,24 +408,36 @@ def plot_gridded_ensemble(gfsx, max_level=None, cols=2, save_path=None):
         # and interpolation).
         nxv = len(lons)
         nyv = len(lats)
-        barb_length = 6
+        barb_length = 8 - cols
+        barb_width = 1.2 - (cols / 10.)
         udat, vdat, xv, yv = m.transform_vector(
                 u, v, lons, lats, nxv, nyv, returnxy=True)
         # plot barbs.
         m.barbs(xv, yv, udat, vdat, ax=ax, length=barb_length, barbcolor='w',
-                flagcolor='r', linewidth=0.5)
+                flagcolor='r', linewidth=barb_width)
 
-        ax.set_title(t.astype('M8[h]').item().strftime('%Y-%m-%dT%H:%MZ'))
+        ax.set_title(t.astype('M8[h]').item().strftime('%Y-%m-%dT%H:%MZ'),
+                fontsize=label_fontsize)
 
-    cbar = fig.colorbar(cs, cax=grid.cbar_axes[0], orientation='horizontal')
+    cbar = fig.colorbar(cs, cax=grid.cbar_axes[0], orientation='horizontal',
+            format=cb_label_fmt)
+    attr = gfsx[conv.ENS_SPREAD_WIND_SPEED].attributes
+    cb_label = attr.get('long_name',
+            'Average (normalized) wind speed delta (ens - gfs)')
+    s = ["%s = %s" % (k, attr[k]) for k in attr if k not in  ('long_name',
+        'spread_func')]
+    if s:
+        cb_label = "%s (%s)" % (cb_label, ', '.join(s))
+    cbar.set_label(cb_label)
 
     if save_path:
-        file_name = "ens_%s%s-%s%s_%s.svg" % (
+        t0_str = f_times[0].astype('M8[h]').item().strftime('%Y%m%dT%H%MZ')
+        file_name = "ens_%s%s-%s%s_%s.%s" % (
                 NautAngle(lats[0]).named_str(conv.LAT),
                 NautAngle(lons[0]).named_str(conv.LON),
                 NautAngle(lats[-1]).named_str(conv.LAT),
                 NautAngle(lons[-1]).named_str(conv.LON),
-                t0_str)
+                t0_str, save_fmt)
         plt.savefig(os.path.join(save_path, file_name), bbox_inches='tight')
     else:
         plt.show()
