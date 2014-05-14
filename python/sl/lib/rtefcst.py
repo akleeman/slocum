@@ -375,7 +375,7 @@ class Route(object):
                     % fn)
         if not avrgSpeed > 0:
             raise ValueError(
-                    "Expected an average speed > 0 to process %s as gpx." % f)
+                    "Expected an average speed > 0 to process %s as gpx." % fn)
 
         norm_speed, __ = units.normalize_scalar(avrgSpeed, 'knot')
         root = ET.fromstring(ifo.read())

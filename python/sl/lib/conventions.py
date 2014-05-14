@@ -1,5 +1,5 @@
 ENSEMBLE = 'ens'
-ENS_SPREAD_WIND_SPEED = 'ws_spread'
+ENS_SPREAD_WS = 'ws_spread'
 TIME = 'time'
 HOURS = 'hours'
 LAT = 'latitude'

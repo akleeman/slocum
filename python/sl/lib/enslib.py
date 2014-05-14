@@ -137,7 +137,7 @@ def _plot_box(f_var, data, plot_units, f_times, title):
     ax.set_title(title)
 
 
-def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
+def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func=u'topx', **kwargs):
     """
     Calculates the average windspeed deviation of ensemble forecast members
     over the published GSF forecast for each grid point and forecast time
@@ -156,18 +156,18 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
         fcst_ens['uwnd'] and fcst_ens['vwnd'].
     spread_func: string
         The function to be called to evaluate the ensemble spread (see
-        ``meta`` dictionary below for valid values). This function will receive
-        an array with all ensemble wind wpeeds reduced by the corresponding gfs
-        forecast wind speeds as its first argument. *kwargs* will be passed to
-        override defaults for any additional keyword arguments which will
-        depend on the selected *spread_func*.
+        ``meta`` dictionary below for valid values). This function will
+        receive an array with all ensemble wind wpeeds reduced by the
+        corresponding gfs forecast wind speeds as its first argument.
+        *kwargs* will be passed to override defaults for any additional
+        keyword arguments which will depend on the selected *spread_func*.
     kwargs
         Will be passed straight on to the function specified by *spread_func*.
 
     Returns:
     --------
     A copy of fcst_gfs with the 'wind speed spread indicator' as an additional
-    variable (conv.ENS_SPREAD_WIND_SPEED)
+    variable (conv.ENS_SPREAD_WS)
     """
     # meta contains information about functions that can be called to calculate
     # the ensemble spread. 1st tuple element is function name, 2nd element is a
@@ -176,11 +176,11 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
     # (None=dimensionless, 'default': same as underlying forecast variables;
     # alternatively a string with a unit that will be understood by
     # sl.lib.units).
-    meta = {'moments': (_pos_dev_moment, "Normalized moments of "
-                        "(ens - gfs) wind speeds for ens - gfs "
-                        "> 0", None),
-            'topx':    (_top_x_mean, "Mean of top x [ens - gfs] "
-                        "deltas", 'default')
+    meta = {u'moments': (_pos_dev_moment, u'Normalized moments of '
+                         '(ens - gfs) wind speeds for ens - gfs '
+                         '> 0', None),
+            u'topx':    (_top_x_mean, u'Mean of top x [ens - gfs] '
+                         'deltas', u'default')
            }
 
     assert fcst_ens[conv.UWND].dimensions[0] == conv.ENSEMBLE
@@ -210,16 +210,16 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func='topx', **kwargs):
 
     # add spread data to copy of fcst_gfs:
     gfsx = fcst_gfs.copy()
-    attr['spread_func'] = spread_func
-    attr['long_name'] = meta[spread_func][1]
+    attr[u'spread_func'] = spread_func
+    attr[u'long_name'] = meta[spread_func][1]
     if meta[spread_func][2]:    # units specified
         if meta[spread_func][2] == 'default':
             attr[conv.UNITS] = fcst_gfs[conv.UWND].attributes.get(conv.UNITS)
         else:
             attr[conv.UNITS] = meta[spread_func][2]
 
-    gfsx[conv.ENS_SPREAD_WIND_SPEED] = (
-            fcst_gfs['uwnd'].dimensions, ws_spread, attr)
+    gfsx[conv.ENS_SPREAD_WS] = (
+            fcst_gfs[conv.UWND].dimensions, ws_spread, attr)
 
     return gfsx
 
@@ -245,7 +245,7 @@ def _top_x_mean(delta, top_x=2):
             calculation.
     """
     out_arr = np.sort(delta, axis=0)[-top_x:].mean(axis=0)
-    attr = {'top_x': top_x}
+    attr = {u'top_x': top_x}
     return np.where(out_arr > 0, out_arr, 0), attr
 
 def _pos_dev_moment(delta, moment=2, normalizer=5/1.944):
@@ -280,7 +280,7 @@ def _pos_dev_moment(delta, moment=2, normalizer=5/1.944):
             np.where(delta > 0, delta, 0) / float(normalizer), moment)
     return (np.power(
             pos_delta_norm.sum(0), 1. / moment) / float(delta.shape[0]),
-            {'moment': moment, 'normalizer': normalizer})
+            {u'moment': moment, u'normalizer': normalizer})
 
 
 def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
@@ -328,9 +328,9 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     for v in (conv.UWND, conv.VWND):
         units.convert_units(gfsx[v], barb_units)
     if contour_units:
-        units.convert_units(gfsx[conv.ENS_SPREAD_WIND_SPEED], contour_units)
+        units.convert_units(gfsx[conv.ENS_SPREAD_WS], contour_units)
     if not max_level:
-        max_level = gfsx[conv.ENS_SPREAD_WIND_SPEED].data.max()
+        max_level = gfsx[conv.ENS_SPREAD_WS].data.max()
 
     f_times = gfsx[conv.TIME].data
     lats = gfsx[conv.LAT].data
@@ -390,7 +390,7 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
 
         # ensemble spread heatmap:
         x, y = m(*np.meshgrid(lons, lats))
-        data = gfsx[conv.ENS_SPREAD_WIND_SPEED]
+        data = gfsx[conv.ENS_SPREAD_WS]
         data = data.indexed_by(**{conv.TIME: t_step})
         data = data.indexed_by(**{conv.LAT: lat_inds})
         data = data.indexed_by(**{conv.LON: lon_inds}).data
@@ -421,7 +421,7 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
 
     cbar = fig.colorbar(cs, cax=grid.cbar_axes[0], orientation='horizontal',
             format=cb_label_fmt)
-    attr = gfsx[conv.ENS_SPREAD_WIND_SPEED].attributes
+    attr = gfsx[conv.ENS_SPREAD_WS].attributes
     cb_label = attr.get('long_name',
             'Average (normalized) wind speed delta (ens - gfs)')
     s = ["%s = %s" % (k, attr[k]) for k in attr if k not in  ('long_name',
