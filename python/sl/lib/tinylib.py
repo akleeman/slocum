@@ -6,6 +6,7 @@ import numpy as np
 import netCDF4
 import logging
 import datetime
+import sys
 
 from bisect import bisect
 from collections import OrderedDict
@@ -15,6 +16,7 @@ import sl.lib.conventions as conv
 from sl.lib import objects, units
 
 from xray import Dataset
+
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -48,11 +50,16 @@ _variables = {conv.WIND_SPEED: {'dtype': np.float32,
                               'divs': _direction_bins,
                               'bits': 4,
                               'attributes': {conv.UNITS: 'radians'}},
+              # The 'long_name' and 'n' attributes below are not the cleanest
+              # solution (set in enslib) but otherwise we have to add
+              # attributes to the payload before shipping
               conv.ENS_SPREAD_WS: {'dtype': np.float32,
                               'dims': (conv.TIME, conv.LAT, conv.LON),
                               'divs': _ws_spread_scale,
                               'bits': 4,
-                              'attributes': {conv.UNITS: 'm/s'}},
+                              'attributes': {conv.UNITS: 'm/s', 'long_name':
+                                  'Mean of top n (ens - gfs) deltas',
+                                  'n': 2}},
               conv.PRECIP: {'dtype': np.float32,
                               'dims': (conv.TIME, conv.LAT, conv.LON),
                               'divs': _precip_scale,
@@ -376,9 +383,9 @@ def small_time(time_var):
     np.testing.assert_array_equal(diffs.astype('int'), diffs)
     fromordinal = datetime.datetime.fromordinal(origin.toordinal())
     seconds = int(datetime.timedelta.total_seconds(origin - fromordinal))
-    augmented = np.concatenate([[origin.toordinal(),
-                                 seconds],
-                                diffs.astype('int')])
+    augmented = np.concatenate([[origin.toordinal(), seconds],
+            diffs.astype(_variables[conv.TIME]['dtype'])])
+    #                            diffs.astype('int')])
     return small_array(augmented, least_significant_digit=0)
 
 
@@ -440,7 +447,6 @@ def to_beaufort(obj):
     vwnd = obj[conv.VWND].data
     # keep this ordered so the coordinates get written (and read) first
     encoded_variables = OrderedDict()
-
     encoded_variables[conv.TIME] = small_time(obj[conv.TIME])['packed_array']
     for v in [conv.LAT, conv.LON]:
         small = small_array(np.asarray(obj[v].data).astype(_variables[v]['dtype']),
@@ -547,4 +553,3 @@ def from_beaufort(payload):
         out[k] = v
 
     return units.normalize_variables(out)
-

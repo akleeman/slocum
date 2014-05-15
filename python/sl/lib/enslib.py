@@ -137,12 +137,14 @@ def _plot_box(f_var, data, plot_units, f_times, title):
     ax.set_title(title)
 
 
-def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func=u'topx', **kwargs):
+def make_gridded_ensemble(fcst_gfs, fcst_ens):
     """
     Calculates the average windspeed deviation of ensemble forecast members
     over the published GSF forecast for each grid point and forecast time
     (considering only positive deviations, i.e. ensemble member wind speed >
-    GFS forecast windwpeed).
+    GFS forecast windwpeed). The spread indicator will be calculated as the
+    mean of the top 2 ensemble wind speed deviations vis-a-vis the GFS
+    forecast.
 
     Parameters:
     -----------
@@ -154,15 +156,6 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func=u'topx', **kwargs):
         Dataset with the GFS ensemble members that correspond to the uwnd and
         vwnd data in fcst_gfs. 'ens' must be the first dimension for
         fcst_ens['uwnd'] and fcst_ens['vwnd'].
-    spread_func: string
-        The function to be called to evaluate the ensemble spread (see
-        ``meta`` dictionary below for valid values). This function will
-        receive an array with all ensemble wind wpeeds reduced by the
-        corresponding gfs forecast wind speeds as its first argument.
-        *kwargs* will be passed to override defaults for any additional
-        keyword arguments which will depend on the selected *spread_func*.
-    kwargs
-        Will be passed straight on to the function specified by *spread_func*.
 
     Returns:
     --------
@@ -176,11 +169,10 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func=u'topx', **kwargs):
     # (None=dimensionless, 'default': same as underlying forecast variables;
     # alternatively a string with a unit that will be understood by
     # sl.lib.units).
-    meta = {u'moments': (_pos_dev_moment, u'Normalized moments of '
-                         '(ens - gfs) wind speeds for ens - gfs '
-                         '> 0', None),
-            u'topx':    (_top_x_mean, u'Mean of top x [ens - gfs] '
-                         'deltas', u'default')
+    # NOTE: attributes for unpacked fcst are currently defined in a top-level
+    # dictionary in tinylib
+    meta = {'topn': (_top_n_mean, 'Mean of top n (ens - gfs) deltas',
+                     'default')
            }
 
     assert fcst_ens[conv.UWND].dimensions[0] == conv.ENSEMBLE
@@ -206,11 +198,12 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func=u'topx', **kwargs):
     ws_ens = wind_speed(fcst_ens[conv.UWND].data, fcst_ens[conv.VWND].data)
     # you gotta love numpy broadcasting...
     delta_ws = ws_ens - ws_gfs
-    ws_spread, attr = meta[spread_func][0](delta_ws, **kwargs)
+
+    spread_func = 'topn'
+    ws_spread, attr = meta[spread_func][0](delta_ws, n=2)
 
     # add spread data to copy of fcst_gfs:
     gfsx = fcst_gfs.copy()
-    attr[u'spread_func'] = spread_func
     attr[u'long_name'] = meta[spread_func][1]
     if meta[spread_func][2]:    # units specified
         if meta[spread_func][2] == 'default':
@@ -224,15 +217,15 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens, spread_func=u'topx', **kwargs):
     return gfsx
 
 
-def _top_x_mean(delta, top_x=2):
+def _top_n_mean(delta, n=2):
     """
-    Calculates max(0, mean of top_x deltas) across ensemble members for each
+    Calculates max(0, mean of top n deltas) across ensemble members for each
     lat / lon / time step.
 
     delta: xray.DataArray
         Array with differentces between ensemble and GFS forecast values for
         all ensemble members.  First dimension must be ensembles.
-    top_x: int
+    n: int
         Number of deltas to use for mean.
 
     Returns:
@@ -244,43 +237,9 @@ def _top_x_mean(delta, top_x=2):
         Dictionary with key 'top_x:', providing value of *top* used in
             calculation.
     """
-    out_arr = np.sort(delta, axis=0)[-top_x:].mean(axis=0)
-    attr = {u'top_x': top_x}
+    out_arr = np.sort(delta, axis=0)[-n:].mean(axis=0)
+    attr = {'n': n}
     return np.where(out_arr > 0, out_arr, 0), attr
-
-def _pos_dev_moment(delta, moment=2, normalizer=5/1.944):
-    """
-    Calculates indicator for ensemble spread, considering only positive
-    deviations.
-
-    Parameter:
-    ----------
-    delta: array
-        Array with differentces between ensemble and GFS forecast values for
-        all ensemble members.  First dimension must be ensembles. Only
-        positive differences (ensemble value higher than GFS) will be
-        considered in calculation.
-    normalizer: float
-        Used to make delta values dimensionless (division by normalizer).
-    moment: float
-        'Moment' to be used in the calculation. Positive deltas (divided by
-        normalizer) will taken to the *moment*th power, summed across all
-        ensemble members, and then the *power*th root will be taken of the
-        sum, before dividing by the number of ensemble members.
-
-    Returns:
-    --------
-    Tuple consisting of:
-        Array with ensemble deviation indicator for each forecast time at
-            each grid point. Shape is delta.shape[1:].
-        Dictionary with keys 'moment' and 'normalizer', to which the
-            respective values used in the calculation will be mapped.
-    """
-    pos_delta_norm = np.power(
-            np.where(delta > 0, delta, 0) / float(normalizer), moment)
-    return (np.power(
-            pos_delta_norm.sum(0), 1. / moment) / float(delta.shape[0]),
-            {u'moment': moment, u'normalizer': normalizer})
 
 
 def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
@@ -424,8 +383,7 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     attr = gfsx[conv.ENS_SPREAD_WS].attributes
     cb_label = attr.get('long_name',
             'Average (normalized) wind speed delta (ens - gfs)')
-    s = ["%s = %s" % (k, attr[k]) for k in attr if k not in  ('long_name',
-        'spread_func')]
+    s = ["%s = %s" % (k, attr[k]) for k in attr if k != 'long_name']
     if s:
         cb_label = "%s (%s)" % (cb_label, ', '.join(s))
     cbar.set_label(cb_label)
