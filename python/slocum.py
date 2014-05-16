@@ -62,9 +62,11 @@ def handle_route_forecast(args):
     Generates a gpx waypoint file with wind forecast info along a route
     provided in an input file.
     """
-    import xray
-    fcst = xray.open_dataset(args.input.name)
+    tinyfcst = zlib.decompress(args.input.read())
+    args.input.close()
+    fcst = tinylib.from_beaufort(tinyfcst)
 
+    # TODO: replace datetime by np.datetime64 and allow local time or utc
     if args.utcdept:
         ut = dt.datetime.strptime(args.utcdept, '%Y-%m-%dT%H:%M')
     else:
@@ -117,26 +119,27 @@ def setup_parser_route_forecast(p):
                    type=argparse.FileType('rb'), default=sys.stdin,
                    help='windbreaker forecast file; stdin if not specified')
     p.add_argument('--output', metavar='gpx_file', type=argparse.FileType('w'),
-                   help=('waypoints with wind data along route; will ' +
+                   help=('waypoints with wind data along route; will '
                          'overwrite if exists; stdout if not specified'),
                    default=sys.stdout)
     p.add_argument('--rtefile', metavar='file',
                    type=argparse.FileType('r'), required=True,
                    help='input file with route definition')
-    p.add_argument('--rtefmt', metavar='fmt', choices=['csv'], default='csv',
-                   help='format of route input file; valid formats: csv')
+    p.add_argument('--rtefmt', metavar='fmt', choices=['csv', 'gpx'],
+            required=True, help='format of route input file; valid formats: '
+            'csv, gpx')
     utNowStr = dt.datetime.utcnow().strftime('%Y-%m-%dT%H:%M')
     p.add_argument('--utcdept', metavar='YYYY-mm-ddTHH:MM', default=utNowStr,
                    help='utc of departure; default is current utc')
     p.add_argument('--speed', metavar='SOG', type=float,
-                   help=('expected average speed over ground in kn; can ' +
-                         'be ommitted if rtefile contains speeds for each ' +
+                   help=('expected average speed over ground in kn; can '
+                         'be ommitted if rtefile contains speeds for each '
                          'leg of the route'))
     p.add_argument('--truewind', action='store_true',
-                   help=('if specified, output will show true rather than ' +
+                   help=('if specified, output will show true rather than '
                          'apparent wind at forecast waypoints'))
     p.add_argument('--notimelabel', action='store_true',
-                   help=('if specified, time labels will be ommitted from ' +
+                   help=('if specified, time labels will be ommitted from '
                          'forecast waypoint names'))
 
 

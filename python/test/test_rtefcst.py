@@ -19,6 +19,67 @@ testCSV = """ -34.13648, 151.55222,
               -33.81644, 152.83151, 6
               -33.31621, 153.20315,
               -33.49928, 153.99383, """
+# test gpx with route data, same waypoints as csv
+testGPX = """<?xml version="1.0" encoding="utf-8" ?>
+<gpx version="1.1" creator="OpenCPN" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" xmlns:opencpn="http://www.opencpn.org">
+    <rte>
+        <name>Test Route</name>
+        <extensions>
+            <opencpn:start>Moreton Bay</opencpn:start>
+            <opencpn:end>Somewhere</opencpn:end>
+            <opencpn:viz>1</opencpn:viz>
+            <opencpn:guid>5ee6c818-79cf-4b5f-b540-2c645b649a05</opencpn:guid>
+        </extensions>
+        <rtept lat="-34.13648" lon="151.55222">
+            <time>2014-03-30T10:16:45Z</time>
+            <name>001</name>
+            <sym>diamond</sym>
+            <type>WPT</type>
+            <extensions>
+                <opencpn:guid>6de4cc2a-b2c3-4b9c-831d-91fa08743541</opencpn:guid>
+                <opencpn:viz>1</opencpn:viz>
+                <opencpn:viz_name>0</opencpn:viz_name>
+                <opencpn:auto_name>1</opencpn:auto_name>
+            </extensions>
+        </rtept>
+        <rtept lat="-33.81644" lon="152.83151">
+            <time>2014-03-30T10:16:46Z</time>
+            <name>002</name>
+            <sym>diamond</sym>
+            <type>WPT</type>
+            <extensions>
+                <opencpn:guid>2d46f34e-55e7-4f36-a29f-899c6a571e6b</opencpn:guid>
+                <opencpn:viz>1</opencpn:viz>
+                <opencpn:viz_name>0</opencpn:viz_name>
+                <opencpn:auto_name>1</opencpn:auto_name>
+            </extensions>
+        </rtept>
+        <rtept lat="-33.31621" lon="153.20315">
+            <time>2014-03-30T10:16:47Z</time>
+            <name>003</name>
+            <sym>diamond</sym>
+            <type>WPT</type>
+            <extensions>
+                <opencpn:guid>297027ca-edea-4d9f-ba59-db9d1034a7d6</opencpn:guid>
+                <opencpn:viz>1</opencpn:viz>
+                <opencpn:viz_name>0</opencpn:viz_name>
+                <opencpn:auto_name>1</opencpn:auto_name>
+            </extensions>
+        </rtept>
+        <rtept lat="-33.49928" lon="153.99383">
+            <time>2014-03-30T10:16:48Z</time>
+            <name>004</name>
+            <sym>diamond</sym>
+            <type>WPT</type>
+            <extensions>
+                <opencpn:guid>657553b9-84e6-490f-88fe-346f3f3eefa6</opencpn:guid>
+                <opencpn:viz>1</opencpn:viz>
+                <opencpn:viz_name>0</opencpn:viz_name>
+                <opencpn:auto_name>1</opencpn:auto_name>
+            </extensions>
+        </rtept>
+    </rte>
+</gpx>"""
 
 # expected output to be produced by RouteForecast.exportFcstGPX():
 expectedAppWindOutStr="""<?xml version="1.0" encoding="utf-8" ?>
@@ -142,6 +203,27 @@ class RouteTest(unittest.TestCase):
         self.assertAlmostEqual(speed, 2.05777778036, places=4)
         self.assertRaises(rtefcst.TimeOverlapError, r.getPos,
                 np.datetime64('2014-03-02T12:00Z'))
+
+    def testReadGPXok(self):
+        tDept = np.datetime64('2014-02-01T12:00Z')
+        ifh = StringIO.StringIO(testGPX)
+        r = rtefcst.Route(ifh=ifh, inFmt='gpx', utcDept=tDept, avrgSpeed=5.0)
+        ifh.close()
+
+        # check basic route set-up:
+        self.assertEqual(len(r.rtePts), 4)
+        self.assertAlmostEqual(r.curPos.lat, r.rtePts[0].lat)
+        self.assertAlmostEqual(r.curPos.lon, r.rtePts[0].lon)
+        self.assertAlmostEqual(r.bbox.north, r.rtePts[2].lat)
+        self.assertAlmostEqual(r.bbox.east, r.rtePts[3].lon)
+        self.assertAlmostEqual(r.bbox.south, r.rtePts[0].lat)
+        self.assertAlmostEqual(r.bbox.west, r.rtePts[0].lon)
+
+        d, t = r.updateUtcArrival()
+        self.assertAlmostEqual(float(d) / t, 2.57222222545)
+        tArrival = tDept + np.timedelta64(int(round(t)), 's')
+        deltaT = r.utcArrival - tArrival
+        self.assertAlmostEqual(units.total_seconds(deltaT), 0, places=1)
 
 """
 class RteFcstTest(unittest.TestCase):
