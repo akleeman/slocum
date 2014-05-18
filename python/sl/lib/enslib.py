@@ -15,7 +15,7 @@ from sl.lib.objects import NautAngle
 _fcst_vars = [(conv.WIND_SPEED, 'knot'),
              (conv.PRESSURE, 'hPa')]
 
-def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path='None'):
+def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path=None):
     """
     Plots the spread of values for forecast variable f_var in an ensemble
     forecast along the forecast times
@@ -56,7 +56,7 @@ def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path='None'):
     data_list = []
     for var, plot_units in _fcst_vars:
         fv_units = f0[var][2][conv.UNITS]
-        data = [units.convert_array(f[var][1].ravel(), fv_units,
+        data = [units.convert_array(f[var][1].ravel().copy(), fv_units,
                 plot_units) for f in fcsts]
         if var == f_var:
             plot_handler[plot_type](

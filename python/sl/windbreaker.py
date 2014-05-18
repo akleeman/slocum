@@ -89,9 +89,9 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     # Acquires a forecast corresponding to a query
     fcst = get_forecast(query, path=forecast_path)
     logger.debug('Obtained the forecast')
-    if 'ens' in fcst.dimensions:
-        tinys = [tinylib.to_beaufort(fcst.indexed_by(ens=i))
-                 for i in range(fcst.dimensions['ens'])]
+    if conv.ENSEMBLE in fcst.dimensions:
+        tinys = [tinylib.to_beaufort(fcst.indexed_by(**{conv.ENSEMBLE: i}))
+                 for i in range(fcst.dimensions[conv.ENSEMBLE])]
         tiny_fcst = '\t'.join([base64.b64encode(x) for x in tinys])
     else:
         tiny_fcst = tinylib.to_beaufort(fcst)

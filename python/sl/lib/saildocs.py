@@ -437,6 +437,7 @@ def parse_spot_request(request):
     assert spot.lower() == 'spot'
     if ':' in location_str:
         model, location_str = location_str.split(':', 1)
+        model = model.lower()
     else:
         model = 'gfs'
     location = parse_location(location_str)
