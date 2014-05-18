@@ -291,7 +291,12 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     if not max_level:
         max_level = gfsx[conv.ENS_SPREAD_WS].data.max()
 
-    f_times = gfsx[conv.TIME].data
+    if isinstance(gfsx, np.datetime64): # True is gfsx has not been packed
+        f_times = gfsx[conv.TIME].data
+    else:                               # time variable has int offsets
+        f_times = xray.decode_cf_datetime(
+                gfsx['time'], gfsx['time'].attributes['units'])
+
     lats = gfsx[conv.LAT].data
     lons = gfsx[conv.LON].data
 

@@ -6,9 +6,7 @@ import numpy as np
 import netCDF4
 import logging
 import datetime
-import sys
 
-from bisect import bisect
 from collections import OrderedDict
 
 import sl.lib.conventions as conv
@@ -481,7 +479,7 @@ def to_beaufort(obj):
         encoded_variables[conv.PRECIP] = tiny_precip['packed_array']
 
     if conv.PRESSURE in obj.variables:
-        tiny_pres = tiny_array(obj[conv.PRESQURE].data,
+        tiny_pres = tiny_array(obj[conv.PRESSURE].data,
                 bits=_variables[conv.PRESSURE]['bits'], divs=_pressure_scale)
         encoded_variables[conv.PRESSURE] = tiny_pres['packed_array']
 
@@ -519,9 +517,9 @@ def beaufort_to_dict(payload):
     out = {}
     for vname, info in variables:
         if vname == conv.TIME:
-            data, time_units = expand_small_time(info['packed_array'],
-                                     info['dtype'],
-                                     info['least_significant_digit'])
+            data, time_units = expand_small_time(
+                    info['packed_array'], info['dtype'],
+                    info['least_significant_digit'])
             info['attributes'] = {conv.UNITS: time_units}
             out[vname] = ((vname), data, info.get('attributes', None))
         elif vname in [conv.LAT, conv.LON]:
