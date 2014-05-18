@@ -302,6 +302,8 @@ def spot_forecast(query):
         assert conv.LON in fcst[k].dimensions[-2:]
         interpolated = np.sum(np.sum(fcst[k].data * weights.T, axis=-1), axis=-1)
         spot[k].data[:] = interpolated.reshape(spot[k].data.shape)
+    # The assignments below have no effect; lat/lon returned with incorrect 0.
+    # element (see spot assignments above).
     spot[conv.LAT].data[:] = lat
     spot[conv.LON].data[:] = lon
     return spot
