@@ -228,7 +228,7 @@ def subset_time(fcst, hours):
     # we are assuming that the first time is the reference time
     # we can check that by converting back to cf units and making
     # sure that the first cf time is 0.
-    ref_time = xray.utils.decode_cf_datetime(0.,
+    ref_time = xray.decode_cf_datetime(0.,
                                 fcst['time'].encoding['units'],
                                 fcst['time'].encoding.get('calendar', None))
     hours = np.array(hours)
@@ -302,6 +302,8 @@ def spot_forecast(query):
         assert conv.LON in fcst[k].dimensions[-2:]
         interpolated = np.sum(np.sum(fcst[k].data * weights.T, axis=-1), axis=-1)
         spot[k].data[:] = interpolated.reshape(spot[k].data.shape)
+    # The assignments below have no effect; lat/lon returned with incorrect 0.
+    # element (see spot assignments above).
     spot[conv.LAT].data[:] = lat
     spot[conv.LON].data[:] = lon
     return spot

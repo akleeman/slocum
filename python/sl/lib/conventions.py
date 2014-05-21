@@ -1,5 +1,5 @@
-
-ENSEMBLE = 'ensemble'
+ENSEMBLE = 'ens'
+ENS_SPREAD_WS = 'ws_spread'
 TIME = 'time'
 HOURS = 'hours'
 LAT = 'latitude'
