@@ -173,7 +173,6 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
                                  "processed.\n") % query_string, e)
 
 
-
 def spot_message(spot, out=sys.stdout):
     """
     Dumps the readble spot message held in forecast 'spot'
