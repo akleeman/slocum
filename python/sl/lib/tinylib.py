@@ -383,7 +383,6 @@ def small_time(time_var):
     seconds = int(datetime.timedelta.total_seconds(origin - fromordinal))
     augmented = np.concatenate([[origin.toordinal(), seconds],
             diffs.astype(_variables[conv.TIME]['dtype'])])
-    #                            diffs.astype('int')])
     return small_array(augmented, least_significant_digit=0)
 
 
