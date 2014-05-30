@@ -50,7 +50,9 @@ def handle_netcdf(args):
     """
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.from_beaufort(tinyfcst)
-    fcst.dump(args.output)
+    out_file = args.output.name
+    args.output.close()
+    fcst.dump(out_file)
 
 
 def handle_grib(args):
