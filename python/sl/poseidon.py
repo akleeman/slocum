@@ -140,10 +140,10 @@ def latitude_slicer(lats, query):
     southern_most = southern_most + sign * lat_stride
     slicer = slice(northern_most, southern_most, sign * lat_stride)
 
-#     assert np.all(lats[slicer] <= domain['N'])
-#     assert np.all(lats[slicer] >= domain['S'])
-#     assert np.any(lats[slicer] >= domain['N'])
-#     assert np.any(lats[slicer] <= domain['S'])
+    assert np.any(lats[slicer] <= domain['N'])
+    assert np.any(lats[slicer] >= domain['S'])
+    assert np.any(lats[slicer] >= domain['N'])
+    assert np.any(lats[slicer] <= domain['S'])
     return slicer
 
 
@@ -193,10 +193,10 @@ def longitude_slicer(lons, query):
     eastern_most = eastern_most + sign * lon_stride
     slicer = slice(western_most, eastern_most, sign * lon_stride)
 
-#     assert np.all([x <= domain['E'] for x in lons[slicer]])
-#     assert np.all([x >= domain['W'] for x in lons[slicer]])
-#     assert np.any([x >= domain['E'] for x in lons[slicer]])
-#     assert np.any([x <= domain['W'] for x in lons[slicer]])
+    assert np.any([x <= domain['E'] for x in lons[slicer]])
+    assert np.any([x >= domain['W'] for x in lons[slicer]])
+    assert np.any([x >= domain['E'] for x in lons[slicer]])
+    assert np.any([x <= domain['W'] for x in lons[slicer]])
 
     return slicer
 
@@ -305,18 +305,20 @@ def spot_forecast(query):
         assert conv.LON in fcst[k].dimensions[-2:]
         interpolated = np.sum(np.sum(fcst[k].values * weights.T, axis=-1), axis=-1)
         spot[k].values[:] = interpolated.reshape(spot[k].values.shape)
-    # The assignments below have no effect; lat/lon returned with incorrect 0.
-    # element (see spot assignments above).
-    spot[conv.LAT].values[:] = lat
-    spot[conv.LON].values[:] = lon
+    spot[conv.LAT] = (conv.LAT, [lat], spot[conv.LAT].attrs)
+    spot[conv.LON] = (conv.LON, [lon], spot[conv.LON].attrs)
     return spot
 
 
 def opendap_forecast(model):
     """
-    A convenience wrapper which will looked up the uri
-    to the latest openDAP dataset for source.
+    Returns the most recent forecast for 'model'.  In an
+    attempt to be more robust, this tries accessing the
+    latest forecast from _servers.  If the latest forecast
+    cannot be found, it then falls back to try to infer the
+    most recent forecast using fallback().
     """
+    # First check the latest.html pages on each server.
     for server in _servers:
         try:
             latest_opendap = latest(model, server)
@@ -327,7 +329,8 @@ def opendap_forecast(model):
                         % (model, server))
             logger.warn(str(e))
             pass
-
+    # The latest() lookup didn't work on any of the servers.
+    # so we now try the fallback lookup.
     for server in _servers:
         try:
             ds = fallback(model, server)
@@ -335,17 +338,24 @@ def opendap_forecast(model):
         except Exception, e:
             logger.warn("Attempt to directly access %s files on %s failed."
                         % (model, server))
+    # No luck!
     raise ValueError("Couldn't access %s data on %s" %
                      (model, ' or '.join(_servers)))
 
 
 def gridded_forecast(query):
     """
-
+    Returns an xray Dataset holding the gridded forecast
+    requested by 'query'
     """
     fcst = opendap_forecast(query['model'])
 
     def lookup_name(possible_names):
+        """
+        Forecast variable names haven't been very predictable,
+        so this looks up the variable name ignoring case and
+        allowing for one of several different names.
+        """
         actual_names = fcst.variables.keys()
         possible_names = [x.lower() for x in possible_names]
         name = [x for x in actual_names if x.lower() in possible_names]
@@ -371,6 +381,7 @@ def gridded_forecast(query):
     lat_name = lookup_name(['lat', 'latitude'])
     lon_name = lookup_name(['lon', 'longitude'])
     # reduce the datset to only the variables we care about
+    # the dataset has still not been loaded into memory.
     fcst = fcst.select(*variables.keys())
     renames = variables.copy()
     # sometimes the time coordinate has a suffix number
@@ -390,11 +401,13 @@ def gridded_forecast(query):
     if 'wind' in query['vars']:
         height_coordinate = [d for d in fcst[conv.UWND].dimensions
                              if 'height_above_ground' in d]
-        assert len(height_coordinate) == 1
-        height_coordinate = height_coordinate[0]
-        ind = np.nonzero(fcst[height_coordinate].values[:] == 10.)[0][0]
-        additional_slicers[height_coordinate] = slice(ind, ind + 1)
-        dims_to_squeeze.append(height_coordinate)
+        if len(height_coordinate) == 1:
+            height_coordinate = height_coordinate[0]
+            ind = np.nonzero(fcst[height_coordinate].values[:] == 10.)[0][0]
+            additional_slicers[height_coordinate] = slice(ind, ind + 1)
+            dims_to_squeeze.append(height_coordinate)
+        elif len(height_coordinate) > 1:
+            raise ValueError("Expected a single height for wind speeds")
     # reduce the dataset to only the domain we care about
     # this step may take a while because it may require actually
     # downloading some of the data

@@ -116,6 +116,17 @@ class PoseidonTest(unittest.TestCase):
 
     def test_spot_forecast(self):
 
+        def test_gfs(model):
+            ds = test_forecast()
+            ds['Pressure_reduced_to_MSL'] = (('time', 'longitude', 'latitude'),
+                                             ds['uwnd'].values,
+                                             {'units': 'Pa'})
+            ds = ds.rename({'uwnd': 'U-component_of_wind_height_above_ground',
+                            'vwnd': 'V-component_of_wind_height_above_ground',
+                            })
+
+            return ds
+
         query = {'location': {'latitude': -20., 'longitude': -154.},
                    'model': 'gfs',
                    'type': 'spot',
@@ -123,10 +134,13 @@ class PoseidonTest(unittest.TestCase):
                    'vars': ['wind'],
                    'warnings': []}
 
-        poseidon.gfs = lambda x: test_forecast()
+        opendap_forecast = poseidon.opendap_forecast
+        poseidon.opendap_forecast = test_gfs
         fcst = poseidon.spot_forecast(query)
         np.testing.assert_array_equal(fcst['vwnd'].values, -154.)
         np.testing.assert_array_equal(fcst['uwnd'].values, -20.)
+        np.testing.assert_array_equal(fcst['latitude'].values, -20.)
+        np.testing.assert_array_equal(fcst['longitude'].values, -154.)
 
         query = {'location': {'latitude': -20.3, 'longitude': -154.7},
                    'model': 'gfs',
@@ -135,10 +149,12 @@ class PoseidonTest(unittest.TestCase):
                    'vars': ['wind'],
                    'warnings': []}
 
-        poseidon.gfs = lambda x: test_forecast()
         fcst = poseidon.spot_forecast(query)
-        np.testing.assert_array_equal(fcst['vwnd'].values, -154.7)
-        np.testing.assert_array_equal(fcst['uwnd'].values, -20.3)
+        np.testing.assert_array_almost_equal(fcst['vwnd'].values, -154.7)
+        np.testing.assert_array_almost_equal(fcst['uwnd'].values, -20.3)
+        np.testing.assert_array_almost_equal(fcst['latitude'].values, -20.3)
+        np.testing.assert_array_almost_equal(fcst['longitude'].values, -154.7)
+        poseidon.opendap_forecast = opendap_forecast
 
 if __name__ == "__main__":
     unittest.main()
