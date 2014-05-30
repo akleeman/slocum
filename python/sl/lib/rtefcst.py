@@ -79,6 +79,10 @@ class Route(object):
             route constructor; if speed is provided for any leg it will
             overwrite avrgSpeed for that leg
 
+        'gpx'
+            XML file with a route exported from OpenCPN. avrgSpeed argument
+            must be provided to Route constructor.
+
     """
     # TODO: add parsers for different import formats
 
@@ -120,6 +124,8 @@ class Route(object):
 
         if inFmt == 'csv':
             self.read_csv(ifh, avrgSpeed)
+        elif inFmt == 'gpx':
+            self.read_gpx(ifh, avrgSpeed)
         else:
             raise (InvalidInFormatError,
                    "Invalid route file format specifier: %s" % inFmt)
@@ -340,7 +346,7 @@ class Route(object):
                 else:
                     r[2] = avrgSpeed
             try:
-                speed, new_units = units.normalize_scalar(float(r[2]), 'knot')
+                speed, __ = units.normalize_scalar(float(r[2]), 'knot')
                 self.rtePts.append(Route.RtePoint(NautAngle(r[0]),
                                    NautAngle(r[1]), speed))
             except:
@@ -348,6 +354,35 @@ class Route(object):
                         "Could not process line\n"
                         "%s\n"
                         "in %s" % (str(r), fn))
+
+    def read_gpx(self, ifo, avrgSpeed):
+        """
+        Reads route from gpx XML file, iterating over rtept elements. Since
+        OpenCPN route files don't include leg speed, avrgSpeed will be used for
+        all legs.
+        """
+        # XML name space
+        ns_string = 'http://www.topografix.com/GPX/1/1'
+
+        if isinstance(ifo, file):
+            fn = ifo.name
+        else:
+            fn = "route input"
+
+        if avrgSpeed is None:
+            raise ValueError(
+                    "Expected a non None average speed to process %s as gpx."
+                    % fn)
+        if not avrgSpeed > 0:
+            raise ValueError(
+                    "Expected an average speed > 0 to process %s as gpx." % fn)
+
+        norm_speed, __ = units.normalize_scalar(avrgSpeed, 'knot')
+        root = ET.fromstring(ifo.read())
+        for rp in root.iter("{%s}rtept" % ns_string):
+            lat = NautAngle(rp.attrib['lat'])
+            lon = NautAngle(rp.attrib['lon'])
+            self.rtePts.append(Route.RtePoint(lat, lon, norm_speed))
 
     def queryDict(self, model=u'gfs', fc_type='gridded', grid_delta=(0.5, 0.5),
             fc_vars=[conv.PRESSURE, conv.PRECIP, conv.WIND]):
@@ -399,8 +434,8 @@ class RouteForecast(object):
         rte:    rtefcst.Route object
         fcst:   xray.Dataset object
         """
-        fTimes = xray.decode_cf_datetime(fcst['time'].data,
-                fcst['time'].attributes['units'])   # array of np.datetime64
+        fTimes = xray.decode_cf_datetime(fcst['time'].values,
+                fcst['time'].attrs['units'])   # array of np.datetime64
         # check that forecast times overlap travel time
         if (fTimes[0] > rte.utcArrival or
                 fTimes[-1] < rte.utcDept):
@@ -408,11 +443,11 @@ class RouteForecast(object):
                    "Forecast times do not overlap with route times")
 
         # check that forecast area overlaps route
-        if (rte.bbox.north < NautAngle(min(fcst[conv.LAT].data)) or
-                rte.bbox.south > NautAngle(max(fcst[conv.LAT].data))):
+        if (rte.bbox.north < NautAngle(min(fcst[conv.LAT].values)) or
+                rte.bbox.south > NautAngle(max(fcst[conv.LAT].values))):
             raise(RegionOverlapError,
                    "Route latitudes outside of forecast region")
-        fcLons = [NautAngle(a) for a in fcst[conv.LON].data]
+        fcLons = [NautAngle(a) for a in fcst[conv.LON].values]
         if (rte.bbox.east < min(fcLons) or rte.bbox.west > max(fcLons)):
             raise(RegionOverlapError,
                    "Route longitudes outside of forecast region")
@@ -472,27 +507,27 @@ class RouteForecast(object):
 
         # we assume lats are sorted but don't know if S -> N ('normal') or
         # N -> S ('reverse'):
-        sortLat = self.fcst[conv.LAT].data.copy()
-        if self.fcst[conv.LAT].data[0] > self.fcst[conv.LAT].data[-1]:
+        sortLat = self.fcst[conv.LAT].values.copy()
+        if self.fcst[conv.LAT].values[0] > self.fcst[conv.LAT].values[-1]:
             sortLat.sort()  # sort S -> N
             i = -1 * bisect(sortLat, lat)
         else:
             i = bisect(sortLat, lat)
-        j = bisect(self.fcst[conv.LON].data, lon)
+        j = bisect(self.fcst[conv.LON].values, lon)
 
-        if (i == 0 or j == 0 or abs(i) == len(self.fcst[conv.LAT].data) or
-                                j == len(self.fcst[conv.LON].data)):
+        if (i == 0 or j == 0 or abs(i) == len(self.fcst[conv.LAT].values) or
+                                j == len(self.fcst[conv.LON].values)):
             raise PointNotInsideGrid
 
-        latVec = self.fcst[conv.LAT].data[i-1:i+1]
-        lonVec = self.fcst[conv.LON].data[j-1:j+1]
+        latVec = self.fcst[conv.LAT].values[i-1:i+1]
+        lonVec = self.fcst[conv.LON].values[j-1:j+1]
 
         logger.debug("curPos: %.2f %.2f, lat slice: %s, lon slice: %s" %
                      (lat, lon,  latVec, lonVec))
 
         out = {}
         for fVar in self.fcst.noncoordinates.keys():
-            box = self.fcst[fVar].data[timeIndex, i-1:i+1, j-1:j+1]
+            box = self.fcst[fVar].values[timeIndex, i-1:i+1, j-1:j+1]
 
             logger.debug("\n%s-box:\n%s" % (fVar, box))
 
@@ -501,7 +536,7 @@ class RouteForecast(object):
             logger.debug("%s-result: %f" % (fVar, z))
 
             out[fVar], __ = units.normalize_scalar(
-                    z, self.fcst[fVar].attributes[conv.UNITS])
+                    z, self.fcst[fVar].attrs[conv.UNITS])
 
         return out
 

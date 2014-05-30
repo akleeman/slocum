@@ -60,19 +60,19 @@ _all_units = [(_speed, 'm/s', None),
 def _convert(v, possible_units, cur_units, new_units, validate=None):
     if cur_units == new_units:
         return v
-    assert v.data.dtype == np.float32
+    assert v.values.dtype == np.float32
     mult = (possible_units[cur_units] / possible_units[new_units])
-    v.data[:] *= mult
+    v.values[:] *= mult
     if validate is not None:
-        v.data[:] = validate(v.data[:])
-    v.attributes[conv.UNITS] = new_units
+        v.values[:] = validate(v.values[:])
+    v.attrs[conv.UNITS] = new_units
     return v
 
 
 def convert_units(v, new_units):
     # convert the units
-    if conv.UNITS in v.attributes:
-        cur_units = v.attributes[conv.UNITS]
+    if conv.UNITS in v.attrs:
+        cur_units = v.attrs[conv.UNITS]
         for (possible_units, _, _) in _all_units:
             if cur_units in possible_units:
                 return _convert(v, possible_units, cur_units, new_units)
@@ -88,8 +88,8 @@ def normalize_units(v):
     done in place
     """
     # convert the units
-    if conv.UNITS in v.attributes:
-        cur_units = v.attributes[conv.UNITS]
+    if conv.UNITS in v.attrs:
+        cur_units = v.attrs[conv.UNITS]
         for (possible_units, default, validate) in _all_units:
             if cur_units in possible_units:
                 _convert(v, possible_units, cur_units, default,
@@ -105,6 +105,21 @@ def normalize_variables(dataset):
     for _, v in dataset.variables.iteritems():
         normalize_units(v)
     return dataset
+
+
+def convert_array(v, cur_units, new_units):
+    """
+    Converts an array from cur_units to new_units.  Same as convert_units but
+    can be used if v has no 'attributes' attribute (e.g. spot forecasts).
+    Conversion is done in place.
+    """
+    for (possible_units, _, _) in _all_units:
+        if cur_units in possible_units:
+            mult = (possible_units[cur_units] / possible_units[new_units])
+            v[:] *= mult
+            return v
+    else:
+        raise ValueError("No units found so convertion doesn't make sense")
 
 
 def convert_scalar(s, cur_units, new_units):

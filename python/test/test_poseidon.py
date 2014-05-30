@@ -1,11 +1,26 @@
 import unittest
-import itertools
 
 import numpy as np
 
 from sl import poseidon
+
 import xray
-import datetime
+
+
+def test_forecast():
+    ds = xray.Dataset()
+    ds['longitude'] = ('longitude', np.arange(-180., 180.))
+    ds['latitude'] = ('latitude', np.arange(-90., 90.))
+    u, v = np.meshgrid(np.arange(-90., 90.), np.arange(-180., 180.))
+    u = np.array([u] * 65)
+    v = np.array([v] * 65)
+    time = xray.Dataset()
+    time['time'] = ('time', np.linspace(0, 192, 65),
+                    {'units': 'hours since 2014-03-28'})
+    ds['time'] = xray.conventions.decode_cf_variable(time['time'])
+    ds['uwnd'] = (['time', 'longitude', 'latitude'], u)
+    ds['vwnd'] = (['time', 'longitude', 'latitude'], v)
+    return ds
 
 
 class PoseidonTest(unittest.TestCase):
@@ -63,7 +78,8 @@ class PoseidonTest(unittest.TestCase):
         lons = np.linspace(0., 360., 721)
         query = {'domain': {'N': 10., 'S': -10.,
                             'E': 10., 'W': -10.},
-                 'grid_delta': (0.5, delta)}
+                 'grid_delta': (0.5, 0.5)}
+
         self.assertRaises(Exception,
                           lambda: poseidon.longitude_slicer(lons, query))
 
@@ -72,17 +88,73 @@ class PoseidonTest(unittest.TestCase):
         queries = [(np.array([0., 24, 48]))
                    ]
 
-        time = xray.XArray(('time',), [0, 6, 12, 18, 24, 36, 48, 72, 96],
-                           attributes={'units': 'hours since 2011-01-01'})
-        time = xray.conventions.decode_cf_variable(time)
+        time = xray.Dataset()
+        time['time'] = (('time', [0, 6, 12, 18, 24, 36, 48, 72, 96],
+                        {'units': 'hours since 2011-01-01'}))
+        time = xray.conventions.decode_cf_variable(time['time'])
 
         for hours in queries:
             query = {'hours': hours}
             max_hours = int(max(hours))
             slicer = poseidon.time_slicer(time, query)
-            actual = time.data[slicer][-1] - time.data[slicer][0]
+            actual = time.values[slicer][-1] - time.values[slicer][0]
             expected = np.timedelta64(max_hours, 'h')
             self.assertEqual(actual, expected)
+
+    def test_subset(self):
+        query = {'hours': np.array([0., 24, 48, 96]),
+                 'domain': {'N': 10., 'S': -10.,
+                            'E': 10., 'W': -10.},
+                 'grid_delta': (0.5, 0.5)}
+
+        fcst = test_forecast()
+        subset = poseidon.subset(fcst, query)
+        np.testing.assert_array_equal(subset['longitude'].values,
+                                      np.arange(-10., 11.))
+        np.testing.assert_array_equal(subset['latitude'].values,
+                                      -np.arange(-10., 11.))
+
+    def test_spot_forecast(self):
+
+        def test_gfs(model):
+            ds = test_forecast()
+            ds['Pressure_reduced_to_MSL'] = (('time', 'longitude', 'latitude'),
+                                             ds['uwnd'].values,
+                                             {'units': 'Pa'})
+            ds = ds.rename({'uwnd': 'U-component_of_wind_height_above_ground',
+                            'vwnd': 'V-component_of_wind_height_above_ground',
+                            })
+
+            return ds
+
+        query = {'location': {'latitude': -20., 'longitude': -154.},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': []}
+
+        opendap_forecast = poseidon.opendap_forecast
+        poseidon.opendap_forecast = test_gfs
+        fcst = poseidon.spot_forecast(query)
+        np.testing.assert_array_equal(fcst['vwnd'].values, -154.)
+        np.testing.assert_array_equal(fcst['uwnd'].values, -20.)
+        np.testing.assert_array_equal(fcst['latitude'].values, -20.)
+        np.testing.assert_array_equal(fcst['longitude'].values, -154.)
+
+        query = {'location': {'latitude': -20.3, 'longitude': -154.7},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': []}
+
+        fcst = poseidon.spot_forecast(query)
+        np.testing.assert_array_almost_equal(fcst['vwnd'].values, -154.7)
+        np.testing.assert_array_almost_equal(fcst['uwnd'].values, -20.3)
+        np.testing.assert_array_almost_equal(fcst['latitude'].values, -20.3)
+        np.testing.assert_array_almost_equal(fcst['longitude'].values, -154.7)
+        poseidon.opendap_forecast = opendap_forecast
 
 if __name__ == "__main__":
     unittest.main()

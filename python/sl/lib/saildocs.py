@@ -18,7 +18,7 @@ For a better explanation send an email to info@ensembleweather.com
 
 _supported_commands = ['send']
 _supported_variables = ['wind', 'rain', 'press']
-_supported_models = ['gfs']
+_supported_models = ['gfs', 'gefs']
 
 _send_usage = """
 SEND requests use the format:
@@ -393,13 +393,16 @@ def parse_grid(grid_str):
 
 
 def split_fields(request, k):
+    """
+    Saildoc fields can be separated by '|', '/' or '\u015a'
+    """
     fields = re.split(u'[\|\/\u015a]', unicode(request.strip()))
     return list(itertools.chain(fields, [None] * k))[:k]
 
 
 def parse_forecast_request(request):
     """
-
+    Parses a request for a gridded forecast.
     """
     warnings = []
     # takes the first 4 '|' separated fields, if fewer than
@@ -431,14 +434,18 @@ def parse_forecast_request(request):
 
 
 def parse_spot_request(request):
+    """
+    parses a request for a spot forecast
+    """
     warnings = []
     model_domain, time_str, variables = split_fields(request, 3)
-    model, location_str = model_domain.split(':')
-    # TODO: The saildocs style spot requests don't allow you
-    # to specify a forecast provider.  For now we assume GFS, but
-    # in the future it would be nice to allow more flexible requests.
-    model = 'gfs'
-
+    spot, location_str = model_domain.split(':', 1)
+    assert spot.lower() == 'spot'
+    if ':' in location_str:
+        model, location_str = location_str.split(':', 1)
+        model = model.lower()
+    else:
+        model = 'gfs'
     location = parse_location(location_str)
 
     hours, time_warnings = parse_times(time_str)

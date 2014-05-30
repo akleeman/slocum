@@ -4,6 +4,7 @@ from bisect import bisect
 import numpy as np
 
 from sl.lib import units
+from sl.lib import conventions as conv
 
 BoundingBox = namedtuple('BoundingBox', ['north', 'south', 'east', 'west'])
 Position = namedtuple('Position', ['lat', 'lon'])
@@ -203,7 +204,11 @@ class NautAngle(float):
         return self.is_east_of(other) or self.is_almost_equal(other)
 
     def __add__(self, other):
-        return NautAngle(self.real + float(other))
+        if isinstance(other, NautAngle):    # sum of two lats or lons
+                                            # -> return a float
+            return self.real + float(other)
+        else:
+            return NautAngle(self.real + float(other))
 
     def __sub__(self, other):
         if isinstance(other, NautAngle):    # difference between two lats or
@@ -246,6 +251,44 @@ class NautAngle(float):
             center_dir = np.average(bins[j:i+1])
 
         return center_dir % 360., names[i]
+
+    def named_str(self, kind, decimals=0, leading_0=False):
+        """
+        Returns angle as a sring, rounded to ``decimals`` decimals and with a
+        'name' character appended, depending on the value of ``kind`` which
+        must be either ``conv.LAT`` or ``conv.LON``.  If ``leading_0`` is
+        True leading zeroes will be added as requied to get 2-digit
+        latitudes and 3-digit longitudes.
+
+        >>> NautAngle(-45.162).named_str(conv.LAT)
+        '45S'
+        >>> NautAngle(-45.162).named_str(conv.LON, decimals=1,
+        ...                              leading_0=True)
+        ...
+        '045.2W'
+        """
+        if kind == conv.LAT:
+            name = 'S' if self.real < 0 else 'N'
+            width = 2
+        elif kind == conv.LON:
+            name = 'W' if self.real < 0 else 'E'
+            width = 3
+        else:
+            raise(ValueError, "unknown kind: %s" % kind)
+
+        if decimals:
+            fmt = (".%df" % decimals)
+            width += 1
+        else:
+            fmt = 'd'
+
+        if leading_0:
+            width += decimals
+            fmt = "0%d%s" % (width, fmt)
+        fmt = '%' + fmt + '%s'
+
+        return fmt % (np.round(abs(self.real), decimals), name)
+
 
 
 class Wind(object):

@@ -1,12 +1,7 @@
 import os
 import numpy as np
-import coards
-import gribapi
 import logging
 import netCDF4 as nc4
-import itertools
-
-from datetime import datetime
 
 import sl.lib.conventions as conv
 
@@ -14,6 +9,14 @@ from sl.lib import units
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
+
+try:
+    # because gribapi is so difficult to install we make it optional.
+    import gribapi
+    _has_gribapi = True
+except ImportError:
+    logger.warn("gribapi is not installed, grib creation will not work.")
+    _has_gribapi = False
 
 _sample_file = os.path.join(os.path.dirname(__file__),
                         '../../../data/GFS20131226164503639.grb')
@@ -160,76 +163,6 @@ level = {"u-component of wind": 10,
 _sec_per_hour = 3600
 
 
-def degrib(fn):
-    """
-    Takes a sequence of grib messages and converts them into a sequence of
-    data objects grouped such that each data object contains all variables that
-    share lat long grids.
-
-    It is assumed that all messages for each group of grids have the same times.
-    If this is not the case an exception is thrown
-    """
-    raise NotImplementedError("This function will be useful but needs some work")
-
-    if not os.path.exists(fn):
-        raise ValueError("grib file %s does not exist" % fn)
-
-    #gribs = pygrib.open(fn)
-
-    def get_grid(x):
-        # extracts the stringified lat long variables from a message
-        return "%s\t%s" % (x.distinctLatitudes.tostring(),
-                           x.distinctLongitudes.tostring())
-    # the actual order doesn't matter we just want to make sure they're grouped
-    gribs = sorted(gribs, key=get_grid)
-    for grid, group in itertools.groupby(gribs, key=get_grid):
-        # create a new object for each grid
-        obj = core.Data()
-        lats, lons = [np.fromstring(x) for x in grid.split('\t')]
-        obj.create_coordinate(conv.LAT, lats)
-        obj.create_coordinate(conv.LON, lons)
-
-        var = lambda x: x.name
-        for var, var_group in itertools.groupby(group, key=var):
-            # iterate over all messages with the same variable name, turning
-            # each var into core.variable
-            def iterate():
-                # processes each message returning the date and values
-                g = var_group.next()
-                for g in itertools.chain([g], var_group):
-                    assert g.unitOfTimeRange == 1
-                    pre_format = '%s %.4d' % (g.validityDate, float(g.validityTime))
-                    valid_time = datetime.strptime(pre_format, '%Y%m%d %H%M')
-                    yield valid_time, g.values
-
-            # extract all the dates so we can make the time coordinate
-            iter_times = list(iterate())
-            dates = [x[0] for x in iter_times]
-            start_date = min(dates)
-            udunit = coards.to_udunits(start_date,
-                                        'hours since %Y-%m-%d %H:%M:%S')
-            uddates = [coards.datetime_to_udunits(d, udunit) for d in dates]
-            # create an empty data object and fill it
-            data = np.zeros((len(uddates), lats.size, lons.size))
-            for i, (_, x) in enumerate(iter_times):
-                data[i, :, :] = x
-            # if the time coordinate exists make sure it matches
-            if conv.TIME in obj.variables:
-                if not np.all(uddates == obj[conv.TIME].data):
-                    # overlap_dates = sorted(set(uddates).intersection(obj[conv.TIME].data))
-                    raise ValueError("expected all time variables to match")
-            else:
-                obj.create_coordinate(conv.TIME, uddates, record=True,
-                                      attributes={conv.UNITS: udunit})
-
-            obj.create_variable(var, dim=(conv.TIME, conv.LAT, conv.LON), data=data)
-        neg_lon = obj[conv.LON].data <= 0
-        obj[conv.LON].data[neg_lon] = 360. + obj[conv.LON].data[neg_lon]
-        if 'unknown' in obj.variables:
-            obj.delete_variable('unknown')
-        yield units.normalize_data(obj)
-
-
 def set_time(source, grib):
     """
     Sets the dataDate, dataTime, unitOfTimeRange, P2, timeRangeIndicator,
@@ -239,7 +172,7 @@ def set_time(source, grib):
         raise ValueError("expected a single time step")
     # analysis, forecast start, verify time, obs time,
     # (start of forecast for now)
-    unit = source[conv.TIME].attributes[conv.UNITS]
+    unit = source[conv.TIME].attrs[conv.UNITS]
     # reference time is assumed to be the origin of the source
     # time variable.  This is the case with GFS but perhaps
     # not with other forecasts.
@@ -262,7 +195,7 @@ def set_time(source, grib):
     if grib_time_code is None:
         raise ValueError("Unexpected unit")
     gribapi.grib_set_long(grib, 'unitOfTimeRange', 1)
-    vt = np.asscalar(source[conv.TIME].data)
+    vt = np.asscalar(source[conv.TIME].values)
     assert int(vt) == vt
     gribapi.grib_set_long(grib, 'P2', vt)
     # forecast is valid at reference + P2
@@ -287,8 +220,8 @@ def set_grid(source, grib):
     gribapi.grib_set_long(grib, "Ni", source.dimensions[conv.LON])
     gribapi.grib_set_long(grib, "Nj", source.dimensions[conv.LAT])
 
-    lon = source[conv.LON].data
-    lat = source[conv.LAT].data
+    lon = source[conv.LON].values
+    lat = source[conv.LAT].values
     assert np.unique(np.diff(lon)).size == 1
     assert np.unique(np.diff(lat)).size == 1
     assert lon.ndim == 1
@@ -340,19 +273,19 @@ def set_data(source, grib):
     """
     var_name = get_varible_name(source)
     # treat masked arrays differently
-    if isinstance(source[var_name].data, np.ma.core.MaskedArray):
+    if isinstance(source[var_name].values, np.ma.core.MaskedArray):
         gribapi.grib_set(grib, "bitmapPresent", 1)
         # use the missing value from the masked array as default
-        missing_value = source[var_name].data.get_fill_value()
+        missing_value = source[var_name].values.get_fill_value()
         # but give the netCDF specified missing value preference
-        missing_value = source[var_name].attributes.get('missing_value',
+        missing_value = source[var_name].attrs.get('missing_value',
                                                         missing_value)
         gribapi.grib_set_double(grib, "missingValue",
                                 float(missing_value))
-        data = source[var_name].data.filled()
+        data = source[var_name].values.filled()
     else:
         gribapi.grib_set_double(grib, "missingValue", 9999)
-        data = source[var_name].data[:]
+        data = source[var_name].values[:]
     gribapi.grib_set_long(grib, "bitsPerValue", 12)
     #gribapi.grib_set_long(grib, "bitsPerValueAndRepack", 12)
     gribapi.grib_set_long(grib, "decimalPrecision", 2)
@@ -363,7 +296,7 @@ def set_data(source, grib):
     code = reverse_codes[conv.to_grib1[var_name]]
     _, grib_unit = codes[code]
     # default to the grib default unit
-    unit = source[var_name].attributes.get(conv.UNITS, grib_unit)
+    unit = source[var_name].attrs.get(conv.UNITS, grib_unit)
     mult = 1.
     if not unit == grib_unit:
         mult = units._speed[unit] / units._speed[grib_unit]
@@ -394,6 +327,9 @@ def save(source, target, append=False, sample_file=_sample_file):
         When creating a new file from string you can optionally
         append to the file.
     """
+    if not _has_gribapi:
+        raise ImportError("gripapi is required to write grib files.")
+
     if isinstance(target, basestring):
         grib_file = open(target, "ab" if append else "wb")
     elif hasattr(target, "write"):
@@ -409,8 +345,8 @@ def save(source, target, append=False, sample_file=_sample_file):
     if not conv.TIME in source.variables:
         raise ValueError("Expected time coordinate")
     # sort the lats and lons
-    source = source.take(np.argsort(source[conv.LAT].data), 'latitude')
-    lons = source[conv.LON].data
+    source = source.take(np.argsort(source[conv.LAT].values), 'latitude')
+    lons = source[conv.LON].values
     if np.any(np.abs(np.diff(lons)) > 180.):
         # the latitudes must cross the dateline since we only allow 180
         # degree wide bounding boxes, and there is more than a 180 degree
@@ -422,7 +358,7 @@ def save(source, target, append=False, sample_file=_sample_file):
             # specifications for global data ... but its not a high priority
             # so that will wait for later.
             raise ValueError("Longitudes span more than 180 degrees and the dateline?")
-    source[conv.LON].data[:] = lons
+    source[conv.LON].values[:] = lons
     source = source.take(np.argsort(lons), 'longitude')
     # iterate over variables
     for v in source.noncoordinates.keys():
