@@ -90,7 +90,7 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     fcst = get_forecast(query, path=forecast_path)
     logger.debug('Obtained the forecast')
     if conv.ENSEMBLE in fcst.dimensions:
-        tinys = [tinylib.to_beaufort(fcst.indexed_by(**{conv.ENSEMBLE: i}))
+        tinys = [tinylib.to_beaufort(fcst.indexed(**{conv.ENSEMBLE: i}))
                  for i in range(fcst.dimensions[conv.ENSEMBLE])]
         tiny_fcst = '\t'.join([base64.b64encode(x) for x in tinys])
     else:

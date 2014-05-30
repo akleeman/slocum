@@ -94,7 +94,7 @@ class PoseidonTest(unittest.TestCase):
             query = {'hours': hours}
             max_hours = int(max(hours))
             slicer = poseidon.time_slicer(time, query)
-            actual = time.data[slicer][-1] - time.data[slicer][0]
+            actual = time.values[slicer][-1] - time.values[slicer][0]
             expected = np.timedelta64(max_hours, 'h')
             self.assertEqual(actual, expected)
 
@@ -106,9 +106,9 @@ class PoseidonTest(unittest.TestCase):
 
         fcst = test_forecast()
         subset = poseidon.subset(fcst, query)
-        np.testing.assert_array_equal(subset['longitude'].data,
+        np.testing.assert_array_equal(subset['longitude'].values,
                                       np.arange(-10., 11.))
-        np.testing.assert_array_equal(subset['latitude'].data,
+        np.testing.assert_array_equal(subset['latitude'].values,
                                       -np.arange(-10., 11.))
 
     def test_spot_forecast(self):
@@ -122,8 +122,8 @@ class PoseidonTest(unittest.TestCase):
 
         poseidon.gfs = lambda x: test_forecast()
         fcst = poseidon.spot_forecast(query)
-        np.testing.assert_array_equal(fcst['vwnd'].data, -154.)
-        np.testing.assert_array_equal(fcst['uwnd'].data, -20.)
+        np.testing.assert_array_equal(fcst['vwnd'].values, -154.)
+        np.testing.assert_array_equal(fcst['uwnd'].values, -20.)
 
         query = {'location': {'latitude': -20.3, 'longitude': -154.7},
                    'model': 'gfs',
@@ -134,8 +134,8 @@ class PoseidonTest(unittest.TestCase):
 
         poseidon.gfs = lambda x: test_forecast()
         fcst = poseidon.spot_forecast(query)
-        np.testing.assert_array_equal(fcst['vwnd'].data, -154.7)
-        np.testing.assert_array_equal(fcst['uwnd'].data, -20.3)
+        np.testing.assert_array_equal(fcst['vwnd'].values, -154.7)
+        np.testing.assert_array_equal(fcst['uwnd'].values, -20.3)
 
 if __name__ == "__main__":
     unittest.main()

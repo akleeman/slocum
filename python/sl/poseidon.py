@@ -207,11 +207,11 @@ def time_slicer(time_coordinate, query):
     """
     # next step is parsing out the times
     # we assume that the forecast units are in hours
-    ref_time = time_coordinate.data[0]
+    ref_time = time_coordinate.values[0]
     max_hours = max(query['hours'])
     assert int(max_hours) == max_hours
     max_time = ref_time + np.timedelta64(int(max_hours), 'h')
-    max_ind = np.max(np.nonzero(time_coordinate.data <= max_time)[0])
+    max_ind = np.max(np.nonzero(time_coordinate.values <= max_time)[0])
     assert max_ind > 0
     return slice(0, max_ind + 1)
 
@@ -224,7 +224,7 @@ def subset_time(fcst, hours):
     consider using time_slicer first.
     """
     # next step is parsing out the times
-    ref_time = np.datetime64(fcst[conv.TIME].data[0])
+    ref_time = np.datetime64(fcst[conv.TIME].values[0])
     # we are assuming that the first time is the reference time
     # we can check that by converting back to cf units and making
     # sure that the first cf time is 0.
@@ -235,7 +235,7 @@ def subset_time(fcst, hours):
     # make sure hours are all integers
     np.testing.assert_array_almost_equal(hours, hours.astype('int'))
     times = np.array([ref_time + np.timedelta64(int(x), 'h') for x in hours])
-    return fcst.labeled_by(time=times)
+    return fcst.labeled(time=times)
 
 
 def subset(remote_dataset, query, additional_slicers=None):
@@ -255,7 +255,7 @@ def subset(remote_dataset, query, additional_slicers=None):
     # using slicers which minimizes downloading from openDAP servers,
     # the second pulls out the actual requested domain once the data
     # has been loaded locally.
-    local_dataset = remote_dataset.indexed_by(**slicers)
+    local_dataset = remote_dataset.indexed(**slicers)
     local_dataset = subset_time(local_dataset, query['hours'])
     return local_dataset
 
@@ -287,25 +287,25 @@ def spot_forecast(query):
         weights[inds] = 1. - dists[inds] / np.sum(dists[inds])
         return weights
 
-    lat_weights = bilinear_weights(fcst[conv.LAT].data, lat)
-    lon_weights = bilinear_weights(fcst[conv.LON].data, lon)
+    lat_weights = bilinear_weights(fcst[conv.LAT].values, lat)
+    lon_weights = bilinear_weights(fcst[conv.LON].values, lon)
     weights = reduce(np.multiply, np.meshgrid(lat_weights, lon_weights))
     weights /= np.sum(weights)
 
-    spot = fcst.indexed_by(**{conv.LAT: [0]})
-    spot = spot.indexed_by(**{conv.LON: [0]})
+    spot = fcst.indexed(**{conv.LAT: [0]})
+    spot = spot.indexed(**{conv.LON: [0]})
     spatial_variables = [k for k, v in spot.variables.iteritems()
                             if (conv.LAT in v.dimensions and
                                 conv.LON in v.dimensions)]
     for k in spatial_variables:
         assert conv.LAT in fcst[k].dimensions[-2:]
         assert conv.LON in fcst[k].dimensions[-2:]
-        interpolated = np.sum(np.sum(fcst[k].data * weights.T, axis=-1), axis=-1)
-        spot[k].data[:] = interpolated.reshape(spot[k].data.shape)
+        interpolated = np.sum(np.sum(fcst[k].values * weights.T, axis=-1), axis=-1)
+        spot[k].values[:] = interpolated.reshape(spot[k].values.shape)
     # The assignments below have no effect; lat/lon returned with incorrect 0.
     # element (see spot assignments above).
-    spot[conv.LAT].data[:] = lat
-    spot[conv.LON].data[:] = lon
+    spot[conv.LAT].values[:] = lat
+    spot[conv.LON].values[:] = lon
     return spot
 
 
@@ -389,7 +389,7 @@ def gridded_forecast(query):
                              if 'height_above_ground' in d]
         assert len(height_coordinate) == 1
         height_coordinate = height_coordinate[0]
-        ind = np.nonzero(fcst[height_coordinate].data[:] == 10.)[0][0]
+        ind = np.nonzero(fcst[height_coordinate].values[:] == 10.)[0][0]
         additional_slicers[height_coordinate] = slice(ind, ind + 1)
         dims_to_squeeze.append(height_coordinate)
     # reduce the dataset to only the domain we care about

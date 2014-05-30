@@ -96,13 +96,12 @@ class TinylibTest(unittest.TestCase):
 
     def test_small_time(self):
         ds = xray.Dataset()
-
-        ds['time'] = xray.XArray(('time'), np.arange(10),
-                                 attributes={'units': 'hours since 2013-12-12 12:00:00'})
+        ds['time'] = (('time'), np.arange(10),
+                      {'units': 'hours since 2013-12-12 12:00:00'})
         sm_time = tinylib.small_time(ds['time'])
         ret = tinylib.expand_small_time(**sm_time)
-        self.assertTrue(np.all(ret[0] == ds['time'].data))
-        self.assertTrue(ret[1] == ds['time'].attributes['units'])
+        self.assertTrue(np.all(ret[0] == ds['time'].values))
+        self.assertTrue(ret[1] == ds['time'].attrs['units'])
 
     def test_beaufort(self):
         np.random.seed(1982)
@@ -131,18 +130,16 @@ class TinylibTest(unittest.TestCase):
         vwnd = - speeds * np.cos(dirs)
         vwnd = vwnd.reshape(shape).astype(np.float32)
 
-        ds['uwnd'] = xray.XArray(('time', 'longitude', 'latitude'),
-                                 data=uwnd,
-                                 attributes={'units': 'm/s'})
-        ds['vwnd'] = xray.XArray(('time', 'longitude', 'latitude'),
-                                 data=vwnd,
-                                 attributes={'units': 'm/s'})
+        ds['uwnd'] = (('time', 'longitude', 'latitude'),
+                      uwnd, {'units': 'm/s'})
+        ds['vwnd'] = (('time', 'longitude', 'latitude'),
+                      vwnd, {'units': 'm/s'})
 
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
-        np.testing.assert_allclose(actual['uwnd'].data, ds['uwnd'].data,
+        np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['vwnd'].data, ds['vwnd'].data,
+        np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
                                    rtol=1e-4)
 
         # now add precip and test everything
@@ -154,11 +151,11 @@ class TinylibTest(unittest.TestCase):
                         {'units': 'kg.m-2.s-1'})
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
-        np.testing.assert_allclose(actual['uwnd'].data, ds['uwnd'].data,
+        np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['vwnd'].data, ds['vwnd'].data,
+        np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['precip'].data, ds['precip'].data,
+        np.testing.assert_allclose(actual['precip'].values, ds['precip'].values,
                                    rtol=1e-4)
 
         # add pressure and test everything
@@ -170,13 +167,13 @@ class TinylibTest(unittest.TestCase):
                            {'units': 'Pa'})
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
-        np.testing.assert_allclose(actual['uwnd'].data, ds['uwnd'].data,
+        np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['vwnd'].data, ds['vwnd'].data,
+        np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['precip'].data, ds['precip'].data,
+        np.testing.assert_allclose(actual['precip'].values, ds['precip'].values,
                                    rtol=1e-4)
-        np.testing.assert_allclose(actual['pressure'].data, ds['pressure'].data,
+        np.testing.assert_allclose(actual['pressure'].values, ds['pressure'].values,
                                    rtol=1e-4)
 
 if __name__ == "__main__":

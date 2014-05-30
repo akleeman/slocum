@@ -13,9 +13,10 @@ logger.setLevel(logging.DEBUG)
 try:
     # because gribapi is so difficult to install we make it optional.
     import gribapi
+    _has_gribapi = True
 except ImportError:
-    logger.warn("gribapi is not install, grib creation will not work.")
-    pass
+    logger.warn("gribapi is not installed, grib creation will not work.")
+    _has_gribapi = False
 
 _sample_file = os.path.join(os.path.dirname(__file__),
                         '../../../data/GFS20131226164503639.grb')
@@ -171,7 +172,7 @@ def set_time(source, grib):
         raise ValueError("expected a single time step")
     # analysis, forecast start, verify time, obs time,
     # (start of forecast for now)
-    unit = source[conv.TIME].attributes[conv.UNITS]
+    unit = source[conv.TIME].attrs[conv.UNITS]
     # reference time is assumed to be the origin of the source
     # time variable.  This is the case with GFS but perhaps
     # not with other forecasts.
@@ -194,7 +195,7 @@ def set_time(source, grib):
     if grib_time_code is None:
         raise ValueError("Unexpected unit")
     gribapi.grib_set_long(grib, 'unitOfTimeRange', 1)
-    vt = np.asscalar(source[conv.TIME].data)
+    vt = np.asscalar(source[conv.TIME].values)
     assert int(vt) == vt
     gribapi.grib_set_long(grib, 'P2', vt)
     # forecast is valid at reference + P2
@@ -219,8 +220,8 @@ def set_grid(source, grib):
     gribapi.grib_set_long(grib, "Ni", source.dimensions[conv.LON])
     gribapi.grib_set_long(grib, "Nj", source.dimensions[conv.LAT])
 
-    lon = source[conv.LON].data
-    lat = source[conv.LAT].data
+    lon = source[conv.LON].values
+    lat = source[conv.LAT].values
     assert np.unique(np.diff(lon)).size == 1
     assert np.unique(np.diff(lat)).size == 1
     assert lon.ndim == 1
@@ -272,19 +273,19 @@ def set_data(source, grib):
     """
     var_name = get_varible_name(source)
     # treat masked arrays differently
-    if isinstance(source[var_name].data, np.ma.core.MaskedArray):
+    if isinstance(source[var_name].values, np.ma.core.MaskedArray):
         gribapi.grib_set(grib, "bitmapPresent", 1)
         # use the missing value from the masked array as default
-        missing_value = source[var_name].data.get_fill_value()
+        missing_value = source[var_name].values.get_fill_value()
         # but give the netCDF specified missing value preference
-        missing_value = source[var_name].attributes.get('missing_value',
+        missing_value = source[var_name].attrs.get('missing_value',
                                                         missing_value)
         gribapi.grib_set_double(grib, "missingValue",
                                 float(missing_value))
-        data = source[var_name].data.filled()
+        data = source[var_name].values.filled()
     else:
         gribapi.grib_set_double(grib, "missingValue", 9999)
-        data = source[var_name].data[:]
+        data = source[var_name].values[:]
     gribapi.grib_set_long(grib, "bitsPerValue", 12)
     #gribapi.grib_set_long(grib, "bitsPerValueAndRepack", 12)
     gribapi.grib_set_long(grib, "decimalPrecision", 2)
@@ -295,7 +296,7 @@ def set_data(source, grib):
     code = reverse_codes[conv.to_grib1[var_name]]
     _, grib_unit = codes[code]
     # default to the grib default unit
-    unit = source[var_name].attributes.get(conv.UNITS, grib_unit)
+    unit = source[var_name].attrs.get(conv.UNITS, grib_unit)
     mult = 1.
     if not unit == grib_unit:
         mult = units._speed[unit] / units._speed[grib_unit]
@@ -326,6 +327,9 @@ def save(source, target, append=False, sample_file=_sample_file):
         When creating a new file from string you can optionally
         append to the file.
     """
+    if not _has_gribapi:
+        raise ImportError("gripapi is required to write grib files.")
+
     if isinstance(target, basestring):
         grib_file = open(target, "ab" if append else "wb")
     elif hasattr(target, "write"):
@@ -341,8 +345,8 @@ def save(source, target, append=False, sample_file=_sample_file):
     if not conv.TIME in source.variables:
         raise ValueError("Expected time coordinate")
     # sort the lats and lons
-    source = source.take(np.argsort(source[conv.LAT].data), 'latitude')
-    lons = source[conv.LON].data
+    source = source.take(np.argsort(source[conv.LAT].values), 'latitude')
+    lons = source[conv.LON].values
     if np.any(np.abs(np.diff(lons)) > 180.):
         # the latitudes must cross the dateline since we only allow 180
         # degree wide bounding boxes, and there is more than a 180 degree
@@ -354,7 +358,7 @@ def save(source, target, append=False, sample_file=_sample_file):
             # specifications for global data ... but its not a high priority
             # so that will wait for later.
             raise ValueError("Longitudes span more than 180 degrees and the dateline?")
-    source[conv.LON].data[:] = lons
+    source[conv.LON].values[:] = lons
     source = source.take(np.argsort(lons), 'longitude')
     # iterate over variables
     for v in source.noncoordinates.keys():

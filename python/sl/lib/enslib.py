@@ -44,7 +44,7 @@ def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path=None):
             t[2][conv.UNITS].replace('hours since ', '') + 'Z')
     lat = f0[conv.LAT][1][0]
     lon = f0[conv.LON][1][0]
-    f_times = xray.decode_cf_datetime(t[1], t[2][conv.UNITS])
+    f_times = xray.conventions.decode_cf_datetime(t[1], t[2][conv.UNITS])
     f_times = f_times.astype('M8[h]')
 
     title = ("SPOT Ensemble for lat: %.1f lon: %.1f\n($n = %d$, $t_0 =$ %s)" %
@@ -182,7 +182,7 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens):
     assert (fcst_ens[conv.UWND].dimensions[1:] ==
             fcst_gfs[conv.UWND].dimensions)
     assert fcst_ens[conv.UWND].shape[1:] == fcst_gfs[conv.UWND].shape
-    assert fcst_ens[conv.TIME].data[0] == fcst_gfs[conv.TIME].data[0]
+    assert fcst_ens[conv.TIME].values[0] == fcst_gfs[conv.TIME].values[0]
 
     # ensemble and gfs may not have same units;
     # also normalizer will be in default units:
@@ -192,8 +192,8 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens):
     def wind_speed(u, v):
         return np.sqrt(np.power(u, 2.) + np.power(v, 2.))
 
-    ws_gfs = wind_speed(fcst_gfs[conv.UWND].data, fcst_gfs[conv.VWND].data)
-    ws_ens = wind_speed(fcst_ens[conv.UWND].data, fcst_ens[conv.VWND].data)
+    ws_gfs = wind_speed(fcst_gfs[conv.UWND].values, fcst_gfs[conv.VWND].values)
+    ws_ens = wind_speed(fcst_ens[conv.UWND].values, fcst_ens[conv.VWND].values)
     # you gotta love numpy broadcasting...
     delta_ws = ws_ens - ws_gfs
 
@@ -205,7 +205,7 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens):
     attr[u'long_name'] = meta[spread_func][1]
     if meta[spread_func][2]:    # units specified
         if meta[spread_func][2] == 'default':
-            attr[conv.UNITS] = fcst_gfs[conv.UWND].attributes.get(conv.UNITS)
+            attr[conv.UNITS] = fcst_gfs[conv.UWND].attrs.get(conv.UNITS)
         else:
             attr[conv.UNITS] = meta[spread_func][2]
 
@@ -231,7 +231,7 @@ def _top_n_mean(delta, n=2):
     Tuple consisting of:
         Numpy array with ensemble deviation indicator for each forecast time at
             each grid point (only positive deviations). Shape is
-            delta.data.shape[1:].
+            delta.shape[1:].
         Dictionary with key 'top_x:', providing value of *top* used in
             calculation.
     """
@@ -287,16 +287,16 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     if contour_units:
         units.convert_units(gfsx[conv.ENS_SPREAD_WS], contour_units)
     if not max_level:
-        max_level = gfsx[conv.ENS_SPREAD_WS].data.max()
+        max_level = gfsx[conv.ENS_SPREAD_WS].max()
 
     if isinstance(gfsx, np.datetime64): # True is gfsx has not been packed
-        f_times = gfsx[conv.TIME].data
+        f_times = gfsx[conv.TIME].values
     else:                               # time variable has int offsets
-        f_times = xray.decode_cf_datetime(
-                gfsx['time'], gfsx['time'].attributes['units'])
+        f_times = xray.conventions.decode_cf_datetime(
+                gfsx['time'], gfsx['time'].attrs['units'])
 
-    lats = gfsx[conv.LAT].data
-    lons = gfsx[conv.LON].data
+    lats = gfsx[conv.LAT].values
+    lons = gfsx[conv.LON].values
 
     # Basemap.transform_vector requires lats and lons each to be in ascending
     # order:
@@ -353,19 +353,19 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
         # ensemble spread heatmap:
         x, y = m(*np.meshgrid(lons, lats))
         data = gfsx[conv.ENS_SPREAD_WS]
-        data = data.indexed_by(**{conv.TIME: t_step})
-        data = data.indexed_by(**{conv.LAT: lat_inds})
-        data = data.indexed_by(**{conv.LON: lon_inds}).data
+        data = data.indexed(**{conv.TIME: t_step})
+        data = data.indexed(**{conv.LAT: lat_inds})
+        data = data.indexed(**{conv.LON: lon_inds}).values
         cs = m.contourf(x, y, data, spread_levels, ax=ax, extend='max',
                 cmap=cm.jet)
 
         # wind barbs:
-        u = gfsx[conv.UWND].indexed_by(**{conv.TIME: t_step})
-        u = u.indexed_by(**{conv.LAT: lat_inds})
-        u = u.indexed_by(**{conv.LON: lon_inds}).data
-        v = gfsx[conv.VWND].indexed_by(**{conv.TIME: t_step})
-        v = v.indexed_by(**{conv.LAT: lat_inds})
-        v = v.indexed_by(**{conv.LON: lon_inds}).data
+        u = gfsx[conv.UWND].indexed(**{conv.TIME: t_step})
+        u = u.indexed(**{conv.LAT: lat_inds})
+        u = u.indexed(**{conv.LON: lon_inds}).values
+        v = gfsx[conv.VWND].indexed(**{conv.TIME: t_step})
+        v = v.indexed(**{conv.LAT: lat_inds})
+        v = v.indexed(**{conv.LON: lon_inds}).values
         # transform from spherical to map projection coordinates (rotation
         # and interpolation).
         nxv = len(lons)
@@ -383,7 +383,7 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
 
     cbar = fig.colorbar(cs, cax=grid.cbar_axes[0], orientation='horizontal',
             format=cb_label_fmt)
-    attr = gfsx[conv.ENS_SPREAD_WS].attributes
+    attr = gfsx[conv.ENS_SPREAD_WS].attrs
     cb_label = attr.get('long_name',
             'Average (normalized) wind speed delta (ens - gfs)')
     s = ["%s = %s" % (k, attr[k]) for k in attr if k != 'long_name']

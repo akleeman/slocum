@@ -22,6 +22,7 @@ logger.addHandler(console_handler)
 from sl import windbreaker
 from sl.lib import griblib, tinylib, rtefcst, enslib
 
+
 def handle_spot_ensemble(args):
     """
     Unpacks a spot ensemble forecast and plots the distribution of forecast
