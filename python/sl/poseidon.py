@@ -182,6 +182,9 @@ def longitude_slicer(lons, query):
     dist_west_of_domain[dist_west_of_domain < 0] = np.nan
     western_most = np.nanargmin(dist_west_of_domain)
 
+    if western_most > eastern_most:
+        raise ValueError("slice requires wrapping over the array boundary")
+
     sign = np.sign(eastern_most - western_most)
     # if the difference is not a multiple of the stride
     # we could end up chopping the last grid.  By adding
@@ -228,9 +231,9 @@ def subset_time(fcst, hours):
     # we are assuming that the first time is the reference time
     # we can check that by converting back to cf units and making
     # sure that the first cf time is 0.
-    ref_time = xray.decode_cf_datetime(0.,
-                                fcst['time'].encoding['units'],
-                                fcst['time'].encoding.get('calendar', None))
+    ref_time = xray.conventions.decode_cf_datetime(0.,
+                                  fcst['time'].encoding['units'],
+                                  fcst['time'].encoding.get('calendar', None))
     hours = np.array(hours)
     # make sure hours are all integers
     np.testing.assert_array_almost_equal(hours, hours.astype('int'))

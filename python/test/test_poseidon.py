@@ -8,15 +8,16 @@ import xray
 
 
 def test_forecast():
-    ds = xray.Dataset(decode_cf=True)
+    ds = xray.Dataset()
     ds['longitude'] = ('longitude', np.arange(-180., 180.))
     ds['latitude'] = ('latitude', np.arange(-90., 90.))
     u, v = np.meshgrid(np.arange(-90., 90.), np.arange(-180., 180.))
     u = np.array([u] * 65)
     v = np.array([v] * 65)
-    time = xray.XArray('time', np.linspace(0, 192, 65),
-                             {'units': 'hours since 2014-03-28'})
-    ds['time'] = xray.conventions.decode_cf_variable(time)
+    time = xray.Dataset()
+    time['time'] = ('time', np.linspace(0, 192, 65),
+                    {'units': 'hours since 2014-03-28'})
+    ds['time'] = xray.conventions.decode_cf_variable(time['time'])
     ds['uwnd'] = (['time', 'longitude', 'latitude'], u)
     ds['vwnd'] = (['time', 'longitude', 'latitude'], v)
     return ds
@@ -77,7 +78,8 @@ class PoseidonTest(unittest.TestCase):
         lons = np.linspace(0., 360., 721)
         query = {'domain': {'N': 10., 'S': -10.,
                             'E': 10., 'W': -10.},
-                 'grid_delta': (0.5, delta)}
+                 'grid_delta': (0.5, 0.5)}
+
         self.assertRaises(Exception,
                           lambda: poseidon.longitude_slicer(lons, query))
 
@@ -86,9 +88,10 @@ class PoseidonTest(unittest.TestCase):
         queries = [(np.array([0., 24, 48]))
                    ]
 
-        time = xray.XArray(('time',), [0, 6, 12, 18, 24, 36, 48, 72, 96],
-                           attributes={'units': 'hours since 2011-01-01'})
-        time = xray.conventions.decode_cf_variable(time)
+        time = xray.Dataset()
+        time['time'] = (('time', [0, 6, 12, 18, 24, 36, 48, 72, 96],
+                        {'units': 'hours since 2011-01-01'}))
+        time = xray.conventions.decode_cf_variable(time['time'])
 
         for hours in queries:
             query = {'hours': hours}

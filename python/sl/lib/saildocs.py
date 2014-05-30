@@ -393,13 +393,16 @@ def parse_grid(grid_str):
 
 
 def split_fields(request, k):
+    """
+    Saildoc fields can be separated by '|', '/' or '\u015a'
+    """
     fields = re.split(u'[\|\/\u015a]', unicode(request.strip()))
     return list(itertools.chain(fields, [None] * k))[:k]
 
 
 def parse_forecast_request(request):
     """
-
+    Parses a request for a gridded forecast.
     """
     warnings = []
     # takes the first 4 '|' separated fields, if fewer than
@@ -431,6 +434,9 @@ def parse_forecast_request(request):
 
 
 def parse_spot_request(request):
+    """
+    parses a request for a spot forecast
+    """
     warnings = []
     model_domain, time_str, variables = split_fields(request, 3)
     spot, location_str = model_domain.split(':', 1)
