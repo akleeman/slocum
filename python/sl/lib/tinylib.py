@@ -28,7 +28,8 @@ _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
 _ws_spread_scale = _beaufort_scale
 # precipitation scale in kg.m-2.s-1
 _precip_scale = np.array([1e-8, 1., 5.]) / 3600.
-_direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
+# _direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
+_direction_bins = np.linspace(-15 * np.pi/16., 15 * np.pi/16., 16)
 # this pressure scale was derived by taking all the MSL pressures
 # from a forecast run and computing the quantiles (then rounding to
 # more friendly numbers).  We might find that we can add precision
@@ -205,18 +206,21 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
     return np.array([x for x in iter_vals()], dtype=dtype).reshape(shape)
 
 
-def tiny_array(arr, bits=None, divs=None, mask=None):
+def tiny_array(arr, bits=None, divs=None, mask=None, wrap=False):
     """
-    A convenience wrapper around  tiny_masked and tiny_unmasked
-    which decides which method to use based on the mask argument
+    A convenience wrapper around  tiny_masked and tiny_unmasked which decides
+    which method to use based on the mask argument.  If wrap == True it is
+    assumed that the binning continues from the last back to the first bin
+    (i.e. the '0' bin sits between the last and first bounding value in divs as
+    is the case for angles).
     """
     if mask is None:
-        return tiny_unmasked(arr, bits=bits, divs=divs)
+        return tiny_unmasked(arr, bits=bits, divs=divs, wrap=wrap)
     else:
-        return tiny_masked(arr, mask=mask, bits=bits, divs=divs)
+        return tiny_masked(arr, mask=mask, bits=bits, divs=divs, wrap=wrap)
 
 
-def tiny_unmasked(arr, bits=None, divs=None):
+def tiny_unmasked(arr, bits=None, divs=None, wrap=False):
     """
     Bins the values in arr by using dividers (divs).  The result
     is a set of integers indicating which bin each value in arr belongs
@@ -231,6 +235,10 @@ def tiny_unmasked(arr, bits=None, divs=None):
         The number of bits that should be used to hold arr
     divs : np.ndarray
         The dividers (ie, edges) of the bins, should be length bins
+    wrap : boolean
+        If wrap == True it is assumed that the binning continues from the last
+        back to the first bin (i.e. the '0' bin sits between the last and first
+        bounding value in divs as is the case for angles).
 
     Returns
     -------
@@ -254,7 +262,10 @@ def tiny_unmasked(arr, bits=None, divs=None):
     # for each element of the array, count how many divs are less than the elem
     # note that a zero after shifting means that the value was less than all div
     # and a value of n means it was larger than the nth div.
-    bins = np.maximum(0, np.digitize(arr.reshape(-1), divs) - 1)
+    if not wrap:
+        bins = np.maximum(0, np.digitize(arr.reshape(-1), divs) - 1)
+    else:
+        bins = np.digitize(arr.reshape(-1), divs) % len(divs)
     tiny = pack_ints(bins, bits)
     tiny['divs'] = divs
     tiny['shape'] = arr.shape
@@ -262,7 +273,7 @@ def tiny_unmasked(arr, bits=None, divs=None):
     return tiny
 
 
-def tiny_masked(arr, mask=None, bits=None, divs=None):
+def tiny_masked(arr, mask=None, bits=None, divs=None, wrap=False):
     """
     Creates a tiny array with a mask.  Only the values
     that are not masked are packed.  The mask is not
@@ -278,6 +289,10 @@ def tiny_masked(arr, mask=None, bits=None, divs=None):
         A masked which is applied to arr, via arr[mask]
     bits : int
         The number of bit used to store arr.
+    wrap : boolean
+        If wrap == True it is assumed that the binning continues from the last
+        back to the first bin (i.e. the '0' bin sits between the last and first
+        bounding value in divs as is the case for angles).
 
     Returns
     -------
@@ -288,9 +303,9 @@ def tiny_masked(arr, mask=None, bits=None, divs=None):
         be used.
     """
     if mask is None:
-        return tiny_array(arr, bits, divs)
+        return tiny_array(arr, bits, divs, wrap=wrap)
     masked = arr[mask].flatten()
-    ta = tiny_unmasked(masked, bits=bits, divs=divs)
+    ta = tiny_unmasked(masked, bits=bits, divs=divs, wrap=wrap)
     ta['shape'] = arr.shape
     ta['masked'] = True
     return ta
@@ -315,23 +330,27 @@ def expand_bool(packed_array, shape, **kwdargs):
 
 
 def expand_array(packed_array, bits, shape, divs, dtype=None,
-                 masked=False, mask=None):
+                 masked=False, mask=None, wrap_val=None):
     """
     A convenience function which decides how to expand based on
     the masked flag.
     """
     if masked:
-        return expand_masked(mask, packed_array, bits, shape, divs, dtype)
+        return expand_masked(mask, packed_array, bits, shape, divs, dtype,
+                wrap_val=wrap_val)
     else:
-        return expand_unmasked(packed_array, bits, shape, divs, dtype)
+        return expand_unmasked(packed_array, bits, shape, divs, dtype,
+                wrap_val=wrap_val)
 
 
-def expand_unmasked(packed_array, bits, shape, divs, dtype=None):
+def expand_unmasked(packed_array, bits, shape, divs, dtype=None,
+        wrap_val=None):
     """
-    Expands a tiny array to the original data type, but with
-    a loss of information.  The original data, which has been
-    binned, is returned as the value at the middle of each bin.
-
+    Expands a tiny array to the original data type, but with a loss of
+    information.  The original data, which has been binned, is returned as
+    the value at the middle of each bin. If wrap != None it is assumed that
+    the binning wraps (e.g. for angles) and that wrap_val is the center
+    value between the last and first bounding value in divs.
 
     Typical usage:
 
@@ -341,11 +360,19 @@ def expand_unmasked(packed_array, bits, shape, divs, dtype=None):
     """
     dtype = dtype or divs.dtype
     ndivs = divs.size
-    lower_bins = unpack_ints(packed_array, bits, shape)
+    bins = unpack_ints(packed_array, bits, shape)
     if dtype == np.dtype('bool'):
-        return lower_bins.astype('bool')
-    upper_bins = np.minimum(lower_bins + 1, ndivs - 1)
-    averages = 0.5 * (divs[lower_bins] + divs[upper_bins])
+        return bins.astype('bool')
+    if wrap_val:
+        upper = bins
+        lower = (bins-1) % len(divs)
+        averages = np.where(bins > 0, 0.5 * (divs[lower] + divs[upper]),
+                wrap_val)
+    else:
+        lower_bins = bins
+        upper_bins = np.minimum(lower_bins + 1, ndivs - 1)
+        averages = 0.5 * (divs[lower_bins] + divs[upper_bins])
+
     return averages.astype(dtype).reshape(shape)
 
 
