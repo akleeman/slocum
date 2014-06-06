@@ -217,11 +217,13 @@ def set_grid(source, grib):
 
     gribapi.grib_set_long(grib, "shapeOfTheEarth", 6)
 
-    gribapi.grib_set_long(grib, "Ni", source.dimensions[conv.LON])
-    gribapi.grib_set_long(grib, "Nj", source.dimensions[conv.LAT])
+    dim_shape = dict(zip(source.dimensions, source.shape))
+    gribapi.grib_set_long(grib, "Ni", dim_shape[conv.LON])
+    gribapi.grib_set_long(grib, "Nj", dim_shape[conv.LAT])
 
     lon = source[conv.LON].values
     lat = source[conv.LAT].values
+    # TODO: Dateline but: this will break when crossing the dateline.
     assert np.unique(np.diff(lon)).size == 1
     assert np.unique(np.diff(lat)).size == 1
     assert lon.ndim == 1
@@ -243,10 +245,7 @@ def get_varible_name(source):
     Infers the variable name of source by assuming there is only one
     non-coordinate.
     """
-    variables = source.noncoordinates
-    if not len(variables) == 1:
-        raise ValueError("expected a single non-coordinate")
-    return variables.keys()[0]
+    return source.name
 
 
 def set_product(source, grib):
@@ -345,7 +344,7 @@ def save(source, target, append=False, sample_file=_sample_file):
     if not conv.TIME in source.variables:
         raise ValueError("Expected time coordinate")
     # sort the lats and lons
-    source = source.take(np.argsort(source[conv.LAT].values), 'latitude')
+    source = source.indexed(latitude=np.argsort(source[conv.LAT].values))
     lons = source[conv.LON].values
     if np.any(np.abs(np.diff(lons)) > 180.):
         # the latitudes must cross the dateline since we only allow 180
@@ -359,12 +358,17 @@ def save(source, target, append=False, sample_file=_sample_file):
             # so that will wait for later.
             raise ValueError("Longitudes span more than 180 degrees and the dateline?")
     source[conv.LON].values[:] = lons
-    source = source.take(np.argsort(lons), 'longitude')
-    # iterate over variables
-    for v in source.noncoordinates.keys():
-        single_var = source.select(v)
+    source = source.indexed(longitude=np.argsort(lons))
+    # iterate over variables, unless they are considered
+    # auxiliary variables (ie, variables used by slocum
+    # but not in grib files).
+    auxilary_variables = [conv.WIND_SPEED, conv.WIND_DIR]
+    for single_var in (v for k, v in source.noncoordinates.iteritems()
+                       if not k in auxilary_variables):
         # then iterate over time slices
-        for t, obj in single_var.iterator(conv.TIME):
+        iter_time = (single_var.indexed(**{conv.TIME: [i]})
+                     for i in range(single_var.coordinates[conv.TIME].size))
+        for obj in iter_time:
             # Save this slice to the grib file
             gribapi.grib_gribex_mode_off()
             if sample_file is not None and os.path.exists(sample_file):
