@@ -442,7 +442,6 @@ def to_beaufort(obj):
     """
     # first we make sure all the data is in the expected units
     check_beaufort(obj)
-    obj = copy.deepcopy(obj)
     uwnd = obj[conv.UWND].values
     vwnd = obj[conv.VWND].values
     # keep this ordered so the coordinates get written (and read) first
