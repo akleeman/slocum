@@ -126,7 +126,6 @@ class TinylibTest(unittest.TestCase):
                       tinylib._beaufort_scale[:-1])
         speeds = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
         speeds = speeds.reshape(shape)
-        # dirs = np.arange(-np.pi, np.pi, step=np.pi / 8) + np.pi / 16
         dirs = tinylib._direction_bins + np.pi / 16
         dirs = dirs[np.random.randint(mids.size, size=10 * 5 * 5)]
         dirs = dirs.reshape(shape)
