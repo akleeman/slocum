@@ -344,7 +344,7 @@ def expand_array(packed_array, bits, shape, divs, dtype=None,
 
 
 def expand_unmasked(packed_array, bits, shape, divs, dtype=None,
-        wrap_val=None):
+                    wrap_val=None):
     """
     Expands a tiny array to the original data type, but with a loss of
     information.  The original data, which has been binned, is returned as
@@ -367,7 +367,7 @@ def expand_unmasked(packed_array, bits, shape, divs, dtype=None,
         upper = bins
         lower = (bins-1) % len(divs)
         averages = np.where(bins > 0, 0.5 * (divs[lower] + divs[upper]),
-                wrap_val)
+                            wrap_val)
     else:
         lower_bins = bins
         upper_bins = np.minimum(lower_bins + 1, ndivs - 1)
@@ -376,12 +376,14 @@ def expand_unmasked(packed_array, bits, shape, divs, dtype=None,
     return averages.astype(dtype).reshape(shape)
 
 
-def expand_masked(mask, packed_array, bits, shape, divs, dtype=None):
+def expand_masked(mask, packed_array, bits, shape, divs, dtype=None,
+                  wrap_val=None):
     """
     Expands a masked tiny array by filling any masked values with nans
     """
     masked_shape = (np.sum(mask),)
-    masked = expand_array(packed_array, bits, masked_shape, divs, dtype)
+    masked = expand_array(packed_array, bits, masked_shape, divs, dtype,
+                          wrap_val)
     ret = np.empty(shape)
     ret.fill(np.nan)
     ret[mask] = masked
@@ -493,7 +495,8 @@ def to_beaufort(obj):
     directions = np.array([x.dir for x in wind]).reshape(uwnd.shape)
     directions.astype(_variables[conv.WIND_DIR]['dtype'])
     tiny_direction = tiny_array(directions,
-            bits=_variables[conv.WIND_DIR]['bits'], divs=_direction_bins)
+            bits=_variables[conv.WIND_DIR]['bits'], divs=_direction_bins,
+            wrap=True)
     encoded_variables[conv.WIND_DIR] = tiny_direction['packed_array']
 
     if conv.ENS_SPREAD_WS in obj.variables:
@@ -556,6 +559,16 @@ def beaufort_to_dict(payload):
                                      info['dtype'],
                                      info['least_significant_digit'])
             out[vname] = (vname, data, info.get('attributes', None))
+        elif vname == conv.WIND_DIR:
+            shape = [out[d][1].size for d in info['dims']]
+            data = expand_array(info['packed_array'],
+                                 bits=info['bits'],
+                                 shape=shape,
+                                 divs=info['divs'],
+                                 dtype=info['dtype'],
+                                 wrap_val=np.pi)
+            out[vname] = (info['dims'], data,
+                          info.get('attributes', None))
         else:
             shape = [out[d][1].size for d in info['dims']]
             data = expand_array(info['packed_array'],
