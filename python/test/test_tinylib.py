@@ -142,7 +142,7 @@ class TinylibTest(unittest.TestCase):
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
         np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
         np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
                                    atol=1e-4, rtol=1e-4)
 
