@@ -28,7 +28,7 @@ _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
 _ws_spread_scale = _beaufort_scale
 # precipitation scale in kg.m-2.s-1
 _precip_scale = np.array([1e-8, 1., 5.]) / 3600.
-# _direction_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
+# 'S' sits between _direction_bins[-1] and _direction_bins[0]
 _direction_bins = np.linspace(-15 * np.pi/16., 15 * np.pi/16., 16)
 # this pressure scale was derived by taking all the MSL pressures
 # from a forecast run and computing the quantiles (then rounding to
