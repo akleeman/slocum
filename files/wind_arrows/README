@@ -1,0 +1,7 @@
+Wind arrow files can be used as waypoint icons in OpenCPN to indicate true
+wind direction at forecast waypoints. Module rtefcst will encode the names for
+these icons in the gpx output file it produces.
+
+To use the icons, copy the entire folder into a directory 'UserIcons' that
+must be in the same directory as you opencpn.conf file ($HOME/.opencpn
+under Debian/Ubuntu).

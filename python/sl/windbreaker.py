@@ -1,6 +1,8 @@
 import os
+import sys
 import zlib
 import numpy as np
+import base64
 import logging
 import datetime
 
@@ -9,8 +11,10 @@ from cStringIO import StringIO
 from xray import open_dataset, backends
 
 from sl import poseidon
-from sl.lib import conventions as conv
+from sl.lib import conventions as conv, units
 from sl.lib import objects, tinylib, saildocs, emaillib
+from sl.lib.objects import NautAngle
+import json
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -36,11 +40,6 @@ or send an email to gribinfo@saildocs.com.
 """ % {'send_usage': saildocs._send_usage}
 
 
-def regular_grid(xmin, xmax, delta):
-    """A convenient function around linspace"""
-    return np.linspace(xmin, xmax, (xmax - xmin) / delta + 1)
-
-
 def arg_closest(x, reference):
     """
     Find the closest element index in reference for each
@@ -53,57 +52,16 @@ def arg_closest(x, reference):
 
 def get_forecast(query, path=None):
     warnings = []
-    ll = objects.LatLon(query['domain']['S'], query['domain']['W'])
-    ur = objects.LatLon(query['domain']['N'], query['domain']['E'])
-    ur, ll = poseidon.ensure_corners(ur, ll, expand=False)
-    variables = {}
-    if len(set(['wind']).intersection(query['vars'])):
-        variables['u-component_of_wind_height_above_ground'] = conv.UWND
-        variables['v-component_of_wind_height_above_ground'] = conv.VWND
-    if len(set(['rain', 'precip']).intersection(query['vars'])):
-        variables['Precipitation_rate_surface_Mixed_intervals_Average'] = conv.PRECIP
-    if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
-        variables['Pressure_reduced_to_MSL_msl'] = conv.PRESSURE
-
-    # Here we do some crude caching which
-    # allows the user to specify a path to a local
-    # file that holds the data instead of going through
+    # Here we do some crude caching which allows the user to specify a path
+    # to a local file that holds the data instead of going through
     # poseidon.
-    if path is not None and os.path.exists(path):
+    if path and os.path.exists(path):
         fcst = open_dataset(path)
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
-        fcst = poseidon.gfs(ll, ur, variables=variables)
+        fcst = poseidon.forecast(query)
         if path is not None:
             fcst.dump(path)
-
-    # extract all the closest latitudes
-    lats = regular_grid(query['domain']['S'], query['domain']['N'],
-                        delta=query['grid_delta'][0])
-    lat_inds = arg_closest(lats, fcst['latitude'].data.values)
-    if np.any((fcst['latitude'].data[lat_inds] - lats) > 0.05):
-        raise saildocs.BadQuery("Requested latitudes not found in the forecast.")
-    fcst = fcst.indexed_by(latitude=lat_inds)
-    # extract all the closest longitudes
-    lon_range = np.mod(query['domain']['E'] - query['domain']['W'], 360)
-    lon_count = lon_range / query['grid_delta'][1] + 1
-    lons = query['domain']['W'] + np.arange(lon_count) * query['grid_delta'][1]
-    lons = np.mod(lons + 180., 360.) - 180.
-    fcst_lons = np.mod(fcst['longitude'].data.values + 180., 360.) - 180.
-    lon_inds = arg_closest(lons, fcst_lons)
-    if np.any((fcst_lons[lon_inds] - lons) > 0.05):
-        raise saildocs.BadQuery("Requested longitudes not found in the forecast.")
-    fcst = fcst.indexed_by(longitude=lon_inds)
-    # next step is parsing out the times
-    # we assume that the forecast units are in hours
-    dates = fcst['time'].data.to_pydatetime()
-    ref_time = dates[0]
-    query_times = np.array([ref_time + datetime.timedelta(hours=x)
-                            for x in query['hours']])
-    time_inds = arg_closest(query_times, dates)
-    fcst = fcst.indexed_by(time=time_inds)
-    if np.any((dates[time_inds] - query_times) >= datetime.timedelta(hours=1)):
-        raise saildocs.BadQuery("Requested times not found in the forecast.")
     return fcst
 
 
@@ -127,18 +85,16 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     logger.debug(query_string)
     query = saildocs.parse_saildocs_query(query_string)
     # log the query so debugging others request failures will be easier.
-    logger.debug("model: %s" % query['model'])
-    domain_str = ','.join(':'.join([k, str(v)])
-                          for k, v in query['domain'].iteritems())
-    logger.debug("domain: %s" % domain_str)
-    logger.debug("grid_delta: %s" % ','.join(map(str, query['grid_delta'])))
-    logger.debug("hours: %s" % ','.join(map(str, query['hours'])))
-    logger.debug("warnings: %s" % '\n'.join(query['warnings']))
-    logger.debug("variables: %s" % ','.join(query['vars']))
+    logger.debug(json.dumps(query))
     # Acquires a forecast corresponding to a query
     fcst = get_forecast(query, path=forecast_path)
     logger.debug('Obtained the forecast')
-    tiny_fcst = tinylib.to_beaufort(fcst)
+    if conv.ENSEMBLE in fcst.dimensions:
+        tinys = [tinylib.to_beaufort(fcst.indexed(**{conv.ENSEMBLE: i}))
+                 for i in range(fcst.dimensions[conv.ENSEMBLE])]
+        tiny_fcst = '\t'.join([base64.b64encode(x) for x in tinys])
+    else:
+        tiny_fcst = tinylib.to_beaufort(fcst)
     compressed_forecast = zlib.compress(tiny_fcst, 9)
     logger.debug("Compressed Size: %d" % len(compressed_forecast))
     # Make sure the forecast file isn't too large for sailmail
@@ -150,8 +106,9 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
         logger.debug("dumping file to output")
         output.write(forecast_attachment.getvalue())
     # creates the new mime email
-    file_fmt = 'windbreaker_%Y-%m-%d_%H%m.fcst'
+    file_fmt = '%Y-%m-%d_%H%m.fcst'
     filename = datetime.datetime.today().strftime(file_fmt)
+    filename = '_'.join([query['type'], filename])
     weather_email = emaillib.create_email(reply_to, _windbreaker_email,
                               _email_body,
                               subject=query_string,
@@ -161,12 +118,13 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     logger.debug('Email sent.')
 
 
-def windbreaker(mime_text, ncdf_weather=None, output=None):
+def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
     """
     Takes a mime_text email that contains one or several saildoc-like
     requests and replies to the sender with emails containing the
     desired compressed forecasts.
     """
+    exceptions = None if fail_hard else Exception
     logger.debug('Wind Breaker')
     logger.debug(mime_text)
     email_body = emaillib.get_body(mime_text)
@@ -177,7 +135,8 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
                             "Your email should contain only one body")
     # Turns a query string into a dict of params
     logger.debug("About to parse saildocs")
-    queries = list(saildocs.iterate_queries(email_body[0]))
+    # The set makes sure there aren't duplicate queries.
+    queries = set(list(saildocs.iterate_queries(email_body[0])))
     # if there are no queries let the sender know
     if len(queries) == 0:
         emaillib.send_error(reply_to,
@@ -192,8 +151,73 @@ def windbreaker(mime_text, ncdf_weather=None, output=None):
             # in an email even if some of them failed, but a hard fail on
             # the first error will make sure we never accidentally send
             # tons of error emails to the user.
+            logger.error(e)
+            emaillib.send_error('akleeman@gmail.com',
+                                ('Bad query: %s.' % query_string), e,
+                                reply_to)
             emaillib.send_error(reply_to,
-                                ("Error processing %s.  If there were other " +
+                                ("Error processing '%s'.  If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
-            raise
+            if fail_hard:
+                raise
+        except exceptions, e:
+            logger.error(e)
+            emaillib.send_error('akleeman@gmail.com',
+                                ('Query %s just failed.' % query_string), e)
+            emaillib.send_error(reply_to,
+                                ("Error processing %s.  Alex just got an urgent"
+                                 "e-mail, he's looking into the problem. "
+                                 "If there were other " +
+                                 "queries in the same email they won't be " +
+                                 "processed.\n") % query_string, e)
+
+
+def spot_message(spot, out=sys.stdout):
+    """
+    Dumps the readble spot message held in forecast 'spot'
+    to the file-like output.
+    """
+    assert conv.TIME in spot
+    assert conv.LAT in spot
+    assert conv.LON in spot
+
+    variables = [conv.UWND, conv.VWND]
+    variables = [v for v in variables if v in spot]
+
+    scale_to_knots = units._speed[spot['uwnd'][2][conv.UNITS]]
+    uwnd = spot[conv.UWND][1].reshape(-1) * scale_to_knots
+    vwnd = spot[conv.VWND][1].reshape(-1) * scale_to_knots
+    winds = [objects.Wind(u, v) for u, v in zip(uwnd, vwnd)]
+
+    time_units = spot[conv.TIME][2][conv.UNITS]
+    assert time_units.startswith('hours')
+    ref_time = time_units.split('since')[1].strip()
+    ref_time = datetime.datetime.strptime(ref_time, '%Y-%m-%d %H:%M:%S')
+    dates = [ref_time + datetime.timedelta(hours=x) for x in spot[conv.TIME][1]]
+    date_strings = [x.strftime('%Y-%m-%d %H:%M UTC') for x in dates]
+
+    fmt = '%20s\t%7s%5s\t%s'
+    beaufort_in_knots = tinylib._beaufort_scale * scale_to_knots
+
+    speeds = np.array([w.speed for w in winds])
+    forces = np.digitize(speeds, beaufort_in_knots)
+
+    pressures = np.digitize(spot['pressure'][1].reshape(-1),
+                            tinylib._pressure_scale)
+
+    def iter_lines():
+        yield '%20s\t%9s\t%9s' % ('Date', ' Wind (Knots)', 'MSL Press (Pa)')
+        for d, w, f, p in zip(date_strings, winds, forces, pressures):
+            speeds = '%d-%d' % (beaufort_in_knots[f - 1],
+                                beaufort_in_knots[f])
+            press = '%d-%d' % (tinylib._pressure_scale[p - 1],
+                               tinylib._pressure_scale[p])
+            yield fmt % (d, speeds, w.readable, press)
+
+    ref_time = time_units.split(' since ')[1]
+
+    out.write("The forecast used for this SPOT forecast was run on %s UTC\n" %
+              ref_time)
+    out.write('\n'.join(iter_lines()))
+    return out
