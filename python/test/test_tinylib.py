@@ -30,12 +30,16 @@ class TinylibTest(unittest.TestCase):
     def test_consistent(self):
         np.random.seed(seed=1982)
         dirs = np.random.uniform(-np.pi, np.pi, size=(3960,)).astype('float32')
-        dir_bins = np.arange(-np.pi, np.pi, step=np.pi / 8)
+        dir_bins = tinylib._direction_bins
 
-        tiny = tinylib.tiny_array(dirs, divs=dir_bins)
+        tiny = tinylib.tiny_array(dirs, divs=dir_bins, wrap=True)
+        tiny['wrap_val'] = np.pi
         recovered = tinylib.expand_array(**tiny)
-        self.assertLessEqual(np.max(np.abs(recovered - dirs)),
-                             np.pi / 8)
+        # cater for wrap-around case (dir < 0 mapped onto +np.pi)
+        diffs = np.where((dirs < 0) & (recovered > 0), recovered + dirs,
+                recovered - dirs)
+        self.assertLessEqual(np.max(np.abs(diffs)),
+                             np.pi / 16)
 
         original_array = np.random.normal(size=(30, 3))
         tiny = tinylib.tiny_array(original_array)
@@ -122,7 +126,7 @@ class TinylibTest(unittest.TestCase):
                       tinylib._beaufort_scale[:-1])
         speeds = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
         speeds = speeds.reshape(shape)
-        dirs = np.arange(-np.pi, np.pi, step=np.pi / 8) + np.pi / 16
+        dirs = tinylib._direction_bins + np.pi / 16
         dirs = dirs[np.random.randint(mids.size, size=10 * 5 * 5)]
         dirs = dirs.reshape(shape)
         uwnd = - speeds * np.sin(dirs)
@@ -138,9 +142,9 @@ class TinylibTest(unittest.TestCase):
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
         np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
         np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
 
         # now add precip and test everything
         mids = 0.5 * (tinylib._precip_scale[1:] + tinylib._precip_scale[:-1])
@@ -152,11 +156,11 @@ class TinylibTest(unittest.TestCase):
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
         np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
         np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
         np.testing.assert_allclose(actual['precip'].values, ds['precip'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
 
         # add pressure and test everything
         mids = 0.5 * (tinylib._pressure_scale[1:] +
@@ -168,13 +172,13 @@ class TinylibTest(unittest.TestCase):
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
         np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
         np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
         np.testing.assert_allclose(actual['precip'].values, ds['precip'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
         np.testing.assert_allclose(actual['pressure'].values, ds['pressure'].values,
-                                   rtol=1e-4)
+                                   atol=1e-4, rtol=1e-4)
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
