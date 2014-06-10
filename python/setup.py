@@ -1,7 +1,44 @@
+"""Slocum: Tools for getting better forecasts to sailors.
+
+A set of tools for serving ultra-compressed weather forecasts.  Includes
+ an email-based forecats request service, compression utilities, and
+ visualization/decompression tools.
+"""
+
+DOCLINES = __doc__.split("\n")
+
+import os
+import sys
+import itertools
 # multiprocessing isn't directly used, but is require for tests
 # https://groups.google.com/forum/#!msg/nose-users/fnJ-kAUbYHQ/_UsLN786ygcJ
 import multiprocessing
-from setuptools import setup
+
+try:
+    from setuptools import setup
+except ImportError:
+    try:
+        from setuptools.core import setup
+    except ImportError:
+        from distutils.core import setup
+
+if sys.version_info[:2] < (2, 6):
+    raise RuntimeError("Python version 2.6, 2.7 required.")
+
+MAJOR = 0
+MINOR = 0
+MICRO = 1
+ISRELEASED = False
+VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
+
+# https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
+requires = {'grib': ['gribapi'],
+            'gridded': ['xray >= 0.1.0',
+                        'netCDF4 >= 1.0.6',
+                        'pyproj >= 1.9.3',
+                        'pandas >= 0.13.1',
+                        'matplotlib >= 1.2.0']}
+requires['full'] = list(set(itertools.chain(*requires.values())))
 
 setup(name='slocum',
       version='0.1',
@@ -13,14 +50,10 @@ setup(name='slocum',
       packages=['sl'],
       install_requires=[
           'BeautifulSoup>=3.2.0',
-          'netCDF4 >= 1.0.6',
           'numpy >= 1.8',
-          'pandas >= 0.13.1'
-          'pyproj>=1.9.3',
-          'xray>=0.0.0',
+          'pandas >= 0.13.1',
       ],
-      dependency_links=['https://github.com/akleeman/xray/zipball/master#egg=xray-0.0.0'],
-      extra_requires={'grib': 'gribapi'},
+      extra_require=requires,
       tests_require=['nose >= 1.0'],
       test_suite='nose.collector',
       zip_safe=False)

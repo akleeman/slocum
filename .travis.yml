@@ -1,0 +1,33 @@
+# Based on https://github.com/xray/master/.travis.yml
+language: python
+python:
+  - "2.7"
+notifications:
+  email: false
+# Setup anaconda
+before_install:
+  - if [ ${TRAVIS_PYTHON_VERSION:0:1} == "2" ]; then wget http://repo.continuum.io/miniconda/Miniconda-2.2.2-Linux-x86_64.sh -O miniconda.sh; else wget http://repo.continuum.io/miniconda/Miniconda3-2.2.2-Linux-x86_64.sh -O miniconda.sh; fi
+  - chmod +x miniconda.sh
+  - ./miniconda.sh -b
+  - export PATH=/home/travis/anaconda/bin:$PATH
+  # Update conda itself
+  - conda update --yes conda
+  # The next couple lines fix a crash with multiprocessing on Travis and are not specific to using Miniconda
+  - sudo rm -rf /dev/shm
+  - sudo ln -s /run/shm /dev/shm
+  
+matrix:
+  exclude:
+    - python: "2.7"
+      env: UPDATE_PYENV=''
+
+# Install packages
+install:
+  - conda create --yes -n test_env python=2.7 pip nose mock numpy pandas scipy netCDF4
+  - source activate test_env
+  - pip install xray pyproj
+  - cd python
+  - python setup.py install
+# Run test
+script:
+  - nosetests
