@@ -2,7 +2,6 @@ import os
 import copy
 import zlib
 import numpy as np
-import netCDF4
 import logging
 import datetime
 
@@ -404,6 +403,8 @@ def expand_small_array(packed_array, dtype, least_significant_digit):
 
 
 def small_time(time_var):
+    # try to keep slocum from requiring netCDF4
+    import netCDF4
     time_var = xray.conventions.encode_cf_variable(time_var)
     assert time_var.attrs[conv.UNITS].lower().startswith('hour')
     origin = netCDF4.num2date([0],

@@ -17,7 +17,7 @@ def test_forecast():
     time = xray.Dataset()
     time['time'] = ('time', np.linspace(0, 192, 65),
                     {'units': 'hours since 2014-03-28'})
-    ds['time'] = xray.conventions.decode_cf_variable(time['time'])
+    ds['time'] = xray.conventions.decode_cf_variable(time['time'].variable)
     ds['uwnd'] = (['time', 'longitude', 'latitude'], u)
     ds['vwnd'] = (['time', 'longitude', 'latitude'], v)
     return ds
@@ -91,7 +91,7 @@ class PoseidonTest(unittest.TestCase):
         time = xray.Dataset()
         time['time'] = (('time', [0, 6, 12, 18, 24, 36, 48, 72, 96],
                         {'units': 'hours since 2011-01-01'}))
-        time = xray.conventions.decode_cf_variable(time['time'])
+        time = xray.conventions.decode_cf_variable(time['time'].variable)
 
         for hours in queries:
             query = {'hours': hours}
