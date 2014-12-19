@@ -431,16 +431,16 @@ def expand_small_time(packed_array, dtype, least_significant_digit):
 
 def check_beaufort(obj):
 
-    if conv.UWND in obj.variables:
+    if conv.UWND in obj:
         units.convert_units(obj[conv.UWND], _units[conv.WIND_SPEED])
         # we need both UWND and VWND to do anything with wind
-        assert conv.VWND in obj.variables
+        assert conv.VWND in obj
         units.convert_units(obj[conv.VWND], _units[conv.WIND_SPEED])
         # double check
         assert obj[conv.UWND].attrs[conv.UNITS] == _units[conv.WIND_SPEED]
         assert obj[conv.VWND].attrs[conv.UNITS] == _units[conv.WIND_SPEED]
 
-    if conv.ENS_SPREAD_WS in obj.variables:
+    if conv.ENS_SPREAD_WS in obj:
         units.convert_units(obj[conv.ENS_SPREAD_WS],
                 _units[conv.ENS_SPREAD_WS])
         # double check
@@ -456,7 +456,7 @@ def check_beaufort(obj):
     obj[conv.LON].values[:] = np.mod(obj[conv.LON].values + 180., 360) - 180.
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
-    if conv.PRECIP in obj.variables:
+    if conv.PRECIP in obj:
         units.convert_units(obj[conv.PRECIP], _units[conv.PRECIP])
 
 
@@ -499,18 +499,18 @@ def to_beaufort(obj):
             wrap=True)
     encoded_variables[conv.WIND_DIR] = tiny_direction['packed_array']
 
-    if conv.ENS_SPREAD_WS in obj.variables:
+    if conv.ENS_SPREAD_WS in obj:
         tiny_ws_spread = tiny_array(obj[conv.ENS_SPREAD_WS].values,
                 bits=_variables[conv.ENS_SPREAD_WS]['bits'],
                 divs=_ws_spread_scale)
         encoded_variables[conv.ENS_SPREAD_WS] = tiny_ws_spread['packed_array']
 
-    if conv.PRECIP in obj.variables:
+    if conv.PRECIP in obj:
         tiny_precip = tiny_array(obj[conv.PRECIP].values,
                 bits=_variables[conv.PRECIP]['bits'], divs=_precip_scale)
         encoded_variables[conv.PRECIP] = tiny_precip['packed_array']
 
-    if conv.PRESSURE in obj.variables:
+    if conv.PRESSURE in obj:
         tiny_pres = tiny_array(obj[conv.PRESSURE].values,
                 bits=_variables[conv.PRESSURE]['bits'], divs=_pressure_scale)
         encoded_variables[conv.PRESSURE] = tiny_pres['packed_array']

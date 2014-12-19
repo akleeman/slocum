@@ -13,6 +13,7 @@ from sl.lib.objects import NautAngle
 _fcst_vars = [(conv.WIND_SPEED, 'knot'),
              (conv.PRESSURE, 'hPa')]
 
+
 def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path=None):
     """
     Plots the spread of values for forecast variable f_var in an ensemble
@@ -125,8 +126,7 @@ def _plot_bar(f_var, data, plot_units, f_times, title):
 
 
 def _plot_box(f_var, data, plot_units, f_times, title):
-
-    fig, ax = plt.subplots()
+    _, ax = plt.subplots()
     ax.boxplot(np.array(data))
     x_labels = [ft.item().strftime('%d/%HZ') for ft in f_times]
     ax.set_xticklabels(x_labels, rotation='vertical')

@@ -160,6 +160,7 @@ def setup_parser_route_forecast(p):
                    help=('if specified, time labels will be ommitted from '
                          'forecast waypoint names'))
 
+
 def setup_parser_spot_ensemble(p):
 
     variable_choices = [fv[0] for fv in enslib._fcst_vars]
