@@ -33,7 +33,7 @@ VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
 requires = {'grib': ['gribapi'],
-            'gridded': ['xray >= 0.3.0',
+            'gridded': ['xray == 0.3.1',
                         'pyproj >= 1.9.3',
                         'pandas >= 0.13.1',
                         'matplotlib >= 1.2.0']}
