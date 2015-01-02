@@ -8,7 +8,7 @@ import tempfile
 import datetime as dt
 
 # Configure the logger
-fmt = "%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s"
+fmt = "%(asctime)s [%(filename)-12.12s] [%(levelname)-5.5s]  %(message)s"
 logging.basicConfig(filename='/tmp/slocum.log',
                     level=logging.DEBUG,
                     format=fmt)

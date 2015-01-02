@@ -15,9 +15,6 @@ from sl.lib import conventions as conv, units
 from sl.lib import objects, tinylib, saildocs, emaillib
 from sl.lib.objects import NautAngle
 
-logger = logging.getLogger(os.path.basename(__file__))
-logger.setLevel(logging.DEBUG)
-
 _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
 
@@ -155,7 +152,7 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
             # in an email even if some of them failed, but a hard fail on
             # the first error will make sure we never accidentally send
             # tons of error emails to the user.
-            logger.error(e)
+            logging.error(e)
             emaillib.send_error('akleeman@gmail.com',
                                 ('Bad query: %s.' % query_string), e,
                                 reply_to)
@@ -166,7 +163,7 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
             if fail_hard:
                 raise
         except exceptions, e:
-            logger.error(e)
+            logging.error(e)
             emaillib.send_error('akleeman@gmail.com',
                                 ('Query %s just failed.' % query_string), e)
             emaillib.send_error(reply_to,
