@@ -63,9 +63,9 @@ def _convert(v, possible_units, cur_units, new_units, validate=None):
     assert v.values.dtype == np.float32
     data = v.values
     mult = (possible_units[cur_units] / possible_units[new_units])
-    v.values[:] = v.values[:] * mult
+    v.values[...] = v.values[...] * mult
     if validate is not None:
-        v.values[:] = validate(v.values)
+        v.values[...] = validate(v.values)
     v.attrs[conv.UNITS] = new_units
     return (v.dims, data, v.attrs)
 

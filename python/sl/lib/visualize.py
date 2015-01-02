@@ -1,7 +1,6 @@
 import xray
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
 
 from sl.lib import tinylib, units
@@ -10,14 +9,10 @@ from sl.lib import conventions as conv
 
 def spot_plot(fcsts):
 
-    fig, ax = plt.subplots(1, 1)
-    wind_dir_spread_plot(fcsts['wind_dir'])
-    plt.show()
-
-    possible_variables = {'wind_speed': wind_spread_plot,
-                        'pressure': pressure_spread_plot,}
+    plotters = {'wind_speed': wind_spread_plot,
+                'pressure': pressure_spread_plot,}
 #                           'wind_dir': wind_dir_spread_plot}
-    variables = set(possible_variables.keys()).intersection(fcsts.variables.keys())
+    variables = set(plotters.keys()).intersection(fcsts.variables.keys())
 
     fig, axes = plt.subplots(len(variables), 1, sharex=True,
                              figsize=(len(variables) * 5, 8))
@@ -25,7 +20,7 @@ def spot_plot(fcsts):
         axes = [axes]
 
     for v, ax in zip(variables, axes):
-        possible_variables[v](fcsts[v], ax=ax)
+        plotters[v](fcsts[v], ax=ax)
 
     times = fcsts[conv.TIME].values
     times = times.astype('M8[m]')
@@ -101,7 +96,6 @@ def spread_plot(variable, bin_divs, ax=None):
     if ax is None:
         ax = plt.gca()
 
-    sns.set_style('darkgrid')
     assert variable.dims == (conv.ENSEMBLE, conv.TIME)
     # the number of ensembles
     n = variable.shape[variable.dims.index(conv.ENSEMBLE)]

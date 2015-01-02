@@ -346,7 +346,6 @@ def opendap_forecast(model):
             logger.debug(latest_opendap)
             return xray.open_dataset(latest_opendap)
         except urllib2.HTTPError, e:
-            import ipdb; ipdb.set_trace()
             logger.warn("Attempt to fetch %s on %s failed."
                         % (model, server))
             logger.warn(str(e))
