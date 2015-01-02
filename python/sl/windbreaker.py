@@ -172,6 +172,8 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
                                  "If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
+            if fail_hard:
+                raise
 
 
 def spot_message(spot, out=sys.stdout):
