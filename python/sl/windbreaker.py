@@ -63,12 +63,10 @@ def get_forecast(query, path=None):
     return fcst
 
 
-def query_to_beaufort(query_string, forecast_path=None):
+def query_to_beaufort(query, forecast_path=None):
     """
-    Takes a query string and returns the corresponding tiny forecast.
+    Takes a query and returns the corresponding tiny forecast.
     """
-    logging.debug(query_string)
-    query = saildocs.parse_saildocs_query(query_string)
     # log the query so debugging others request failures will be easier.
     logging.debug(json.dumps(query))
     # Acquires a forecast corresponding to a query
@@ -96,7 +94,9 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     output : file-like
         A file like object to which the compressed forecast is written
     """
-    compressed_forecast = query_to_beaufort(query_string, forecast_path)
+    logging.debug(query_string)
+    query = saildocs.parse_saildocs_query(query_string)
+    compressed_forecast = query_to_beaufort(query, forecast_path)
     logging.debug("Compressed Size: %d" % len(compressed_forecast))
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
