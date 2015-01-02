@@ -24,14 +24,13 @@ from sl.lib import units
 from sl.lib.objects import NautAngle
 
 logger = logging.getLogger(os.path.basename(__file__))
-logger.setLevel(logging.DEBUG)
 
-_servers = ['http://unidata2-new.ssec.wisc.edu',
-            'http://thredds.ucar.edu']
+_servers = ['http://thredds.ucar.edu',
+            'http://unidata2-new.ssec.wisc.edu',]
 
-_models = {'gefs': 'NCEP/GEFS/Global_1p0deg_Ensemble/member',
-            'nww3': '/NCEP/WW3/Global/files/',
-            'gfs': '/NCEP/GFS/Global_0p5deg/member',
+_models = {'gefs': 'NCEP/GEFS/Global_1p0deg_Ensemble/members',
+            'nww3': 'NCEP/WW3/Global/files/',
+            'gfs': 'NCEP/GFS/Global_0p5deg/member',
             }
 
 _files = {'gfs': 'NCEP/GFS/Global_0p5deg/files/GFS_Global_0p5deg_%Y%m%d_%H00.grib2',
@@ -39,8 +38,7 @@ _files = {'gfs': 'NCEP/GFS/Global_0p5deg/files/GFS_Global_0p5deg_%Y%m%d_%H00.gri
 
 
 def latest_url(model, server):
-    return os.path.join(server, 'thredds/catalog/',
-                        _models[model], 'latest.html')
+    return '/'.join([server, 'thredds/catalog/grib', _models[model], 'latest.html'])
 
 
 def file_format(model, server):
@@ -226,8 +224,6 @@ def subset_time(fcst, hours):
     an openDAP server this will download all the data.  Instead
     consider using time_slicer first.
     """
-    # next step is parsing out the times
-    ref_time = np.datetime64(fcst[conv.TIME].values[0])
     # we are assuming that the first time is the reference time
     # we can check that by converting back to cf units and making
     # sure that the first cf time is 0.
@@ -238,7 +234,7 @@ def subset_time(fcst, hours):
     # make sure hours are all integers
     np.testing.assert_array_almost_equal(hours, hours.astype('int'))
     times = np.array([ref_time + np.timedelta64(int(x), 'h') for x in hours])
-    return fcst.labeled(time=times)
+    return fcst.sel(time=times)
 
 
 def subset(remote_dataset, query, additional_slicers=None):
@@ -258,28 +254,37 @@ def subset(remote_dataset, query, additional_slicers=None):
     # using slicers which minimizes downloading from openDAP servers,
     # the second pulls out the actual requested domain once the data
     # has been loaded locally.
-    local_dataset = remote_dataset.indexed(**slicers)
+    local_dataset = remote_dataset.isel(**slicers)
     local_dataset = subset_time(local_dataset, query['hours'])
     return local_dataset
 
 
-def forecast(query):
+def forecast(query, fcst=None):
     forecast_fetchers = {'gridded': gridded_forecast,
                          'spot': spot_forecast,}
-    return forecast_fetchers[query['type']](query)
+    return forecast_fetchers[query['type']](query, fcst)
 
 
-def spot_forecast(query):
-    modified_query = query.copy()
+def forecast_containing_point(spot_query, fcst=None):
+    modified_query = spot_query.copy()
     modified_query['vars'] = ['wind', 'press']
-    lat = query['location']['latitude']
-    lon = query['location']['longitude']
+    lat = spot_query['location']['latitude']
+    lon = spot_query['location']['longitude']
     modified_query['domain'] = {'N': lat + 0.5,
                                 'S': lat - 0.5,
                                 'E': np.mod(lon + 180.5, 360.) - 180.,
                                 'W': np.mod(lon + 179.5, 360.) - 180.}
+    return gridded_forecast(modified_query, fcst)
 
-    fcst = gridded_forecast(modified_query)
+
+def gridded_to_point_forecast(fcst, lon, lat):
+    """
+    Takes a forecast and interpolates it to a single point.
+    """
+    assert np.any(lon >= fcst[conv.LON].values)
+    assert np.any(lon <= fcst[conv.LON].values)
+    assert np.any(lat >= fcst[conv.LAT].values)
+    assert np.any(lat <= fcst[conv.LAT].values)
 
     def bilinear_weights(grid, x):
         # take the two closest points
@@ -287,7 +292,12 @@ def spot_forecast(query):
         weights = np.zeros(grid.size)
         dists = np.abs(grid - x)
         inds = np.argsort(dists)[:2]
-        weights[inds] = 1. - dists[inds] / np.sum(dists[inds])
+        # if the grid is exactly where we want to interpolate
+        # set the matching index to have a weight of 1.
+        if np.sum(dists[inds]) == 0. and inds.size == 1:
+            weights[inds] = 1.
+        else:
+            weights[inds] = 1. - dists[inds] / np.sum(dists[inds])
         return weights
 
     lat_weights = bilinear_weights(fcst[conv.LAT].values, lat)
@@ -295,19 +305,30 @@ def spot_forecast(query):
     weights = reduce(np.multiply, np.meshgrid(lat_weights, lon_weights))
     weights /= np.sum(weights)
 
-    spot = fcst.indexed(**{conv.LAT: [0]})
-    spot = spot.indexed(**{conv.LON: [0]})
-    spatial_variables = [k for k, v in spot.variables.iteritems()
-                            if (conv.LAT in v.dimensions and
-                                conv.LON in v.dimensions)]
+    spot = fcst.isel(**{conv.LAT: [0]})
+    spot = spot.isel(**{conv.LON: [0]})
+    spatial_variables = [k for k, v in spot.iteritems()
+                            if (conv.LAT in v.dims and
+                                conv.LON in v.dims)]
     for k in spatial_variables:
-        assert conv.LAT in fcst[k].dimensions[-2:]
-        assert conv.LON in fcst[k].dimensions[-2:]
-        interpolated = np.sum(np.sum(fcst[k].values * weights.T, axis=-1), axis=-1)
+        # we assumed that latitude and longitude are the last two
+        # dimensions in the forecast.
+        assert conv.LAT in fcst[k].dims[-2:]
+        assert conv.LON in fcst[k].dims[-2:]
+        interpolated = np.sum(np.sum(fcst[k].values * weights.T, axis=-1),
+                              axis=-1)
         spot[k].values[:] = interpolated.reshape(spot[k].values.shape)
     spot[conv.LAT] = (conv.LAT, [lat], spot[conv.LAT].attrs)
     spot[conv.LON] = (conv.LON, [lon], spot[conv.LON].attrs)
     return spot
+
+
+def spot_forecast(query, fcst=None):
+    lat = query['location']['latitude']
+    lon = query['location']['longitude']
+    if fcst is None:
+        fcst = forecast_containing_point(query)
+    return gridded_to_point_forecast(fcst, lon, lat)
 
 
 def opendap_forecast(model):
@@ -324,7 +345,8 @@ def opendap_forecast(model):
             latest_opendap = latest(model, server)
             logger.debug(latest_opendap)
             return xray.open_dataset(latest_opendap)
-        except Exception, e:
+        except urllib2.HTTPError, e:
+            import ipdb; ipdb.set_trace()
             logger.warn("Attempt to fetch %s on %s failed."
                         % (model, server))
             logger.warn(str(e))
@@ -343,12 +365,13 @@ def opendap_forecast(model):
                      (model, ' or '.join(_servers)))
 
 
-def gridded_forecast(query):
+def gridded_forecast(query, fcst=None):
     """
     Returns an xray Dataset holding the gridded forecast
     requested by 'query'
     """
-    fcst = opendap_forecast(query['model'])
+    if fcst is None:
+        fcst = opendap_forecast(query['model'])
 
     def lookup_name(possible_names):
         """
@@ -356,36 +379,42 @@ def gridded_forecast(query):
         so this looks up the variable name ignoring case and
         allowing for one of several different names.
         """
-        actual_names = fcst.variables.keys()
-        possible_names = [x.lower() for x in possible_names]
+        actual_names = fcst.keys()
+        possible_names = set([x.lower() for x in possible_names])
+        possible_names.update(['%s_ens' % x.lower() for x in possible_names])
         name = [x for x in actual_names if x.lower() in possible_names]
-        assert len(name) == 1
+        if not len(name) == 1:
+            raise ValueError("Couldn't find variable %s" % str(possible_names))
         return name.pop()
 
     variables = {}
     if 'wind' in query['vars']:
-        uwnd_name = lookup_name(['u-component_of_wind_height_above_ground'])
+        uwnd_name = lookup_name(['u-component_of_wind_height_above_ground',
+                                 conv.UWND])
         variables[uwnd_name] = conv.UWND
-        vwnd_name = lookup_name(['v-component_of_wind_height_above_ground'])
+        vwnd_name = lookup_name(['v-component_of_wind_height_above_ground',
+                                 conv.VWND])
         variables[vwnd_name] = conv.VWND
     if len(set(['rain', 'precip']).intersection(query['vars'])):
-        precip_name = lookup_name(['Precipitation_rate_surface_Mixed_Intervals_Average'])
+        precip_name = lookup_name(['Precipitation_rate_surface_Mixed_Intervals_Average',
+                                   conv.PRECIP])
         variables[precip_name] = conv.PRECIP
     if len(set(['press', 'pressure', 'mslp']).intersection(query['vars'])):
         press_name = lookup_name(['Pressure_reduced_to_MSL_msl',
-                                  'Pressure_reduced_to_MSL'])
+                                  'Pressure_reduced_to_MSL',
+                                  conv.PRESSURE])
         variables[press_name] = conv.PRESSURE
     if len(variables) == 0:
         raise ValueError("No valid variables in query")
 
-    lat_name = lookup_name(['lat', 'latitude'])
-    lon_name = lookup_name(['lon', 'longitude'])
+    lat_name = lookup_name(['lat', 'latitude', conv.LAT])
+    lon_name = lookup_name(['lon', 'longitude', conv.LON])
     # reduce the datset to only the variables we care about
     # the dataset has still not been loaded into memory.
-    fcst = fcst.select(*variables.keys())
+    fcst = fcst[variables.keys()]
     renames = variables.copy()
     # sometimes the time coordinate has a suffix number
-    time_name = [d for d in fcst.dimensions if d.startswith('time')]
+    time_name = [d for d in fcst.dims if d.startswith('time')]
     if len(time_name) != 1:
         raise ValueError("Expected a single time dimension")
     time_name = time_name[0]
@@ -399,7 +428,7 @@ def gridded_forecast(query):
     additional_slicers = {}
     dims_to_squeeze = []
     if 'wind' in query['vars']:
-        height_coordinate = [d for d in fcst[conv.UWND].dimensions
+        height_coordinate = [d for d in fcst[conv.UWND].dims
                              if 'height_above_ground' in d]
         if len(height_coordinate) == 1:
             height_coordinate = height_coordinate[0]
@@ -417,4 +446,5 @@ def gridded_forecast(query):
     if len(dims_to_squeeze):
         fcst = fcst.squeeze(dims_to_squeeze)
     # normalize to the expected units etc ...
+    fcst = fcst.copy(deep=True)
     return units.normalize_variables(fcst)

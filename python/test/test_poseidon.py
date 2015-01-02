@@ -20,6 +20,8 @@ def test_forecast():
     ds['time'] = xray.conventions.decode_cf_variable(time['time'].variable)
     ds['uwnd'] = (['time', 'longitude', 'latitude'], u)
     ds['vwnd'] = (['time', 'longitude', 'latitude'], v)
+    p = 10 * np.random.normal(size=u.shape) + 1000.
+    ds['pressure'] = (('time', 'longitude', 'latitude'), p)
     return ds
 
 
@@ -118,12 +120,9 @@ class PoseidonTest(unittest.TestCase):
 
         def test_gfs(model):
             ds = test_forecast()
-            ds['Pressure_reduced_to_MSL'] = (('time', 'longitude', 'latitude'),
-                                             ds['uwnd'].values,
-                                             {'units': 'Pa'})
             ds = ds.rename({'uwnd': 'U-component_of_wind_height_above_ground',
                             'vwnd': 'V-component_of_wind_height_above_ground',
-                            })
+                            'pressure': 'Pressure_reduced_to_MSL'})
 
             return ds
 
@@ -155,6 +154,29 @@ class PoseidonTest(unittest.TestCase):
         np.testing.assert_array_almost_equal(fcst['latitude'].values, -20.3)
         np.testing.assert_array_almost_equal(fcst['longitude'].values, -154.7)
         poseidon.opendap_forecast = opendap_forecast
+
+    def test_forecast_containing_point(self):
+        lat = -20.3
+        lon = -154.7
+        query = {'location': {'latitude': lat, 'longitude': lon},
+                   'model': 'gfs',
+                   'type': 'spot',
+                   'hours': np.linspace(0, 96, 33).astype('int'),
+                   'vars': ['wind'],
+                   'warnings': []}
+
+        subset = poseidon.forecast_containing_point(query, test_forecast())
+
+        self.assertTrue(np.any(lon >= subset['longitude'].values))
+        self.assertTrue(np.any(lon <= subset['longitude'].values))
+        self.assertTrue(np.any(lat >= subset['latitude'].values))
+        self.assertTrue(np.any(lat <= subset['latitude'].values))
+
+        # we should be able to pass the results through again and get the same thing.
+        subset2 = poseidon.forecast_containing_point(query, subset)
+        self.assertTrue(subset2.equals(subset))
+
+
 
 if __name__ == "__main__":
     unittest.main()

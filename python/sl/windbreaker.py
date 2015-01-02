@@ -1,5 +1,7 @@
 import os
 import sys
+import json
+import xray
 import zlib
 import numpy as np
 import base64
@@ -8,13 +10,10 @@ import datetime
 
 from cStringIO import StringIO
 
-from xray import open_dataset, backends
-
 from sl import poseidon
 from sl.lib import conventions as conv, units
 from sl.lib import objects, tinylib, saildocs, emaillib
 from sl.lib.objects import NautAngle
-import json
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -51,18 +50,36 @@ def arg_closest(x, reference):
 
 
 def get_forecast(query, path=None):
+    """
+    Here we do some crude caching which allows the user to specify a path
+    to a local file that holds the data instead of going through
+    opendap/poseidon.
+    """
     warnings = []
-    # Here we do some crude caching which allows the user to specify a path
-    # to a local file that holds the data instead of going through
-    # poseidon.
     if path and os.path.exists(path):
-        fcst = open_dataset(path)
+        fcst = poseidon.forecast(query, xray.open_dataset(path))
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
         fcst = poseidon.forecast(query)
         if path is not None:
             fcst.dump(path)
     return fcst
+
+
+def query_to_beaufort(query_string, forecast_path=None):
+    """
+    Takes a query string and returns the corresponding tiny forecast.
+    """
+    logger.debug(query_string)
+    query = saildocs.parse_saildocs_query(query_string)
+    # log the query so debugging others request failures will be easier.
+    logger.debug(json.dumps(query))
+    # Acquires a forecast corresponding to a query
+    fcst = get_forecast(query, path=forecast_path)
+    logger.debug('Obtained the forecast')
+    compressed_forecast = tinylib.to_beaufort(fcst)
+    logger.debug("Compressed Size: %d" % len(compressed_forecast))
+    return compressed_forecast
 
 
 def process_query(query_string, reply_to, forecast_path=None, output=None):
@@ -82,20 +99,7 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
     output : file-like
         A file like object to which the compressed forecast is written
     """
-    logger.debug(query_string)
-    query = saildocs.parse_saildocs_query(query_string)
-    # log the query so debugging others request failures will be easier.
-    logger.debug(json.dumps(query))
-    # Acquires a forecast corresponding to a query
-    fcst = get_forecast(query, path=forecast_path)
-    logger.debug('Obtained the forecast')
-    if conv.ENSEMBLE in fcst.dimensions:
-        tinys = [tinylib.to_beaufort(fcst.indexed(**{conv.ENSEMBLE: i}))
-                 for i in range(fcst.dimensions[conv.ENSEMBLE])]
-        tiny_fcst = '\t'.join([base64.b64encode(x) for x in tinys])
-    else:
-        tiny_fcst = tinylib.to_beaufort(fcst)
-    compressed_forecast = zlib.compress(tiny_fcst, 9)
+    compressed_forecast = query_to_beaufort(query_string, forecast_path)
     logger.debug("Compressed Size: %d" % len(compressed_forecast))
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
@@ -167,7 +171,7 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
                                 ('Query %s just failed.' % query_string), e)
             emaillib.send_error(reply_to,
                                 ("Error processing %s.  Alex just got an urgent"
-                                 "e-mail, he's looking into the problem. "
+                                 " e-mail, he's looking into the problem. "
                                  "If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
@@ -203,8 +207,11 @@ def spot_message(spot, out=sys.stdout):
     speeds = np.array([w.speed for w in winds])
     forces = np.digitize(speeds, beaufort_in_knots)
 
-    pressures = np.digitize(spot['pressure'][1].reshape(-1),
-                            tinylib._pressure_scale)
+    if 'pressure' in spot:
+        pressures = np.digitize(spot['pressure'][1].reshape(-1),
+                                tinylib._pressure_scale)
+    else:
+        pressures = np.full_like(speeds, 0.)
 
     def iter_lines():
         yield '%20s\t%9s\t%9s' % ('Date', ' Wind (Knots)', 'MSL Press (Pa)')

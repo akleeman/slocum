@@ -1,9 +1,10 @@
 import os
-import copy
 import zlib
-import numpy as np
+import base64
 import logging
 import datetime
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(os.path.basename(__file__))
 
@@ -23,7 +24,7 @@ from sl.lib import objects, units
 # the beaufort scale in m/s
 _beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
                             33., 40., 47., 55., 63., 75.]) / 1.94384449
-# ensemble wind spead spread
+# ensemble wind speed spread
 _ws_spread_scale = _beaufort_scale
 # precipitation scale in kg.m-2.s-1
 _precip_scale = np.array([1e-8, 1., 5.]) / 3600.
@@ -109,6 +110,7 @@ def pack_ints(arr, req_bits=None):
     req_bits : int (optional)
         The number of bits required to losslessly store arr.
     """
+    assert np.all(np.isfinite(arr))
     # there has got to be a better way to check if an array
     # holds integers, but this does this trick
     try:
@@ -213,6 +215,7 @@ def tiny_array(arr, bits=None, divs=None, mask=None, wrap=False):
     (i.e. the '0' bin sits between the last and first bounding value in divs as
     is the case for angles).
     """
+    assert np.all(np.isfinite(arr))
     if mask is None:
         return tiny_unmasked(arr, bits=bits, divs=divs, wrap=wrap)
     else:
@@ -314,6 +317,7 @@ def tiny_bool(arr, mask=None):
     """
     A convenience wrapper around tiny_array to be used for boolean arrays.
     """
+    assert np.all(np.isfinite(arr))
     if not arr.dtype == 'bool':
         raise ValueError("expected a boolean valued array")
     return tiny_array(arr, bits=1, divs=np.array([0., 1.]), mask=mask)
@@ -390,6 +394,7 @@ def expand_masked(mask, packed_array, bits, shape, divs, dtype=None,
 
 
 def small_array(arr, least_significant_digit):
+    assert np.all(np.isfinite(arr))
     data = np.round(arr * np.power(10, least_significant_digit))
     return {'packed_array': zlib.compress(data.tostring(), 9),
             'dtype': arr.dtype,
@@ -403,19 +408,18 @@ def expand_small_array(packed_array, dtype, least_significant_digit):
 
 
 def small_time(time_var):
-    # try to keep slocum from requiring netCDF4
-    import netCDF4
     time_var = xray.conventions.encode_cf_variable(time_var)
     assert time_var.attrs[conv.UNITS].lower().startswith('hour')
-    origin = netCDF4.num2date([0],
-                              time_var.attrs[conv.UNITS],
-                              calendar='standard')[0]
+    origin = xray.conventions.decode_cf_datetime([0],
+                                                 time_var.attrs[conv.UNITS],
+                                                 calendar='standard')
+    origin = pd.to_datetime(origin[0])
     diffs = np.diff(np.concatenate([[0], time_var.values[:]]))
     np.testing.assert_array_equal(diffs.astype('int'), diffs)
     fromordinal = datetime.datetime.fromordinal(origin.toordinal())
     seconds = int(datetime.timedelta.total_seconds(origin - fromordinal))
     augmented = np.concatenate([[origin.toordinal(), seconds],
-            diffs.astype(_variables[conv.TIME]['dtype'])])
+                                diffs.astype(_variables[conv.TIME]['dtype'])])
     return small_array(augmented, least_significant_digit=0)
 
 
@@ -460,7 +464,7 @@ def check_beaufort(obj):
         units.convert_units(obj[conv.PRECIP], _units[conv.PRECIP])
 
 
-def to_beaufort(obj):
+def to_beaufort_single(obj):
     """
     Takes an object holding wind and precip, cloud or pressure
     variables and compresses it by converting zonal and meridional
@@ -528,7 +532,7 @@ def to_beaufort(obj):
     payload = ''.join(stringify(k, v) for k, v in encoded_variables.iteritems())
     logger.debug("compression ratio: %f" %
                  (len(zlib.compress(payload, 9)) / float(len(payload))))
-    return zlib.compress(payload, 9)
+    return payload
 
 
 def unstring_beaufort(payload):
@@ -586,10 +590,31 @@ def beaufort_to_dict(payload):
     return out
 
 
-def from_beaufort(payload):
+def from_beaufort_single(payload):
     variables = beaufort_to_dict(payload)
-    out = xray.Dataset()
-    for k, v in variables.iteritems():
-        out[k] = v
-
+    out = xray.Dataset(variables)
+    out[conv.TIME] = xray.conventions.decode_cf_variable(out[conv.TIME])
     return units.normalize_variables(out)
+
+
+def to_beaufort(fcst):
+    if conv.ENSEMBLE in fcst.dims:
+        tinys = [to_beaufort(fcst.isel(**{conv.ENSEMBLE: i}))
+                 for i in range(fcst.dims[conv.ENSEMBLE])]
+        tiny_fcst = '\t'.join([base64.b64encode(x) for x in tinys])
+        tiny_fcst = 'ENS:%s' % tiny_fcst
+    else:
+        tiny_fcst = to_beaufort_single(fcst)
+    return zlib.compress(tiny_fcst, 9)
+
+
+def from_beaufort(payload):
+    payload = zlib.decompress(payload)
+    if payload.startswith('ENS'):
+        payload = payload[3:]
+        fcst = [base64.b64decode(x) for x in payload.split('\t')]
+        fcst = xray.concat([from_beaufort_single(f) for f in fcst],
+                           conv.ENSEMBLE)
+    else:
+        fcst = from_beaufort_single(payload)
+    return fcst

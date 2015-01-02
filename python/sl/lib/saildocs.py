@@ -66,21 +66,22 @@ class BadQuery(BaseException):
         super(self.__class__, self).__init__('\n'.join([message, _usage]))
 
 
-def iterate_queries(email_body):
+def iterate_queries(query_text):
     """
     Searches through an email body and yields individual query strings
 
     Paramters
     ---------
-    email_body : string
-        The body of an email that presumably contains some queries
+    query_text : string
+        Text containing queries, usually this is the body of an email that
+        presumably contains some queries.
 
     Returns
     -------
     queries : generator
         A generator which yields individual query strings.
     """
-    lines = email_body.lower().split('\n')
+    lines = query_text.lower().split('\n')
     for command in _supported_commands:
         matches = [re.match('\s*(%s\s.+)\s*' % command, x) for x in lines]
         for query in filter(None, matches):

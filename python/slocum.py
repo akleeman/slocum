@@ -16,32 +16,28 @@ logging.basicConfig(filename='/tmp/slocum.log',
 logger = logging.getLogger(os.path.basename(__file__))
 file_handler = logging.FileHandler("/tmp/slocum.log")
 logger.addHandler(file_handler)
-console_handler = logging.StreamHandler(sys.stdout)
+console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
+logger.setLevel("INFO")
 
 from sl import windbreaker
-from sl.lib import griblib, tinylib, rtefcst, enslib
-
-
-def handle_spot_ensemble(args):
-    """
-    Unpacks a spot ensemble forecast and plots the distribution of forecast
-    values.
-    """
-    payload = args.input.read()
-    args.input.close()
-    fcsts = [base64.b64decode(x) for x in zlib.decompress(payload).split('\t')]
-    fcsts = [tinylib.beaufort_to_dict(f) for f in fcsts]
-    enslib.plot_spot_ensemble(fcsts, args.variable, args.plot, args.export)
+from sl.lib import (griblib, tinylib, rtefcst, enslib, saildocs,
+                    visualize, conventions)
 
 
 def handle_spot(args):
     """
     Converts a packed spot forecast to a spot text message.
     """
-    tinyfcst = zlib.decompress(args.input.read())
-    fcst = tinylib.beaufort_to_dict(tinyfcst)
-    windbreaker.spot_message(fcst, args.output)
+    payload = args.input.read()
+    fcsts = tinylib.from_beaufort(payload)
+    if conventions.ENSEMBLE in fcsts:
+        assert fcsts[conventions.LAT].size == 1
+        assert fcsts[conventions.LON].size == 1
+        fcsts = fcsts.isel(**{conventions.LON: 0, conventions.LAT: 0})
+        visualize.spot_plot(fcsts)
+    else:
+        windbreaker.spot_message(fcsts, args.output)
 
 
 def handle_netcdf(args):
@@ -62,6 +58,18 @@ def handle_grib(args):
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.from_beaufort(tinyfcst)
     griblib.save(fcst, target=args.output, append=False)
+
+
+def handle_query(args):
+    """
+    Process a queries from the command line.  This is mostly used
+    for debuging.
+    """
+    queries = list(saildocs.iterate_queries(args.input.read()))
+    if len(queries) > 1:
+        raise NotImplementedError("Can only process one query at a time")
+    args.output.write(windbreaker.query_to_beaufort(queries.pop(0),
+                                                    args.forecast))
 
 
 def handle_email(args):
@@ -121,11 +129,14 @@ def setup_parser_email(p):
     Configures the argument subparser for handle_email.  p is the
     ArgumentParser object for the route_forecast subparser.
     """
-    p.add_argument('--input', type=argparse.FileType('rb'), default=sys.stdin)
+    p.add_argument('--input', type=argparse.FileType('rb'),
+                   default=sys.stdin)
     p.add_argument('--output', type=argparse.FileType('wb'),
                    default=sys.stdout)
-    p.add_argument('--ncdf', default=None)
-    p.add_argument('--fail-hard', default=False, action='store_true')
+    p.add_argument('--forecast', default=None,
+                   help="path to a netCDF forecast")
+    p.add_argument('--fail-hard', default=False,
+                   action='store_true')
 
 
 def setup_parser_route_forecast(p):
@@ -161,7 +172,7 @@ def setup_parser_route_forecast(p):
                          'forecast waypoint names'))
 
 
-def setup_parser_spot_ensemble(p):
+def setup_parser_spot(p):
 
     variable_choices = [fv[0] for fv in enslib._fcst_vars]
     p.add_argument(
@@ -189,13 +200,12 @@ def setup_parser_spot_ensemble(p):
 # the handler function's doc string as help text) and then the appropriate
 # setup handler is called to add the details.
 _task_handler = {'email': (handle_email, setup_parser_email),
+                 'query': (handle_query, setup_parser_email),
                  'grib': (handle_grib, setup_parser_grib),
                  'netcdf': (handle_netcdf, setup_parser_grib),
                  'route-forecast': (handle_route_forecast,
                                     setup_parser_route_forecast),
-                 'spot': (handle_spot, setup_parser_grib),
-                 'spot-ensemble': (handle_spot_ensemble,
-                                   setup_parser_spot_ensemble)}
+                 'spot': (handle_spot, setup_parser_spot)}
 
 if __name__ == "__main__":
 

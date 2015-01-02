@@ -1,11 +1,13 @@
+import xray
 import os.path
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
+
+from matplotlib import cm
 from mpl_toolkits.basemap import Basemap
 from mpl_toolkits.axes_grid1 import AxesGrid
-from matplotlib import cm
-import xray
+
 from sl.lib import units
 from sl.lib import conventions as conv
 from sl.lib.objects import NautAngle
@@ -37,7 +39,6 @@ def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path=None):
             'bar': _plot_bar,
             'box': _plot_box
             }
-
     n = len(fcsts)
     f0 = fcsts[0]
     t = f0[conv.TIME]
@@ -138,7 +139,7 @@ def _plot_box(f_var, data, plot_units, f_times, title):
 def make_gridded_ensemble(fcst_gfs, fcst_ens):
     """
     Calculates the average windspeed deviation of ensemble forecast members
-    over the published GSF forecast for each grid point and forecast time
+    over the published GFS forecast for each grid point and forecast time
     (considering only positive deviations, i.e. ensemble member wind speed >
     GFS forecast windwpeed). The spread indicator will be calculated as the
     mean of the top 2 ensemble wind speed deviations vis-a-vis the GFS
