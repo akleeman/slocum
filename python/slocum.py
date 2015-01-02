@@ -4,6 +4,7 @@ import sys
 import zlib
 import logging
 import argparse
+import tempfile
 import datetime as dt
 
 # Configure the logger
@@ -78,7 +79,15 @@ def handle_email(args):
     an packed ensemble forecast.
     """
     try:
-        windbreaker.windbreaker(args.input.read(), args.forecast,
+        # here we store the input to a temp file so if it
+        # fails its easier to repeat the error.
+        email_contents = args.input.read()
+        _, tf = tempfile.mkstemp('query_email')
+        with open(tf, 'w') as f:
+            f.write(email_contents)
+        logging.debug("cached input email to %s" % tf)
+        # process the email
+        windbreaker.windbreaker(email_contents, args.forecast,
                                 output=args.output,
                                 fail_hard=args.fail_hard)
     except Exception, e:
