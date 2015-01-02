@@ -67,15 +67,15 @@ def query_to_beaufort(query_string, forecast_path=None):
     """
     Takes a query string and returns the corresponding tiny forecast.
     """
-    logger.debug(query_string)
+    logging.debug(query_string)
     query = saildocs.parse_saildocs_query(query_string)
     # log the query so debugging others request failures will be easier.
-    logger.debug(json.dumps(query))
+    logging.debug(json.dumps(query))
     # Acquires a forecast corresponding to a query
     fcst = get_forecast(query, path=forecast_path)
-    logger.debug('Obtained the forecast')
+    logging.debug('Obtained the forecast')
     compressed_forecast = tinylib.to_beaufort(fcst)
-    logger.debug("Compressed Size: %d" % len(compressed_forecast))
+    logging.debug("Compressed Size: %d" % len(compressed_forecast))
     return compressed_forecast
 
 
@@ -97,14 +97,14 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
         A file like object to which the compressed forecast is written
     """
     compressed_forecast = query_to_beaufort(query_string, forecast_path)
-    logger.debug("Compressed Size: %d" % len(compressed_forecast))
+    logging.debug("Compressed Size: %d" % len(compressed_forecast))
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
         raise saildocs.BadQuery("Forecast was too large (%d bytes) for sailmail!"
                        % len(compressed_forecast))
     forecast_attachment = StringIO(compressed_forecast)
     if output:
-        logger.debug("dumping file to output")
+        logging.debug("dumping file to output")
         output.write(forecast_attachment.getvalue())
     # creates the new mime email
     file_fmt = '%Y-%m-%d_%H%m.fcst'
@@ -114,9 +114,9 @@ def process_query(query_string, reply_to, forecast_path=None, output=None):
                               _email_body,
                               subject=query_string,
                               attachments={filename: forecast_attachment})
-    logger.debug('Sending email to %s' % reply_to)
+    logging.debug('Sending email to %s' % reply_to)
     emaillib.send_email(weather_email)
-    logger.debug('Email sent.')
+    logging.debug('Email sent.')
 
 
 def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
@@ -126,16 +126,16 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
     desired compressed forecasts.
     """
     exceptions = None if fail_hard else Exception
-    logger.debug('Wind Breaker')
-    logger.debug(mime_text)
+    logging.debug('Wind Breaker')
+    logging.debug(mime_text)
     email_body = emaillib.get_body(mime_text)
     reply_to = emaillib.get_reply_to(mime_text)
-    logger.debug('Extracted email body: %s' % str(email_body))
+    logging.debug('Extracted email body: %s' % str(email_body))
     if len(email_body) != 1:
         emaillib.send_error(reply_to,
                             "Your email should contain only one body")
     # Turns a query string into a dict of params
-    logger.debug("About to parse saildocs")
+    logging.debug("About to parse saildocs")
     # The set makes sure there aren't duplicate queries.
     queries = set(list(saildocs.iterate_queries(email_body[0])))
     # if there are no queries let the sender know
