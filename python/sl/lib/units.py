@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 import datetime
 
 import sl.lib.conventions as conv
@@ -59,13 +60,16 @@ _all_units = [(_speed, 'm/s', None),
 
 def _convert(v, possible_units, cur_units, new_units, validate=None):
     if cur_units == new_units and validate is None:
+        logging.debug("units %s and %s are the same, skipping conversion"
+                      % (cur_units, new_units))
         return v
     assert v.values.dtype == np.float32
     data = v.values
     mult = (possible_units[cur_units] / possible_units[new_units])
-    v.values[...] = v.values[...] * mult
+    data = data * mult
     if validate is not None:
-        v.values[...] = validate(v.values)
+        data = validate(data)
+    v.values[...] = data
     v.attrs[conv.UNITS] = new_units
     return (v.dims, data, v.attrs)
 
