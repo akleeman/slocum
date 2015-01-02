@@ -77,9 +77,13 @@ def handle_email(args):
     a saildocs-like request and replying to the sender with
     an packed ensemble forecast.
     """
-    windbreaker.windbreaker(args.input.read(), args.forecast,
-                            output=args.output,
-                            fail_hard=args.fail_hard)
+    try:
+        windbreaker.windbreaker(args.input.read(), args.forecast,
+                                output=args.output,
+                                fail_hard=args.fail_hard)
+    except Exception, e:
+        logging.exception(e)
+        raise
 
 
 def handle_route_forecast(args):
