@@ -8,7 +8,10 @@ from sl.lib import conventions as conv
 
 
 def spot_plot(fcsts):
-
+    """
+    Takes a set of SPOT forecasts and produces a probabilistic plot
+    of the variables that are available.
+    """
     assert fcsts[conv.LON].size == 1
     assert fcsts[conv.LAT].size == 1
     if fcsts[conv.LON].ndim == 1:
@@ -18,16 +21,16 @@ def spot_plot(fcsts):
 
     plotters = {'wind_speed': wind_spread_plot,
                 'pressure': pressure_spread_plot,}
-#                           'wind_dir': wind_dir_spread_plot}
     variables = set(plotters.keys()).intersection(fcsts.variables.keys())
 
     fig, axes = plt.subplots(len(variables), 1, sharex=True,
-                             figsize=(len(variables) * 5, 8))
+                             figsize=(fcsts['time'].size / 2.6, len(variables) * 4))
+
     if len(variables) == 1:
         axes = [axes]
 
     for v, ax in zip(variables, axes):
-        plotters[v](fcsts[v], ax=ax)
+        plotters[v](fcsts, ax=ax)
 
     times = fcsts[conv.TIME].values
     times = times.astype('M8[m]')
@@ -39,31 +42,22 @@ def spot_plot(fcsts):
 
     # the number of ensembles
     n = fcsts.dims[conv.ENSEMBLE]
-    title = ("Lon: %.1f Lat: %.1f $n = %d$, ref_time: %s)" %
-             (lat, lon, n, time_units))
-    fig.suptitle(title)
 
     # we'll need both strings, and datetime.datetime time representations
     str_times = [x.strftime('%m-%d %Hh') for x in pd.to_datetime(times)]
-    ax.xaxis.set_ticks(np.arange(len(str_times)))
+    ax.xaxis.set_ticks(np.arange(len(str_times)) + 0.5)
     ax.xaxis.set_ticklabels(str_times, rotation=90)
 
     plt.tight_layout()
+    plt.subplots_adjust(top=0.9)
+    title = ("Forecast for %.1fN %.1fE using %d forecasts initialized %s" %
+             (lat, lon, n, time_units))
+    fig.suptitle(title, fontsize=14)
     plt.show()
 
 
-def wind_dir_spread_plot(wind_dir, ax=None):
-    from sl.lib import plotlib
-    if ax is None:
-        ax = plt.gca()
-    xs = np.arange(wind_dir['time'].size)
-    for i, dirs in enumerate(wind_dir.values.T):
-        circle = plotlib.WindCircle(i + 0.5, 0., np.ones(dirs.shape), dirs, 0.3, ax=ax)
-    ax.set_xlim([0, wind_dir['time'].size])
-    ax.set_ylim([-0.3, 0.3])
-
-
-def pressure_spread_plot(press, ax=None):
+def pressure_spread_plot(fcst, ax=None):
+    press = fcst[conv.PRESSURE]
     scale = tinylib._pressure_scale
     spread_plot(press, scale, ax=ax)
 
@@ -72,13 +66,14 @@ def pressure_spread_plot(press, ax=None):
     max_bin = np.sum(scale <= np.max(press.values)) + 1
     max_bin = np.minimum(max_bin, press.size)
     ax.set_ylim([min_bin, max_bin])
-    ax.set_title("Pressure (MSL)")
+    ax.set_title("Pressure (MSL)", fontstyle='oblique')
 
 
-def wind_spread_plot(wind_speed, ax=None):
+def wind_spread_plot(fcst, ax=None):
     if ax is None:
         plt.gca()
 
+    wind_speed = fcst[conv.WIND_SPEED]
     beaufort = xray.Variable('beaufort',
                              tinylib._beaufort_scale.astype('float32'),
                              {'units': 'm/s'})
@@ -95,8 +90,20 @@ def wind_spread_plot(wind_speed, ax=None):
     ax.yaxis.set_ticks(force_nums + 0.5, minor=True)
     ax.yaxis.set_ticklabels(forces, minor=True)
     ax.set_ylim([0, max_bin])
+
+    from sl.lib import plotlib
+
+    # add a circle for each time point
+    for i, (_, one_time) in enumerate(fcst[conv.WIND_DIR].groupby(conv.TIME)):
+        circle = plotlib.WindCircle(i + 0.5, max_bin - 0.5,
+                                    np.ones(one_time.shape), one_time.values,
+                                    0.45, ax=ax,
+                                    cmap=plt.cm.get_cmap('Blues'),
+                                    norm=plt.Normalize(vmin=0., vmax=1),
+                                    wind_alpha=0.3)
+
     ax.set_ylabel("Wind Speed (knots)")
-    ax.set_title("Wind Speed")
+    ax.set_title("Wind", fontstyle='oblique')
 
 
 def spread_plot(variable, bin_divs, ax=None):
@@ -129,7 +136,7 @@ def spread_plot(variable, bin_divs, ax=None):
 
     ax.set_axisbelow(False)
 
-    ax.set_xlim([0, np.max(xs)])
+    ax.set_xlim([0, np.max(xs) + 0.5])
     ax.set_ylim([0, np.max(bins) + 1])
 
     from mpl_toolkits.axes_grid1 import make_axes_locatable

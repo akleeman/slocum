@@ -1,6 +1,5 @@
 import os
 import zlib
-import base64
 import logging
 import datetime
 import numpy as np
@@ -115,6 +114,14 @@ def pack_ints(arr, req_bits=None):
         required bits (unless otherwise specified).
     req_bits : int (optional)
         The number of bits required to losslessly store arr.
+
+    Returns
+    ----------
+    packed_array : dict
+        A dictionary containing a key 'packed_array' which contains
+        a character string holding a packed version of 'arr', as well
+        as various other key/values used to reconstruct the original
+        array shape/dtype.
     """
     assert np.all(np.isfinite(arr))
     # there has got to be a better way to check if an array
@@ -400,6 +407,12 @@ def expand_masked(mask, packed_array, bits, shape, divs, dtype=None,
 
 
 def small_array(arr, least_significant_digit):
+    """
+    Creates a small array.  This is done by rounding to a least
+    significant digit and then zlib compressing te array.
+
+    See Also: expand_small_array
+    """
     assert np.all(np.isfinite(arr))
     data = np.round(arr * np.power(10, least_significant_digit))
     return {'packed_array': zlib.compress(data.tostring(), 9),
@@ -408,12 +421,22 @@ def small_array(arr, least_significant_digit):
 
 
 def expand_small_array(packed_array, dtype, least_significant_digit):
+    """
+    Takes a the output from small_array and reconstructs a the original
+    (rounded) array
+    """
     arr = np.fromstring(zlib.decompress(packed_array), dtype=dtype)
     arr = arr / np.power(10, least_significant_digit)
     return arr
 
 
 def small_time(time_var):
+    """
+    This packs the time variable by taking advantage of the fact that
+    time is monotonically increasing.  It first converts the starting
+    time to ordinal + seconds, then stores the incremental differences
+    using small_array()
+    """
     time_var = xray.conventions.encode_cf_variable(time_var)
     assert time_var.attrs[conv.UNITS].lower().startswith('hour')
     origin = xray.conventions.decode_cf_datetime([0],
@@ -430,6 +453,9 @@ def small_time(time_var):
 
 
 def expand_small_time(packed_array, dtype, least_significant_digit):
+    """
+    Expands a small_time encoded time array.
+    """
     augmented = expand_small_array(packed_array, dtype,
                                    least_significant_digit)
     origin = datetime.datetime.fromordinal(augmented[0])
@@ -440,6 +466,10 @@ def expand_small_time(packed_array, dtype, least_significant_digit):
 
 
 def small_ensemble(ens_var):
+    """
+    All that matters when storing ensemble arrays is simply the
+    number of ensembles.
+    """
     # make sure ens_var isn't so large that it doesn't fit in a byte
     assert ens_var.size == np.array(ens_var.size, np.int8)
     # return a string encoded byte
@@ -483,9 +513,6 @@ def to_beaufort(obj):
     variables and compresses it by converting zonal and meridional
     winds to wind speed and direction, then compressing to
     beaufort scales and second order cardinal directions.
-
-    Parameters
-    ----------
     """
     # first we make sure all the data is in the expected units
     check_beaufort(obj)
@@ -551,6 +578,12 @@ def to_beaufort(obj):
 
 
 def unstring_beaufort(payload):
+    """
+    This takes an encoded set of variables and decodes them.
+    The payload starts with a variable id, followed by the
+    length of the data.  This can be later used, along with the
+    _variables lookup table, to rebuild a full xray object.
+    """
     while len(payload):
         # the first bit is the variable id,
         # the second and third bits store the length of the array
@@ -571,6 +604,11 @@ def unstring_beaufort(payload):
 
 
 def beaufort_to_dict(payload):
+    """
+    Unpacks a tiny forecast and fills in dimensions and attributes
+    using the _variables lookup table.  This can be used directly
+    with xray.Dataset to build a new dataset.
+    """
     payload = zlib.decompress(payload)
     variables = dict(unstring_beaufort(payload))
     out = {}
@@ -643,6 +681,9 @@ def beaufort_to_dict(payload):
 
 
 def from_beaufort(payload):
+    """
+    Inverse function of to_beaufort()
+    """
     variables = beaufort_to_dict(payload)
     out = xray.Dataset(variables)
     out[conv.TIME] = xray.conventions.decode_cf_variable(out[conv.TIME])
