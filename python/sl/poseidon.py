@@ -260,6 +260,7 @@ def subset(remote_dataset, query, additional_slicers=None):
 
 
 def forecast(query, fcst=None):
+    assert isinstance(query, dict)
     forecast_fetchers = {'gridded': gridded_forecast,
                          'spot': spot_forecast,}
     return forecast_fetchers[query['type']](query, fcst)
@@ -281,10 +282,19 @@ def gridded_to_point_forecast(fcst, lon, lat):
     """
     Takes a forecast and interpolates it to a single point.
     """
-    assert np.any(lon >= fcst[conv.LON].values)
-    assert np.any(lon <= fcst[conv.LON].values)
-    assert np.any(lat >= fcst[conv.LAT].values)
-    assert np.any(lat <= fcst[conv.LAT].values)
+    if (not np.any(lon >= fcst[conv.LON].values) or
+        not np.any(lon <= fcst[conv.LON].values)):
+        raise ValueError("Longitude %6.2f not in (%6.2f, %6.2f)"
+                         % (lon,
+                            fcst[conv.LON].min(),
+                            fcst[conv.LON].max()))
+
+    if (not np.any(lat >= fcst[conv.LAT].values) or
+        not np.any(lat <= fcst[conv.LAT].values)):
+        raise ValueError("Latitude %6.2f not in (%6.2f, %6.2f)"
+                         % (lat,
+                            fcst[conv.LAT].min(),
+                            fcst[conv.LAT].max()))
 
     def bilinear_weights(grid, x):
         # take the two closest points

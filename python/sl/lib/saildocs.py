@@ -66,7 +66,7 @@ class BadQuery(BaseException):
         super(self.__class__, self).__init__('\n'.join([message, _usage]))
 
 
-def iterate_queries(query_text):
+def iterate_query_strings(query_text):
     """
     Searches through an email body and yields individual query strings
 

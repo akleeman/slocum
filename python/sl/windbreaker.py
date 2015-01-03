@@ -14,12 +14,15 @@ from sl import poseidon
 from sl.lib import conventions as conv, units
 from sl.lib import objects, tinylib, saildocs, emaillib
 from sl.lib.objects import NautAngle
+import tempfile
 
 _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
 
 _email_body = """
-This forecast brought to you by your friends on Saltbreaker.
+%(
+
+This forecast was brought to you by your friends on Saltbreaker.
 
 Remember, always be skeptical of numerical forecasts (such as this).
 For a full disclaimer visit www.ensembleweather.com."""
@@ -63,6 +66,26 @@ def get_forecast(query, path=None):
     return fcst
 
 
+def parse_query(query_string):
+    return saildocs.parse_saildocs_query(query_string)
+
+
+def query_summary(query):
+    """
+    Takes a query and returns a summary
+    """
+    if query['type'] == 'spot':
+        loc_string = '%(latitude)6.2fN,%(longitude)6.2fE' % query['location']
+    elif query['type'] == 'gridded':
+        import ipdb; ipdb.set_trace()
+        loc_string = '%6.2fN,%6.2fE' % query['location']
+
+    time_string = '%d-%d Hours' % (min(query['hours']),
+                                   max(query['hours']))
+    summary = ' '.join([query['type'], query['model'], loc_string, time_string])
+    return summary
+
+
 def query_to_beaufort(query, forecast_path=None):
     """
     Takes a query and returns the corresponding tiny forecast.
@@ -77,76 +100,83 @@ def query_to_beaufort(query, forecast_path=None):
     return compressed_forecast
 
 
-def process_query(query_string, reply_to, forecast_path=None, output=None):
+def respond_to_query(query, reply_to, subject=None, forecast_path=None):
     """
-    Takes an un-parsed query string, parses it, fetches the forecast
+    Takes a parsed query string fetches the forecast,
     compresses it and replies to the sender.
 
     Parameters
     ----------
-    query_string : string
-        An un-parsed query.
+    query : dict
+        An dictionary query
     reply_to : string
         The email address of the sender.  The compressed forecast is sent
         to this person.
-    forecast_path : string
+    subject : string (optional)
+        The subject of the email that is sent. If none, a summary of
+        the query is used.
+    forecast_path : string (optional)
         The path to an optional cached forecast.
-    output : file-like
-        A file like object to which the compressed forecast is written
+
+    Returns
+    ----------
+    forecast_attachment : file-like
+        A file-like object holding the forecast that was sent
     """
-    logging.debug(query_string)
-    query = saildocs.parse_saildocs_query(query_string)
     compressed_forecast = query_to_beaufort(query, forecast_path)
     logging.debug("Compressed Size: %d" % len(compressed_forecast))
+    # create a file-like forecast attachment
+    forecast_attachment = StringIO(compressed_forecast)
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
         raise saildocs.BadQuery("Forecast was too large (%d bytes) for sailmail!"
                        % len(compressed_forecast))
-    forecast_attachment = StringIO(compressed_forecast)
-    if output:
-        logging.debug("dumping file to output")
-        output.write(forecast_attachment.getvalue())
     # creates the new mime email
     file_fmt = '%Y-%m-%d_%H%m.fcst'
     filename = datetime.datetime.today().strftime(file_fmt)
     filename = '_'.join([query['type'], filename])
     weather_email = emaillib.create_email(reply_to, _windbreaker_email,
                               _email_body,
-                              subject=query_string,
+                              subject=subject or query_summary(query),
                               attachments={filename: forecast_attachment})
     logging.debug('Sending email to %s' % reply_to)
     emaillib.send_email(weather_email)
     logging.debug('Email sent.')
+    return forecast_attachment
 
 
-def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
+def process_email(mime_text, ncdf_weather=None,
+                  fail_hard=False, log_input=False):
     """
     Takes a mime_text email that contains one or several saildoc-like
     requests and replies to the sender with emails containing the
     desired compressed forecasts.
     """
     exceptions = None if fail_hard else Exception
-    logging.debug('Wind Breaker')
-    logging.debug(mime_text)
+    # here we store the input to a temp file so if it
+    # fails its easier to repeat the error.
+    _, tf = tempfile.mkstemp('query_email')
+    with open(tf, 'w') as f:
+        f.write(mime_text)
+    logging.debug("cached input to %s" % tf)
+    # pull information from the mime email text
     email_body = emaillib.get_body(mime_text)
     reply_to = emaillib.get_reply_to(mime_text)
     logging.debug('Extracted email body: %s' % str(email_body))
     if len(email_body) != 1:
         emaillib.send_error(reply_to,
                             "Your email should contain only one body")
-    # Turns a query string into a dict of params
-    logging.debug("About to parse saildocs")
     # The set makes sure there aren't duplicate queries.
-    queries = set(list(saildocs.iterate_queries(email_body[0])))
+    queries = set(list(saildocs.iterate_query_strings(email_body[0])))
     # if there are no queries let the sender know
     if len(queries) == 0:
         emaillib.send_error(reply_to,
             'We were unable to find any forecast requests in your email.')
     for query_string in queries:
         try:
-            process_query(query_string, reply_to=reply_to,
-                          forecast_path=ncdf_weather,
-                          output=output)
+            query = parse_query(query_string)
+            respond_to_query(query, reply_to=reply_to,
+                             forecast_path=ncdf_weather)
         except saildocs.BadQuery, e:
             # It would be nice to be able to try processing all queries
             # in an email even if some of them failed, but a hard fail on
@@ -157,7 +187,7 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
                                 ('Bad query: %s.' % query_string), e,
                                 reply_to)
             emaillib.send_error(reply_to,
-                                ("Error processing '%s'.  If there were other " +
+                                ("Bad query: '%s'.  If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
             if fail_hard:
@@ -172,8 +202,6 @@ def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
                                  "If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
-            if fail_hard:
-                raise
 
 
 def spot_message(spot, out=sys.stdout):

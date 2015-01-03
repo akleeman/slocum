@@ -65,10 +65,11 @@ def handle_query(args):
     Process a queries from the command line.  This is mostly used
     for debuging.
     """
-    queries = list(saildocs.iterate_queries(args.input.read()))
-    if len(queries) > 1:
+    queries = list(saildocs.iterate_query_strings(args.input.read()))
+    if len(queries) != 1:
         raise NotImplementedError("Can only process one query at a time")
-    args.output.write(windbreaker.query_to_beaufort(queries.pop(0),
+    query = windbreaker.parse_query(queries.pop(0))
+    args.output.write(windbreaker.query_to_beaufort(query,
                                                     args.forecast))
 
 
@@ -79,17 +80,11 @@ def handle_email(args):
     an packed ensemble forecast.
     """
     try:
-        # here we store the input to a temp file so if it
-        # fails its easier to repeat the error.
-        email_contents = args.input.read()
-        _, tf = tempfile.mkstemp('query_email')
-        with open(tf, 'w') as f:
-            f.write(email_contents)
-        logging.debug("cached input email to %s" % tf)
         # process the email
-        windbreaker.windbreaker(email_contents, args.forecast,
+        windbreaker.process_email(args.input.read(), args.forecast,
                                 output=args.output,
-                                fail_hard=args.fail_hard)
+                                fail_hard=args.fail_hard,
+                                log_input=True)
     except Exception, e:
         logging.exception(e)
         raise

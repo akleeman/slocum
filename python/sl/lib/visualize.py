@@ -9,6 +9,13 @@ from sl.lib import conventions as conv
 
 def spot_plot(fcsts):
 
+    assert fcsts[conv.LON].size == 1
+    assert fcsts[conv.LAT].size == 1
+    if fcsts[conv.LON].ndim == 1:
+        fcsts = fcsts.isel(**{conv.LON: 0})
+    if fcsts[conv.LAT].ndim == 1:
+        fcsts = fcsts.isel(**{conv.LAT: 0})
+
     plotters = {'wind_speed': wind_spread_plot,
                 'pressure': pressure_spread_plot,}
 #                           'wind_dir': wind_dir_spread_plot}
@@ -96,7 +103,7 @@ def spread_plot(variable, bin_divs, ax=None):
     if ax is None:
         ax = plt.gca()
 
-    assert variable.dims == (conv.ENSEMBLE, conv.TIME)
+    assert variable.dims == (conv.TIME, conv.ENSEMBLE)
     # the number of ensembles
     n = variable.shape[variable.dims.index(conv.ENSEMBLE)]
     # we assume that the CF units reference time is the time the
@@ -108,10 +115,10 @@ def spread_plot(variable, bin_divs, ax=None):
     bins = bins.reshape(variable.shape)
     assert np.all(bins > 0)
 
-    pm = square_bin(variable.values, bin_divs, zorder=-100, ax=ax)
+    pm = square_bin(variable.values.T, bin_divs, zorder=-100, ax=ax)
     xs = np.arange(times.size) + 0.5
     ys = np.arange(bin_divs.size)
-    ax.plot(xs, bins.T - 0.5, alpha=0.2)
+    ax.plot(xs, bins - 0.5, alpha=0.2)
 
     wind_speeds = np.round(bin_divs, 0).astype('int')
     ax.yaxis.set_ticks(ys)
