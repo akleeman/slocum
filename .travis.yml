@@ -23,9 +23,9 @@ matrix:
 
 # Install packages
 install:
-  - conda create --yes -n test_env python=2.7 pip nose mock numpy pandas scipy netCDF4
+  - conda create --yes -n test_env python=2.7 pip nose mock numpy pandas scipy netCDF4 matplotlib basemap
+  - pip install BeautifulSoup xray==0.3.1 pyproj
   - source activate test_env
-  - pip install xray pyproj
   - cd python
   - python setup.py install
 # Run test

@@ -1,9 +1,4 @@
-"""Slocum: Tools for getting better forecasts to sailors.
-
-A set of tools for serving ultra-compressed weather forecasts.  Includes
- an email-based forecats request service, compression utilities, and
- visualization/decompression tools.
-"""
+"""Slocum: Better forecasts for sailors."""
 
 DOCLINES = __doc__.split("\n")
 
@@ -33,11 +28,13 @@ VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
 requires = {'grib': ['gribapi'],
-            'gridded': ['xray >= 0.1.0',
-                        'netCDF4 >= 1.0.6',
+            'gridded': ['xray == 0.3.1',
                         'pyproj >= 1.9.3',
                         'pandas >= 0.13.1',
-                        'matplotlib >= 1.2.0']}
+                        'matplotlib >= 1.2.0',
+                        'BeautifulSoup',
+                        'netCDF4',
+                        'basemap']}
 requires['full'] = list(set(itertools.chain(*requires.values())))
 
 setup(name='slocum',
@@ -48,12 +45,7 @@ setup(name='slocum',
       author_email='akleeman@gmail.com',
       license='MIT',
       packages=['sl'],
-      install_requires=[
-          'BeautifulSoup>=3.2.0',
-          'numpy >= 1.8',
-          'pandas >= 0.13.1',
-      ],
-      extra_require=requires,
+      install_requires=requires['gridded'],
       tests_require=['nose >= 1.0'],
       test_suite='nose.collector',
       zip_safe=False)

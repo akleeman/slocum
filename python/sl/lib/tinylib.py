@@ -1,9 +1,9 @@
 import os
-import copy
 import zlib
-import numpy as np
 import logging
 import datetime
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(os.path.basename(__file__))
 
@@ -21,9 +21,10 @@ import sl.lib.conventions as conv
 from sl.lib import objects, units
 
 # the beaufort scale in m/s
-_beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
-                            33., 40., 47., 55., 63., 75.]) / 1.94384449
-# ensemble wind spead spread
+_beaufort_knots = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
+                            33., 40., 47., 55., 63., 75.])
+_beaufort_scale = _beaufort_knots / 1.94384449
+# ensemble wind speed spread
 _ws_spread_scale = _beaufort_scale
 # precipitation scale in kg.m-2.s-1
 _precip_scale = np.array([1e-8, 1., 5.]) / 3600.
@@ -41,12 +42,14 @@ _pressure_scale = np.array([97500., 99000., 99750,
                             102500., 103100., 104000.])
 
 _variables = {conv.WIND_SPEED: {'dtype': np.float32,
-                                'dims': (conv.TIME, conv.LAT, conv.LON),
+                                'dims': (conv.TIME, conv.ENSEMBLE,
+                                         conv.LAT, conv.LON),
                                 'divs': _beaufort_scale,
                                 'bits': 4,
                                 'attributes': {conv.UNITS: 'm/s'}},
               conv.WIND_DIR: {'dtype': np.float32,
-                              'dims': (conv.TIME, conv.LAT, conv.LON),
+                              'dims': (conv.TIME, conv.ENSEMBLE,
+                                       conv.LAT, conv.LON),
                               'divs': _direction_bins,
                               'bits': 4,
                               'attributes': {conv.UNITS: 'radians'}},
@@ -62,12 +65,14 @@ _variables = {conv.WIND_SPEED: {'dtype': np.float32,
                                         'Mean of top n (ens - gfs) deltas',
                                     'n': 2}},
               conv.PRECIP: {'dtype': np.float32,
-                              'dims': (conv.TIME, conv.LAT, conv.LON),
+                              'dims': (conv.TIME, conv.ENSEMBLE,
+                                       conv.LAT, conv.LON),
                               'divs': _precip_scale,
                               'bits': 2,
                               'attributes': {conv.UNITS: 'kg.m-2.s-1'}},
               conv.PRESSURE: {'dtype': np.float32,
-                              'dims': (conv.TIME, conv.LAT, conv.LON),
+                              'dims': (conv.TIME, conv.ENSEMBLE,
+                                       conv.LAT, conv.LON),
                               'divs': _pressure_scale,
                               'bits': 4,
                               'attributes': {conv.UNITS: 'Pa'}},
@@ -82,14 +87,16 @@ _variables = {conv.WIND_SPEED: {'dtype': np.float32,
               conv.TIME: {'dtype': np.int64,
                           'dims': (conv.TIME, ),
                           'least_significant_digit': 0},
+              conv.ENSEMBLE: {'dtype': np.int64,
+                              'dims': (conv.ENSEMBLE, )}
               }
 
-# shorthand for check_beaufort, to_beaufort
 _units = {k: _variables[k]['attributes'][conv.UNITS] for k in _variables
         if 'attributes' in _variables[k] and conv.UNITS in
         _variables[k]['attributes']}
 
 _variable_order = [conv.TIME, conv.LAT, conv.LON,
+                   conv.ENSEMBLE,
                    conv.WIND_SPEED, conv.WIND_DIR,
                    conv.ENS_SPREAD_WS,
                    conv.PRECIP, conv.PRESSURE]
@@ -108,7 +115,16 @@ def pack_ints(arr, req_bits=None):
         required bits (unless otherwise specified).
     req_bits : int (optional)
         The number of bits required to losslessly store arr.
+
+    Returns
+    ----------
+    packed_array : dict
+        A dictionary containing a key 'packed_array' which contains
+        a character string holding a packed version of 'arr', as well
+        as various other key/values used to reconstruct the original
+        array shape/dtype.
     """
+    assert np.all(np.isfinite(arr))
     # there has got to be a better way to check if an array
     # holds integers, but this does this trick
     try:
@@ -213,6 +229,7 @@ def tiny_array(arr, bits=None, divs=None, mask=None, wrap=False):
     (i.e. the '0' bin sits between the last and first bounding value in divs as
     is the case for angles).
     """
+    assert np.all(np.isfinite(arr))
     if mask is None:
         return tiny_unmasked(arr, bits=bits, divs=divs, wrap=wrap)
     else:
@@ -314,6 +331,7 @@ def tiny_bool(arr, mask=None):
     """
     A convenience wrapper around tiny_array to be used for boolean arrays.
     """
+    assert np.all(np.isfinite(arr))
     if not arr.dtype == 'bool':
         raise ValueError("expected a boolean valued array")
     return tiny_array(arr, bits=1, divs=np.array([0., 1.]), mask=mask)
@@ -390,6 +408,13 @@ def expand_masked(mask, packed_array, bits, shape, divs, dtype=None,
 
 
 def small_array(arr, least_significant_digit):
+    """
+    Creates a small array.  This is done by rounding to a least
+    significant digit and then zlib compressing te array.
+
+    See Also: expand_small_array
+    """
+    assert np.all(np.isfinite(arr))
     data = np.round(arr * np.power(10, least_significant_digit))
     return {'packed_array': zlib.compress(data.tostring(), 9),
             'dtype': arr.dtype,
@@ -397,29 +422,41 @@ def small_array(arr, least_significant_digit):
 
 
 def expand_small_array(packed_array, dtype, least_significant_digit):
+    """
+    Takes a the output from small_array and reconstructs a the original
+    (rounded) array
+    """
     arr = np.fromstring(zlib.decompress(packed_array), dtype=dtype)
     arr = arr / np.power(10, least_significant_digit)
     return arr
 
 
 def small_time(time_var):
-    # try to keep slocum from requiring netCDF4
-    import netCDF4
+    """
+    This packs the time variable by taking advantage of the fact that
+    time is monotonically increasing.  It first converts the starting
+    time to ordinal + seconds, then stores the incremental differences
+    using small_array()
+    """
     time_var = xray.conventions.encode_cf_variable(time_var)
     assert time_var.attrs[conv.UNITS].lower().startswith('hour')
-    origin = netCDF4.num2date([0],
-                              time_var.attrs[conv.UNITS],
-                              calendar='standard')[0]
+    origin = xray.conventions.decode_cf_datetime([0],
+                                                 time_var.attrs[conv.UNITS],
+                                                 calendar='standard')
+    origin = pd.to_datetime(origin[0])
     diffs = np.diff(np.concatenate([[0], time_var.values[:]]))
     np.testing.assert_array_equal(diffs.astype('int'), diffs)
     fromordinal = datetime.datetime.fromordinal(origin.toordinal())
     seconds = int(datetime.timedelta.total_seconds(origin - fromordinal))
     augmented = np.concatenate([[origin.toordinal(), seconds],
-            diffs.astype(_variables[conv.TIME]['dtype'])])
+                                diffs.astype(_variables[conv.TIME]['dtype'])])
     return small_array(augmented, least_significant_digit=0)
 
 
 def expand_small_time(packed_array, dtype, least_significant_digit):
+    """
+    Expands a small_time encoded time array.
+    """
     augmented = expand_small_array(packed_array, dtype,
                                    least_significant_digit)
     origin = datetime.datetime.fromordinal(augmented[0])
@@ -429,18 +466,29 @@ def expand_small_time(packed_array, dtype, least_significant_digit):
     return times, units
 
 
+def small_ensemble(ens_var):
+    """
+    All that matters when storing ensemble arrays is simply the
+    number of ensembles.
+    """
+    # make sure ens_var isn't so large that it doesn't fit in a byte
+    assert ens_var.size == np.array(ens_var.size, np.int8)
+    # return a string encoded byte
+    return np.array(ens_var.size, np.int8).tostring()
+
+
 def check_beaufort(obj):
 
-    if conv.UWND in obj.variables:
+    if conv.UWND in obj:
         units.convert_units(obj[conv.UWND], _units[conv.WIND_SPEED])
         # we need both UWND and VWND to do anything with wind
-        assert conv.VWND in obj.variables
+        assert conv.VWND in obj
         units.convert_units(obj[conv.VWND], _units[conv.WIND_SPEED])
         # double check
         assert obj[conv.UWND].attrs[conv.UNITS] == _units[conv.WIND_SPEED]
         assert obj[conv.VWND].attrs[conv.UNITS] == _units[conv.WIND_SPEED]
 
-    if conv.ENS_SPREAD_WS in obj.variables:
+    if conv.ENS_SPREAD_WS in obj:
         units.convert_units(obj[conv.ENS_SPREAD_WS],
                 _units[conv.ENS_SPREAD_WS])
         # double check
@@ -456,7 +504,7 @@ def check_beaufort(obj):
     obj[conv.LON].values[:] = np.mod(obj[conv.LON].values + 180., 360) - 180.
     assert obj[conv.UWND].shape == obj[conv.VWND].shape
 
-    if conv.PRECIP in obj.variables:
+    if conv.PRECIP in obj:
         units.convert_units(obj[conv.PRECIP], _units[conv.PRECIP])
 
 
@@ -466,9 +514,6 @@ def to_beaufort(obj):
     variables and compresses it by converting zonal and meridional
     winds to wind speed and direction, then compressing to
     beaufort scales and second order cardinal directions.
-
-    Parameters
-    ----------
     """
     # first we make sure all the data is in the expected units
     check_beaufort(obj)
@@ -482,6 +527,7 @@ def to_beaufort(obj):
                             _variables[v]['least_significant_digit'])
         encoded_variables[v] = small['packed_array']
     # convert the wind speeds to a beaufort scale and store them
+    # TODO: this would be a lot faster if we used numpy directly
     wind = [objects.Wind(*x) for x in zip(uwnd[:].flatten(), vwnd[:].flatten())]
     speeds = np.array([x.speed for x in wind]).reshape(uwnd.shape)
     assert obj[conv.UWND].attrs[conv.UNITS] == _units[conv.WIND_SPEED]
@@ -499,18 +545,21 @@ def to_beaufort(obj):
             wrap=True)
     encoded_variables[conv.WIND_DIR] = tiny_direction['packed_array']
 
-    if conv.ENS_SPREAD_WS in obj.variables:
+    if conv.ENSEMBLE in obj:
+        encoded_variables[conv.ENSEMBLE] = small_ensemble(obj[conv.ENSEMBLE])
+
+    if conv.ENS_SPREAD_WS in obj:
         tiny_ws_spread = tiny_array(obj[conv.ENS_SPREAD_WS].values,
                 bits=_variables[conv.ENS_SPREAD_WS]['bits'],
                 divs=_ws_spread_scale)
         encoded_variables[conv.ENS_SPREAD_WS] = tiny_ws_spread['packed_array']
 
-    if conv.PRECIP in obj.variables:
+    if conv.PRECIP in obj:
         tiny_precip = tiny_array(obj[conv.PRECIP].values,
                 bits=_variables[conv.PRECIP]['bits'], divs=_precip_scale)
         encoded_variables[conv.PRECIP] = tiny_precip['packed_array']
 
-    if conv.PRESSURE in obj.variables:
+    if conv.PRESSURE in obj:
         tiny_pres = tiny_array(obj[conv.PRESSURE].values,
                 bits=_variables[conv.PRESSURE]['bits'], divs=_pressure_scale)
         encoded_variables[conv.PRESSURE] = tiny_pres['packed_array']
@@ -526,58 +575,104 @@ def to_beaufort(obj):
         return ''.join([header, packed])
 
     payload = ''.join(stringify(k, v) for k, v in encoded_variables.iteritems())
-    logger.debug("compression ratio: %f" %
-                 (len(zlib.compress(payload, 9)) / float(len(payload))))
     return zlib.compress(payload, 9)
 
 
 def unstring_beaufort(payload):
-    payload = zlib.decompress(payload)
+    """
+    This takes an encoded set of variables and decodes them.
+    The payload starts with a variable id, followed by the
+    length of the data.  This can be later used, along with the
+    _variables lookup table, to rebuild a full xray object.
+    """
     while len(payload):
+        # the first bit is the variable id,
+        # the second and third bits store the length of the array
         vid, l0, l1 = np.fromstring(payload[:3], dtype=np.uint8)
+        # convert the two single bit lengths to the full length
         vlen = (l0 << 8) + l1
+        # the packed array resides in the rest of the payload
         packed = payload[3:(vlen + 3)]
-        payload = payload[(vlen + 3):]
+        # determine the variable name
         vname = _variable_order[vid]
+        # use the _variable lookup table to infer dimensions etc ...
         info = _variables[vname]
+        # the resulting info should be unpackable
         info['packed_array'] = packed
+        # discard the now parsed variable
+        payload = payload[(vlen + 3):]
         yield vname, info
 
 
 def beaufort_to_dict(payload):
-    variables = list(unstring_beaufort(payload))
+    """
+    Unpacks a tiny forecast and fills in dimensions and attributes
+    using the _variables lookup table.  This can be used directly
+    with xray.Dataset to build a new dataset.
+    """
+    payload = zlib.decompress(payload)
+    variables = dict(unstring_beaufort(payload))
     out = {}
-    for vname, info in variables:
+
+    def infer_shape(dims, cur_vars):
+        def iter_dims():
+            # This takes the current set of variables and infers the
+            for d in dims:
+                if d == conv.ENSEMBLE and conv.ENSEMBLE not in cur_vars:
+                    # skip ensemble dimension if it doesn't exist
+                    continue
+                yield d, cur_vars[d][1].size
+        dims = list(iter_dims())
+        # returns a list of dims and the shapes
+        return [x for x, _ in dims], [y for _, y in dims]
+
+    # make sure we go in the variable order, otherwise
+    # some variables may require dimension that haven't been
+    # updated yet
+    for vname in _variable_order:
+        if vname not in variables:
+            continue
+        info = variables[vname]
         if vname == conv.TIME:
+            # expand time
             data, time_units = expand_small_time(
                     info['packed_array'], info['dtype'],
                     info['least_significant_digit'])
             info['attributes'] = {conv.UNITS: time_units}
             out[vname] = ((vname), data, info.get('attributes', None))
         elif vname in [conv.LAT, conv.LON]:
+            # expand latitude and longitude
             data = expand_small_array(info['packed_array'],
                                      info['dtype'],
                                      info['least_significant_digit'])
             out[vname] = (vname, data, info.get('attributes', None))
+        elif vname == conv.ENSEMBLE:
+            # expand ensemble numbers
+            data = info['packed_array']
+            n = np.asscalar(np.fromstring(data, dtype=np.int8))
+            out[conv.ENSEMBLE] = (conv.ENSEMBLE, np.arange(n))
         elif vname == conv.WIND_DIR:
-            shape = [out[d][1].size for d in info['dims']]
+            # expand the wind directions
+            dims, shape = list(infer_shape(info['dims'], out))
             data = expand_array(info['packed_array'],
                                  bits=info['bits'],
                                  shape=shape,
                                  divs=info['divs'],
                                  dtype=info['dtype'],
                                  wrap_val=np.pi)
-            out[vname] = (info['dims'], data,
+            out[vname] = (dims, data,
                           info.get('attributes', None))
         else:
-            shape = [out[d][1].size for d in info['dims']]
+            # all other variables
+            dims, shape = list(infer_shape(info['dims'], out))
             data = expand_array(info['packed_array'],
                                  bits=info['bits'],
                                  shape=shape,
                                  divs=info['divs'],
                                  dtype=info['dtype'])
-            out[vname] = (info['dims'], data,
+            out[vname] = (dims, data,
                           info.get('attributes', None))
+    # add vector wind speeds back to the object
     dims = out[conv.WIND_SPEED][0]
     vwnd = -np.cos(out[conv.WIND_DIR][1]) * out[conv.WIND_SPEED][1]
     uwnd = -np.sin(out[conv.WIND_DIR][1]) * out[conv.WIND_SPEED][1]
@@ -587,9 +682,10 @@ def beaufort_to_dict(payload):
 
 
 def from_beaufort(payload):
+    """
+    Inverse function of to_beaufort()
+    """
     variables = beaufort_to_dict(payload)
-    out = xray.Dataset()
-    for k, v in variables.iteritems():
-        out[k] = v
-
+    out = xray.Dataset(variables)
+    out[conv.TIME] = xray.conventions.decode_cf_variable(out[conv.TIME])
     return units.normalize_variables(out)

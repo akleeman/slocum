@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 import datetime
 
 import sl.lib.conventions as conv
@@ -58,15 +59,19 @@ _all_units = [(_speed, 'm/s', None),
 
 
 def _convert(v, possible_units, cur_units, new_units, validate=None):
-    if cur_units == new_units:
+    if cur_units == new_units and validate is None:
+        logging.debug("units %s and %s are the same, skipping conversion"
+                      % (cur_units, new_units))
         return v
     assert v.values.dtype == np.float32
+    data = v.values
     mult = (possible_units[cur_units] / possible_units[new_units])
-    v.values[:] *= mult
+    data = data * mult
     if validate is not None:
-        v.values[:] = validate(v.values[:])
+        data = validate(data)
+    v.values[...] = data
     v.attrs[conv.UNITS] = new_units
-    return v
+    return (v.dims, data, v.attrs)
 
 
 def convert_units(v, new_units):
@@ -92,8 +97,8 @@ def normalize_units(v):
         cur_units = v.attrs[conv.UNITS]
         for (possible_units, default, validate) in _all_units:
             if cur_units in possible_units:
-                _convert(v, possible_units, cur_units, default,
-                         validate=validate)
+                return _convert(v, possible_units, cur_units, default,
+                                validate=validate)
                 break
     return v
 
@@ -102,8 +107,8 @@ def normalize_variables(dataset):
     """
     Iterates over all variables in a dataset and normalizes their units.
     """
-    for _, v in dataset.variables.iteritems():
-        normalize_units(v)
+    for vn, v in dataset.iteritems():
+        dataset[vn] = normalize_units(v)
     return dataset
 
 

@@ -1,29 +1,25 @@
 import os
 import sys
-import zlib
+import json
+import xray
 import numpy as np
-import base64
 import logging
+import tempfile
 import datetime
 
 from cStringIO import StringIO
 
-from xray import open_dataset, backends
-
 from sl import poseidon
 from sl.lib import conventions as conv, units
 from sl.lib import objects, tinylib, saildocs, emaillib
-from sl.lib.objects import NautAngle
-import json
-
-logger = logging.getLogger(os.path.basename(__file__))
-logger.setLevel(logging.DEBUG)
 
 _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
 
 _email_body = """
-This forecast brought to you by your friends on Saltbreaker.
+%(
+
+This forecast was brought to you by your friends on Saltbreaker.
 
 Remember, always be skeptical of numerical forecasts (such as this).
 For a full disclaimer visit www.ensembleweather.com."""
@@ -51,12 +47,14 @@ def arg_closest(x, reference):
 
 
 def get_forecast(query, path=None):
+    """
+    Here we do some crude caching which allows the user to specify a path
+    to a local file that holds the data instead of going through
+    opendap/poseidon.
+    """
     warnings = []
-    # Here we do some crude caching which allows the user to specify a path
-    # to a local file that holds the data instead of going through
-    # poseidon.
     if path and os.path.exists(path):
-        fcst = open_dataset(path)
+        fcst = poseidon.forecast(query, xray.open_dataset(path))
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
         fcst = poseidon.forecast(query)
@@ -65,109 +63,138 @@ def get_forecast(query, path=None):
     return fcst
 
 
-def process_query(query_string, reply_to, forecast_path=None, output=None):
+def parse_query(query_string):
+    return saildocs.parse_saildocs_query(query_string)
+
+
+def query_summary(query):
     """
-    Takes an un-parsed query string, parses it, fetches the forecast
+    Takes a query and returns a summary
+    """
+    if query['type'] == 'spot':
+        loc_string = '%(latitude)6.2fN,%(longitude)6.2fE' % query['location']
+    elif query['type'] == 'gridded':
+        loc_string = '%(S)6.2fN,%(N)6.2fN,%(E)6.2fE%(W)6.2f' % query['domain']
+
+    time_string = '%d-%d Hours' % (min(query['hours']),
+                                   max(query['hours']))
+    summary = ' '.join([query['type'], query['model'], loc_string, time_string])
+    return summary
+
+
+def query_to_beaufort(query, forecast_path=None):
+    """
+    Takes a query and returns the corresponding tiny forecast.
+    """
+    # log the query so debugging others request failures will be easier.
+    logging.debug(json.dumps(query))
+    # Acquires a forecast corresponding to a query
+    fcst = get_forecast(query, path=forecast_path)
+    logging.debug('Obtained the forecast')
+    compressed_forecast = tinylib.to_beaufort(fcst)
+    logging.debug("Compressed Size: %d" % len(compressed_forecast))
+    return compressed_forecast
+
+
+def respond_to_query(query, reply_to, subject=None, forecast_path=None):
+    """
+    Takes a parsed query string fetches the forecast,
     compresses it and replies to the sender.
 
     Parameters
     ----------
-    query_string : string
-        An un-parsed query.
+    query : dict
+        An dictionary query
     reply_to : string
         The email address of the sender.  The compressed forecast is sent
         to this person.
-    forecast_path : string
+    subject : string (optional)
+        The subject of the email that is sent. If none, a summary of
+        the query is used.
+    forecast_path : string (optional)
         The path to an optional cached forecast.
-    output : file-like
-        A file like object to which the compressed forecast is written
+
+    Returns
+    ----------
+    forecast_attachment : file-like
+        A file-like object holding the forecast that was sent
     """
-    logger.debug(query_string)
-    query = saildocs.parse_saildocs_query(query_string)
-    # log the query so debugging others request failures will be easier.
-    logger.debug(json.dumps(query))
-    # Acquires a forecast corresponding to a query
-    fcst = get_forecast(query, path=forecast_path)
-    logger.debug('Obtained the forecast')
-    if conv.ENSEMBLE in fcst.dimensions:
-        tinys = [tinylib.to_beaufort(fcst.indexed(**{conv.ENSEMBLE: i}))
-                 for i in range(fcst.dimensions[conv.ENSEMBLE])]
-        tiny_fcst = '\t'.join([base64.b64encode(x) for x in tinys])
-    else:
-        tiny_fcst = tinylib.to_beaufort(fcst)
-    compressed_forecast = zlib.compress(tiny_fcst, 9)
-    logger.debug("Compressed Size: %d" % len(compressed_forecast))
+    compressed_forecast = query_to_beaufort(query, forecast_path)
+    logging.debug("Compressed Size: %d" % len(compressed_forecast))
+    # create a file-like forecast attachment
+    forecast_attachment = StringIO(compressed_forecast)
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
         raise saildocs.BadQuery("Forecast was too large (%d bytes) for sailmail!"
                        % len(compressed_forecast))
-    forecast_attachment = StringIO(compressed_forecast)
-    if output:
-        logger.debug("dumping file to output")
-        output.write(forecast_attachment.getvalue())
     # creates the new mime email
     file_fmt = '%Y-%m-%d_%H%m.fcst'
     filename = datetime.datetime.today().strftime(file_fmt)
     filename = '_'.join([query['type'], filename])
     weather_email = emaillib.create_email(reply_to, _windbreaker_email,
                               _email_body,
-                              subject=query_string,
+                              subject=subject or query_summary(query),
                               attachments={filename: forecast_attachment})
-    logger.debug('Sending email to %s' % reply_to)
+    logging.debug('Sending email to %s' % reply_to)
     emaillib.send_email(weather_email)
-    logger.debug('Email sent.')
+    logging.debug('Email sent.')
+    return forecast_attachment
 
 
-def windbreaker(mime_text, ncdf_weather=None, output=None, fail_hard=False):
+def process_email(mime_text, ncdf_weather=None,
+                  fail_hard=False, log_input=False):
     """
     Takes a mime_text email that contains one or several saildoc-like
     requests and replies to the sender with emails containing the
     desired compressed forecasts.
     """
     exceptions = None if fail_hard else Exception
-    logger.debug('Wind Breaker')
-    logger.debug(mime_text)
+    # here we store the input to a temp file so if it
+    # fails its easier to repeat the error.
+    _, tf = tempfile.mkstemp('query_email')
+    with open(tf, 'w') as f:
+        f.write(mime_text)
+    logging.debug("cached input to %s" % tf)
+    # pull information from the mime email text
     email_body = emaillib.get_body(mime_text)
     reply_to = emaillib.get_reply_to(mime_text)
-    logger.debug('Extracted email body: %s' % str(email_body))
+    logging.debug('Extracted email body: %s' % str(email_body))
     if len(email_body) != 1:
         emaillib.send_error(reply_to,
                             "Your email should contain only one body")
-    # Turns a query string into a dict of params
-    logger.debug("About to parse saildocs")
     # The set makes sure there aren't duplicate queries.
-    queries = set(list(saildocs.iterate_queries(email_body[0])))
+    queries = set(list(saildocs.iterate_query_strings(email_body[0])))
     # if there are no queries let the sender know
     if len(queries) == 0:
         emaillib.send_error(reply_to,
             'We were unable to find any forecast requests in your email.')
     for query_string in queries:
         try:
-            process_query(query_string, reply_to=reply_to,
-                          forecast_path=ncdf_weather,
-                          output=output)
+            query = parse_query(query_string)
+            respond_to_query(query, reply_to=reply_to,
+                             forecast_path=ncdf_weather)
         except saildocs.BadQuery, e:
             # It would be nice to be able to try processing all queries
             # in an email even if some of them failed, but a hard fail on
             # the first error will make sure we never accidentally send
             # tons of error emails to the user.
-            logger.error(e)
+            logging.error(e)
             emaillib.send_error('akleeman@gmail.com',
                                 ('Bad query: %s.' % query_string), e,
                                 reply_to)
             emaillib.send_error(reply_to,
-                                ("Error processing '%s'.  If there were other " +
+                                ("Bad query: '%s'.  If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
             if fail_hard:
                 raise
         except exceptions, e:
-            logger.error(e)
+            logging.error(e)
             emaillib.send_error('akleeman@gmail.com',
                                 ('Query %s just failed.' % query_string), e)
             emaillib.send_error(reply_to,
                                 ("Error processing %s.  Alex just got an urgent"
-                                 "e-mail, he's looking into the problem. "
+                                 " e-mail, he's looking into the problem. "
                                  "If there were other " +
                                  "queries in the same email they won't be " +
                                  "processed.\n") % query_string, e)
@@ -203,8 +230,11 @@ def spot_message(spot, out=sys.stdout):
     speeds = np.array([w.speed for w in winds])
     forces = np.digitize(speeds, beaufort_in_knots)
 
-    pressures = np.digitize(spot['pressure'][1].reshape(-1),
-                            tinylib._pressure_scale)
+    if 'pressure' in spot:
+        pressures = np.digitize(spot['pressure'][1].reshape(-1),
+                                tinylib._pressure_scale)
+    else:
+        pressures = np.full_like(speeds, 0.)
 
     def iter_lines():
         yield '%20s\t%9s\t%9s' % ('Date', ' Wind (Knots)', 'MSL Press (Pa)')

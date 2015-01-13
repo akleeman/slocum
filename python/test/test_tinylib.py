@@ -120,7 +120,7 @@ class TinylibTest(unittest.TestCase):
                           np.arange(35., 40.),
                           {'units': 'degrees north'})
 
-        shape = tuple([ds.dimensions[x]
+        shape = tuple([ds.dims[x]
                        for x in ['time', 'longitude', 'latitude']])
         mids = 0.5 * (tinylib._beaufort_scale[1:] +
                       tinylib._beaufort_scale[:-1])
