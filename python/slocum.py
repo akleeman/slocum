@@ -14,7 +14,7 @@ logging.basicConfig(filename='/tmp/slocum.log',
                     format=fmt)
 
 logger = logging.getLogger(os.path.basename(__file__))
-file_handler = logging.FileHandler("/tmp/slocum.log")
+file_handler = logging.FileHandler("/%s/slocum.log" % tempfile.gettempdir())
 logger.addHandler(file_handler)
 console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
