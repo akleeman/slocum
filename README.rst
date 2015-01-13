@@ -1,13 +1,20 @@
 Slocum -- A tool for ocean passage planning
+===========================================
+
+**slocum** is an open source project which provides weather forecasts
+to the bandwidth impaired (primarily sailors).  It includes a weather
+specific compression algorithm which results in forecasts attachments
+that are the fraction of the size of saildoc <http://www.saildocs.com/>`_
+forecasts.
+
+Why the name **slocum**?
+-----------
 
 Joshua Slocum (February 20, 1844 -on or shortly after November 14, 1909)
 was a Canadian-American seaman and adventurer, a noted writer, and the first
 man to sail single-handedly around the world. In 1900 he told the story of
 this in Sailing Alone Around the World. He disappeared in November 1909
 while aboard his boat, the Spray. (wikipedia)
-
-Why Slocum?
------------
 
 In "Sailing Alone Around the World" he talks about his tin clock:
 
@@ -19,19 +26,4 @@ If Slocum was able to successfully circumnavigate via celestial navigation
 using a clock with no minute hand, then modern day sailors should be able
 to get by using weather forecasts without floating point precision.
 
-INSTALL
--------
 
-TODO : flush out all the dependencies
-
-Installing the gripapi in a python virtual environment
-
-Get the latest source from:
-
-https://software.ecmwf.int/wiki/display/GRIB/Releases
-
-Run configure with the path to your virtual env.
-./configure --prefix=/path/to/virtual/env/python2.7/ --enable-python
-make
-make install
-echo grib_api > /path/to/virtual/env/python2.7/lib/python2.7/site-packages/gribapi.pth
