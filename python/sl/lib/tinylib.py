@@ -21,8 +21,9 @@ import sl.lib.conventions as conv
 from sl.lib import objects, units
 
 # the beaufort scale in m/s
-_beaufort_scale = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
-                            33., 40., 47., 55., 63., 75.]) / 1.94384449
+_beaufort_knots = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
+                            33., 40., 47., 55., 63., 75.])
+_beaufort_scale = _beaufort_knots / 1.94384449
 # ensemble wind speed spread
 _ws_spread_scale = _beaufort_scale
 # precipitation scale in kg.m-2.s-1

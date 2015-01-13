@@ -29,7 +29,7 @@ _servers = ['http://thredds.ucar.edu',
             'http://unidata2-new.ssec.wisc.edu',]
 
 _models = {'gefs': 'NCEP/GEFS/Global_1p0deg_Ensemble/members',
-            'nww3': 'NCEP/WW3/Global/files/',
+            'nww3': 'NCEP/WW3/Global',
             'gfs': 'NCEP/GFS/Global_0p5deg/member',
             }
 

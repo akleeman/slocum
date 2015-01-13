@@ -3,8 +3,26 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from matplotlib import patches
+
 from sl.lib import tinylib, units
 from sl.lib import conventions as conv
+
+
+def axis_figure(axis=None, figure=None):
+    """
+    A utility function used to parse axis and figure
+    arguments such that they default to the current
+    figure and axis.
+    """
+    if not axis and not figure:
+        figure = plt.gcf()
+        axis = plt.gca()
+    if not figure and axis:
+        figure = axis.figure
+    if not axis and figure:
+        axis = figure.gca()
+    return axis, figure
 
 
 def spot_plot(fcsts):
@@ -60,16 +78,13 @@ def pressure_spread_plot(fcst, ax=None):
     press = fcst[conv.PRESSURE]
     scale = tinylib._pressure_scale
     spread_plot(press, scale, ax=ax)
-
-    min_bin = np.sum(scale <= np.min(press.values)) - 2
-    min_bin = np.maximum(min_bin, 0)
-    max_bin = np.sum(scale <= np.max(press.values)) + 1
-    max_bin = np.minimum(max_bin, press.size)
-    ax.set_ylim([min_bin, max_bin])
     ax.set_title("Pressure (MSL)", fontstyle='oblique')
 
 
 def wind_spread_plot(fcst, ax=None):
+    """
+    Adds wind speed with wind direction circles on the top of the plot.
+    """
     if ax is None:
         plt.gca()
 
@@ -91,16 +106,14 @@ def wind_spread_plot(fcst, ax=None):
     ax.yaxis.set_ticklabels(forces, minor=True)
     ax.set_ylim([0, max_bin])
 
-    from sl.lib import plotlib
-
-    # add a circle for each time point
+    # add a wind circle for each time
     for i, (_, one_time) in enumerate(fcst[conv.WIND_DIR].groupby(conv.TIME)):
-        circle = plotlib.WindCircle(i + 0.5, max_bin - 0.5,
-                                    np.ones(one_time.shape), one_time.values,
-                                    0.45, ax=ax,
-                                    cmap=plt.cm.get_cmap('Blues'),
-                                    norm=plt.Normalize(vmin=0., vmax=1),
-                                    wind_alpha=0.3)
+        circle = WindCircle(i + 0.5, max_bin - 0.5,
+                            np.ones(one_time.shape), one_time.values,
+                            0.45, ax=ax,
+                            cmap=plt.cm.get_cmap('Blues'),
+                            norm=plt.Normalize(vmin=0., vmax=1),
+                            wind_alpha=0.3)
 
     ax.set_ylabel("Wind Speed (knots)")
     ax.set_title("Wind", fontstyle='oblique')
@@ -145,6 +158,12 @@ def spread_plot(variable, bin_divs, ax=None):
     cb = plt.colorbar(pm, cax=cax, ax=ax)
     cb.set_label("Forecast Probability")
 
+    min_bin = np.sum(bin_divs <= np.min(variable.values)) - 2
+    min_bin = np.maximum(min_bin, 0)
+    max_bin = np.sum(bin_divs <= np.max(variable.values)) + 1
+    max_bin = np.minimum(max_bin, variable.size)
+    ax.set_ylim([min_bin, max_bin])
+
 
 def square_bin(y, y_bins, x=None, ax=None, *args, **kwdargs):
     if ax is None:
@@ -159,34 +178,60 @@ def square_bin(y, y_bins, x=None, ax=None, *args, **kwdargs):
                          norm=plt.normalize(vmin=0., vmax=1.),
                          *args, **kwdargs)
 
-#     if save_path:
-#         lat_name = 'S' if lat < 0 else 'N'
-#         lon_name = 'W' if lon < 0 else 'E'
-#         time_str = t0_stamp.item().strftime('%Y%m%dT%HZ')
-#         file_name = 'se_%s_%4.1f%s-%5.1f%s' % (time_str,
-#                 abs(lat), lat_name, abs(lon), lon_name)
-#         if f_var:
-#             file_name += '_%s' % f_var
-#         if plot_type:
-#             file_name += '_%s' % plot_type
-#         file_name += '.svg'
-#         plt.savefig(os.path.join(save_path, file_name), bbox_inches='tight')
-#     else:
-#         plt.show()
-#
-#     plt.close()
-#
-#
-#
-#
-#
-#
-#
-#
-# def plot_ensemble_spot(fcsts):
-#     assert fcsts.dims['latitude'] == 1
-#     assert fcsts.dims['longitude'] == 1
-#     fcsts = fcsts.isel(latitude=0, longitude=0)
-#     spread_plot(fcsts['wind_speed'])
 
+class WindCircle(object):
 
+    def __init__(self, x, y, speeds, directions, radius,
+                 cmap=None, norm=None, ax=None, fig=None,
+                 wind_alpha=0.7, circle_alpha=0.6):
+        self.axis, self.fig = axis_figure(ax, fig)
+        self.x = x
+        self.y = y
+        self.center = np.array([self.x, self.y]).flatten()
+        self.radius = radius
+        self.cm = cmap
+        self.norm = norm
+        self.wind_alpha = wind_alpha
+        self.circle_alpha = circle_alpha
+        self.speeds = speeds
+        self.directions = directions
+        self.polys = self._build_polys(self.speeds, self.directions)
+        self.circle = self._build_circle()
+        self.axis.add_patch(self.circle)
+        [self.axis.add_patch(poly) for poly in self.polys]
+
+    def _build_circle(self):
+        return patches.Circle([self.x, self.y], radius=self.radius,
+                                edgecolor='k', facecolor='w',
+                                zorder=10, alpha=self.circle_alpha)
+
+    def radial(self, theta):
+        return self.center + self.radius * np.array([np.sin(theta), np.cos(theta)])
+
+    def _poly(self, speed, direction):
+        xy = np.vstack([self.center,
+                        self.radial(direction - np.pi / 16.),
+                        self.radial(direction),
+                        self.radial(direction + np.pi / 16.)])
+        color = self.cm(self.norm(np.atleast_1d(speed)), alpha=self.wind_alpha)[0]
+        return patches.Polygon(xy, closed=True, color=color, zorder=11)
+
+    def _build_polys(self, speeds, directions):
+        speeds = speeds.flatten()
+        directions = directions.flatten()
+        isvalid = np.logical_and(np.isfinite(speeds), np.isfinite(directions))
+        return [self._poly(ws, wd)
+                for ws, wd in zip(speeds[isvalid], directions[isvalid])]
+
+    def update(self, speeds, directions):
+        new_polys = self._build_polys(speeds, directions)
+        for poly, new_poly in zip(self.polys, new_polys):
+            poly.xy[:] = new_poly.xy[:]
+            poly.set_facecolor(new_poly.get_facecolor())
+            poly.set_edgecolor(new_poly.get_edgecolor())
+        self.fig.canvas.blit(self.axis.bbox)
+
+    def draw(self):
+        self.axis.draw_artist(self.circle)
+        [self.axis.draw_artist(poly) for poly in self.polys]
+        self.fig.canvas.blit(self.axis.bbox)
