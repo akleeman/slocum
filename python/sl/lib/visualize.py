@@ -39,7 +39,7 @@ def spot_plot(fcsts):
 
     plotters = {'wind_speed': wind_spread_plot,
                 'pressure': pressure_spread_plot,}
-    variables = set(plotters.keys()).intersection(fcsts.variables.keys())
+    variables = set(plotters.keys()).intersection(fcsts.keys())
 
     fig, axes = plt.subplots(len(variables), 1, sharex=True,
                              figsize=(fcsts['time'].size / 2.6, len(variables) * 4))
@@ -175,7 +175,7 @@ def square_bin(y, y_bins, x=None, ax=None, *args, **kwdargs):
                                           bins=(np.arange(xbins + 1), y_bins))
     probs = counts.T / np.sum(counts, axis=1)
     return ax.pcolormesh(probs, cmap=plt.cm.get_cmap('Blues'),
-                         norm=plt.normalize(vmin=0., vmax=1.),
+                         norm=plt.Normalize(vmin=0., vmax=1.),
                          *args, **kwdargs)
 
 
