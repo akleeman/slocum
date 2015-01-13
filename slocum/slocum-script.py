@@ -20,15 +20,15 @@ console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
 logger.setLevel("INFO")
 
-from sl import windbreaker
-from sl.lib import (griblib, tinylib, rtefcst, enslib, saildocs, conventions)
+import windbreaker
+from .lib import (griblib, tinylib, rtefcst, enslib, saildocs, conventions)
 
 
 def handle_spot(args):
     """
     Converts a packed spot forecast to a spot text message.
     """
-    from sl.lib import visualize
+    from .lib import visualize
     payload = args.input.read()
     fcsts = tinylib.from_beaufort(payload)
     if conventions.ENSEMBLE in fcsts:
@@ -214,8 +214,8 @@ _task_handler = {'email': (handle_email, setup_parser_email),
                                     setup_parser_route_forecast),
                  'spot': (handle_spot, setup_parser_spot)}
 
-if __name__ == "__main__":
 
+def main():
     parser = argparse.ArgumentParser(description="""
     Slocum -- A tool for ocean passage planning.
 
@@ -237,3 +237,6 @@ if __name__ == "__main__":
     # parse the arguments and run the handler associated with each task
     args = parser.parse_args()
     args.func(args)
+
+if __name__ == "__main__":
+    main()

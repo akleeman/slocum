@@ -77,7 +77,7 @@ function slocum {
   sudo apt-get install libatlas-dev liblapack-dev libblas-dev build-essential gfortran -y
   sudo apt-get install libgrib-api-dev libgeos-dev libopenjpeg-dev
   sudo pip install numpy
-  sudo pip install BeautifulSoup
+  sudo pip install beautiful-soup
   sudo pip install netCDF4
   sudo pip install pygrib
   sudo pip install basemap

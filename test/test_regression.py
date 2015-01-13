@@ -8,18 +8,18 @@ import datetime
 import functools
 import contextlib
 
-from sl.lib import tinylib
+from slocum.lib import tinylib
 
 from email import Parser
 
-_data_dir = os.path.join(os.path.dirname(__file__), '../..', 'data')
+_data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
 
 
 class WindbreakerRegression(unittest.TestCase):
 
     @contextlib.contextmanager
     def get_windbreaker(self, email_store):
-        from sl import windbreaker
+        from slocum import windbreaker
 
         def mock_send_email(*args, **kwdargs):
             email_store.append(functools.partial(lambda x: x, *args, **kwdargs))

@@ -6,22 +6,18 @@ This contains tools for accessing data about the future/past state of the seas.
 from __future__ import with_statement
 
 import os
-import numpy as np
-import pandas as pd
+import xray
 import urllib
 import urllib2
 import logging
 import urlparse
 import datetime
+import numpy as np
+import pandas as pd
 
-from BeautifulSoup import BeautifulSoup
-
-import xray
-
-import sl.lib.conventions as conv
-
-from sl.lib import units
-from sl.lib.objects import NautAngle
+from .lib import conventions as conv
+from .lib import units
+from .lib.objects import NautAngle
 
 logger = logging.getLogger(os.path.basename(__file__))
 
@@ -59,15 +55,14 @@ def latest(model, server):
     determine the uri to the openDAP data set containing the most
     recent forecast.
     """
+    from bs4 import BeautifulSoup
     # create a beatiful soup
     f = urllib2.urlopen(latest_url(model, server))
     soup = BeautifulSoup(f.read())
 
     def is_grib(x):
         # checks if the beautiful soup 'a' tag holds the latest href
-        text = x.fetchText()
-        return len(text) == 1 and ('grib2' in str(text[0]) or
-                                   'latest' in str(text[0]).lower())
+        return 'grib2' in str(x.text) or 'latest' in str(x.text).lower()
     # get all the possible href links to the latest forecast
     atag = [x for x in soup.findAll("a") if is_grib(x)]
     # we expect there to be only one match

@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from sl import poseidon
+from slocum import poseidon
 
 import xray
 

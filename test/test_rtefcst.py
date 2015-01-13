@@ -7,10 +7,10 @@ import os.path
 import pickle
 import numpy as np
 
-from sl.lib import rtefcst
-from sl.lib import objects
-from sl.lib import tinylib
-from sl.lib import units
+from slocum.lib import rtefcst
+from slocum.lib import objects
+from slocum.lib import tinylib
+from slocum.lib import units
 
 TEST_DIR = 'test'
 

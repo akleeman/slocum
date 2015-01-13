@@ -2,7 +2,7 @@ import numpy as np
 import logging
 import datetime
 
-import sl.lib.conventions as conv
+import slocum.lib.conventions as conv
 
 _precip_rate = {'mm/hr': 3600.,
                 'kg.m-2.s-1': 1.,

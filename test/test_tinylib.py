@@ -3,7 +3,7 @@ import xray
 import numpy as np
 import unittest
 
-from sl.lib import tinylib
+from slocum.lib import tinylib
 
 
 class TinylibTest(unittest.TestCase):
