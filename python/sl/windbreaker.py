@@ -2,10 +2,9 @@ import os
 import sys
 import json
 import xray
-import zlib
 import numpy as np
-import base64
 import logging
+import tempfile
 import datetime
 
 from cStringIO import StringIO
@@ -13,8 +12,6 @@ from cStringIO import StringIO
 from sl import poseidon
 from sl.lib import conventions as conv, units
 from sl.lib import objects, tinylib, saildocs, emaillib
-from sl.lib.objects import NautAngle
-import tempfile
 
 _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
@@ -77,8 +74,7 @@ def query_summary(query):
     if query['type'] == 'spot':
         loc_string = '%(latitude)6.2fN,%(longitude)6.2fE' % query['location']
     elif query['type'] == 'gridded':
-        import ipdb; ipdb.set_trace()
-        loc_string = '%6.2fN,%6.2fE' % query['location']
+        loc_string = '%(S)6.2fN,%(N)6.2fN,%(E)6.2fE%(W)6.2f' % query['domain']
 
     time_string = '%d-%d Hours' % (min(query['hours']),
                                    max(query['hours']))
