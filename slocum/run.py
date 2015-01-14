@@ -20,14 +20,14 @@ logger.addHandler(console_handler)
 logger.setLevel("INFO")
 
 import windbreaker
-from .lib import (griblib, tinylib, rtefcst, enslib, saildocs, conventions)
+from lib import (griblib, tinylib, rtefcst, enslib, saildocs, conventions)
 
 
 def handle_spot(args):
     """
     Converts a packed spot forecast to a spot text message.
     """
-    from .lib import visualize
+    from lib import visualize
     payload = args.input.read()
     fcsts = tinylib.from_beaufort(payload)
     if conventions.ENSEMBLE in fcsts:
