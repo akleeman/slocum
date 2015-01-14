@@ -71,7 +71,6 @@ def spot_plot(fcsts):
     title = ("Forecast for %.1fN %.1fE using %d forecasts initialized %s" %
              (lat, lon, n, time_units))
     fig.suptitle(title, fontsize=14)
-    plt.show()
 
 
 def pressure_spread_plot(fcst, ax=None):

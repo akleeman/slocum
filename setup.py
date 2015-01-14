@@ -16,7 +16,7 @@ if sys.version_info[:2] < (2, 6):
 MAJOR = 0
 MINOR = 1
 MICRO = 0
-ISRELEASED = False
+ISRELEASED = True
 VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
 
 if not ISRELEASED:
@@ -44,7 +44,7 @@ setup(name='slocum',
       tests_require=['nose >= 1.0'],
       test_suite='nose.collector',
       zip_safe=False,
-    entry_points={'console_scripts': ['slocum=run:main']},
+    entry_points={'console_scripts': ['slocum=slocum.run:main']},
       classifiers=[
         'Development Status :: 3 - Alpha',
         'License :: OSI Approved :: MIT License',

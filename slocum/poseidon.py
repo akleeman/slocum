@@ -15,9 +15,9 @@ import datetime
 import numpy as np
 import pandas as pd
 
-from .lib import conventions as conv
-from .lib import units
-from .lib.objects import NautAngle
+from lib import conventions as conv
+from lib import units
+from lib.objects import NautAngle
 
 logger = logging.getLogger(os.path.basename(__file__))
 

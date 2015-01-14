@@ -20,23 +20,15 @@ logger.addHandler(console_handler)
 logger.setLevel("INFO")
 
 import windbreaker
-from .lib import (griblib, tinylib, rtefcst, enslib, saildocs, conventions)
+from lib import (griblib, tinylib, rtefcst, enslib, saildocs, conventions)
 
 
 def handle_spot(args):
     """
     Converts a packed spot forecast to a spot text message.
     """
-    from .lib import visualize
     payload = args.input.read()
-    fcsts = tinylib.from_beaufort(payload)
-    if conventions.ENSEMBLE in fcsts:
-        assert fcsts[conventions.LAT].size == 1
-        assert fcsts[conventions.LON].size == 1
-        fcsts = fcsts.isel(**{conventions.LON: 0, conventions.LAT: 0})
-        visualize.spot_plot(fcsts)
-    else:
-        windbreaker.spot_message(fcsts, args.output)
+    windbreaker.plot_spot(payload)
 
 
 def handle_netcdf(args):
@@ -80,10 +72,10 @@ def handle_email(args):
     """
     try:
         # process the email
-        windbreaker.process_email(args.input.read(), args.forecast,
-                                output=args.output,
-                                fail_hard=args.fail_hard,
-                                log_input=True)
+        windbreaker.process_email(args.input.read(),
+                                  ncdf_weather=args.forecast,
+                                  fail_hard=args.fail_hard,
+                                  log_input=True)
     except Exception, e:
         logging.exception(e)
         raise
