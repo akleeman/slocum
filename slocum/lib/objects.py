@@ -3,8 +3,8 @@ from bisect import bisect
 
 import numpy as np
 
-from sl.lib import units
-from sl.lib import conventions as conv
+from slocum.lib import units
+from slocum.lib import conventions as conv
 
 BoundingBox = namedtuple('BoundingBox', ['north', 'south', 'east', 'west'])
 Position = namedtuple('Position', ['lat', 'lon'])

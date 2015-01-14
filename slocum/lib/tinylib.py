@@ -16,9 +16,9 @@ except:
 
 from collections import OrderedDict
 
-import sl.lib.conventions as conv
+import slocum.lib.conventions as conv
 
-from sl.lib import objects, units
+from slocum.lib import objects, units
 
 # the beaufort scale in m/s
 _beaufort_knots = np.array([0., 1., 3., 6., 10., 16., 21., 27.,

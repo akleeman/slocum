@@ -8,9 +8,9 @@ from matplotlib import cm
 from mpl_toolkits.basemap import Basemap
 from mpl_toolkits.axes_grid1 import AxesGrid
 
-from sl.lib import units
-from sl.lib import conventions as conv
-from sl.lib.objects import NautAngle
+from slocum.lib import units
+from slocum.lib import conventions as conv
+from slocum.lib.objects import NautAngle
 
 _fcst_vars = [(conv.WIND_SPEED, 'knot'),
              (conv.PRESSURE, 'hPa')]
@@ -167,7 +167,7 @@ def make_gridded_ensemble(fcst_gfs, fcst_ens):
     # indicates the units which will be returned by the function
     # (None=dimensionless, 'default': same as underlying forecast variables;
     # alternatively a string with a unit that will be understood by
-    # sl.lib.units).
+    # slocum.lib.units).
     # NOTE: attributes for unpacked fcst are currently defined in a top-level
     # dictionary in tinylib
     meta = {'topn': (_top_n_mean, 'Mean of top n (ens - gfs) deltas',
@@ -259,7 +259,7 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     contour_units: str
         The units in which to plot the ensemble spread indicator (heatmap). If
         specified, the data sets current unit must be convertible into the
-        desired unit by sl.lib.units. If not specified the exsiting units in
+        desired unit by slocum.lib.units. If not specified the exsiting units in
         the data set will be used.
     max_level: float
         Heatmap/contour plot maximum level. Minimum level is assumed to be 0.
@@ -269,7 +269,7 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     barb_units: str
         Units in which to plot the GFS wind speed/direction forecast data (wind
         bars). If specified, the data sets current unit must be convertible
-        into the desired unit by sl.lib.units.
+        into the desired unit by slocum.lib.units.
     cols: int
         Number of columns for subplot layout.
     save_path: str

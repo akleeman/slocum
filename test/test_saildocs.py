@@ -3,7 +3,7 @@ import itertools
 
 import numpy as np
 
-from sl.lib import saildocs
+from slocum.lib import saildocs
 
 
 class SaildocsTest(unittest.TestCase):

@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 
 from matplotlib import patches
 
-from sl.lib import tinylib, units
-from sl.lib import conventions as conv
+from slocum.lib import tinylib, units
+from slocum.lib import conventions as conv
 
 
 def axis_figure(axis=None, figure=None):

@@ -1,4 +1,4 @@
-from sl.lib.objects import NautAngle
+from slocum.lib.objects import NautAngle
 import numpy as np
 import unittest
 

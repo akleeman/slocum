@@ -9,9 +9,9 @@ import datetime
 
 from cStringIO import StringIO
 
-from sl import poseidon
-from sl.lib import conventions as conv, units
-from sl.lib import objects, tinylib, saildocs, emaillib
+import poseidon
+from .lib import conventions as conv, units
+from .lib import objects, tinylib, saildocs, emaillib
 
 _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'

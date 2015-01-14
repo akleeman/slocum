@@ -3,9 +3,9 @@ import numpy as np
 import logging
 import netCDF4 as nc4
 
-import sl.lib.conventions as conv
+import slocum.lib.conventions as conv
 
-from sl.lib import units
+from slocum.lib import units
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
