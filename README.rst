@@ -4,11 +4,11 @@ Slocum -- A tool for ocean passage planning
 **slocum** is an open source project which provides weather forecasts
 to the bandwidth impaired (primarily sailors).  It includes a weather
 specific compression algorithm which results in forecasts attachments
-that are the fraction of the size of saildoc <http://www.saildocs.com/>`_
+that are the fraction of the size of `saildoc <http://www.saildocs.com/>`_
 forecasts.
 
 Why the name **slocum**?
------------
+------------------------
 
 Joshua Slocum (February 20, 1844 -on or shortly after November 14, 1909)
 was a Canadian-American seaman and adventurer, a noted writer, and the first
