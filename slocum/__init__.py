@@ -1,2 +1,2 @@
-from . import slocum
-main = slocum.main
+from .lib import *
+from . import *
