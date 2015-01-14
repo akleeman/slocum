@@ -80,10 +80,10 @@ def handle_email(args):
     """
     try:
         # process the email
-        windbreaker.process_email(args.input.read(), args.forecast,
-                                output=args.output,
-                                fail_hard=args.fail_hard,
-                                log_input=True)
+        windbreaker.process_email(args.input.read(),
+                                  ncdf_weather=args.forecast,
+                                  fail_hard=args.fail_hard,
+                                  log_input=True)
     except Exception, e:
         logging.exception(e)
         raise
