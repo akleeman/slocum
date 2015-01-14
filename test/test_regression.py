@@ -42,8 +42,9 @@ class WindbreakerRegression(unittest.TestCase):
             some_email = "foo@bar.com"
             query_str = 'send GFS:30s,40s,160w,175w|0.5,0.5|0,3..120|WIND'
             query = windbreaker.parse_query(query_str)
+            fcst_path = '%s/test_gfs.nc' % _data_dir
             windbreaker.respond_to_query(query, some_email,
-                                         forecast_path='%s/test_gfs.nc' % _data_dir)
+                                         forecast_path=fcst_path)
         assert len(emails) == 1
         parser = Parser.Parser()
         email = parser.parsestr(emails.pop().args[0].as_string())
@@ -76,11 +77,4 @@ class WindbreakerRegression(unittest.TestCase):
                                                             fcst['time'].encoding['units'])
         np.testing.assert_array_equal(fcst['time'].values, expected_time)
         self.assertIn("hours", fcst['time'].encoding['units'])
-
-        # make sure the forecasts are recent enough
-        time = xray.conventions.decode_cf_variable(fcst['time'])
-        now = np.datetime64(datetime.datetime.now())
-        self.assertLessEqual(now - time.values[0],
-                              np.timedelta64(datetime.timedelta(days=1)),
-                              "Forecasts are more than a day old.")
 
