@@ -15,9 +15,12 @@ if sys.version_info[:2] < (2, 6):
 
 MAJOR = 0
 MINOR = 1
-MICRO = 3
+MICRO = 0
 ISRELEASED = False
 VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
+
+if not ISRELEASED:
+    VERSION = '%sa0' % VERSION
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
 requires = {'grib': ['gribapi'],
