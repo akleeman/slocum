@@ -138,15 +138,17 @@ def respond_to_query(query, reply_to, subject=None, forecast_path=None):
     filename = datetime.datetime.today().strftime(file_fmt)
     filename = '_'.join([query['type'], filename])
     if query.get('send-image', False):
+        logging.debug('Creating plots to be sent as images')
         plot_spot(compressed_forecast)
         import matplotlib.pyplot as plt
         png = StringIO()
         plt.savefig(png)
-        attachments = {'%s.png' % filename: png.getvalue()}
+        png.seek(0)
+        attachments = {'%s.png' % filename: png}
     else:
+        logging.debug('Sending the compressed forecasts')
         forecast_attachment = StringIO(compressed_forecast)
         attachments = {'%s.fcst' % filename: forecast_attachment}
-
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
         raise saildocs.BadQuery("Forecast was too large (%d bytes) for sailmail!"
