@@ -18,8 +18,6 @@ _smtp_server = 'localhost'
 _windbreaker_email = 'query@ensembleweather.com'
 
 _email_body = """
-%(
-
 This forecast was brought to you by your friends on Saltbreaker.
 
 Remember, always be skeptical of numerical forecasts (such as this).
@@ -161,7 +159,7 @@ def respond_to_query(query, reply_to, subject=None, forecast_path=None):
     logging.debug('Sending email to %s' % reply_to)
     emaillib.send_email(weather_email)
     logging.debug('Email sent.')
-    return forecast_attachment
+    return attachments
 
 
 def process_email(mime_text, ncdf_weather=None,
