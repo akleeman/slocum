@@ -2,10 +2,11 @@ import os
 import sys
 import json
 import xray
-import numpy as np
+import tarfile
 import logging
 import tempfile
 import datetime
+import numpy as np
 
 from cStringIO import StringIO
 
@@ -82,6 +83,16 @@ def query_summary(query):
     return summary
 
 
+def plot_spot(compressed_forecast):
+    from lib import visualize
+    fcst = tinylib.from_beaufort(compressed_forecast)
+    if conv.ENSEMBLE in fcst:
+        assert fcst[conv.LAT].size == 1
+        assert fcst[conv.LON].size == 1
+        fcst = fcst.isel(**{conv.LON: 0, conv.LAT: 0})
+        visualize.spot_plot(fcst)
+
+
 def query_to_beaufort(query, forecast_path=None):
     """
     Takes a query and returns the corresponding tiny forecast.
@@ -90,7 +101,6 @@ def query_to_beaufort(query, forecast_path=None):
     logging.debug(json.dumps(query))
     # Acquires a forecast corresponding to a query
     fcst = get_forecast(query, path=forecast_path)
-    logging.debug('Obtained the forecast')
     compressed_forecast = tinylib.to_beaufort(fcst)
     logging.debug("Compressed Size: %d" % len(compressed_forecast))
     return compressed_forecast
@@ -122,19 +132,30 @@ def respond_to_query(query, reply_to, subject=None, forecast_path=None):
     compressed_forecast = query_to_beaufort(query, forecast_path)
     logging.debug("Compressed Size: %d" % len(compressed_forecast))
     # create a file-like forecast attachment
-    forecast_attachment = StringIO(compressed_forecast)
+    logging.debug('Obtained the forecast')
+
+    file_fmt = '%Y-%m-%d_%H%m'
+    filename = datetime.datetime.today().strftime(file_fmt)
+    filename = '_'.join([query['type'], filename])
+    if query.get('send-image', False):
+        plot_spot(compressed_forecast)
+        import matplotlib.pyplot as plt
+        png = StringIO()
+        plt.savefig(png)
+        attachments = {'%s.png' % filename: png.getvalue()}
+    else:
+        forecast_attachment = StringIO(compressed_forecast)
+        attachments = {'%s.fcst' % filename: forecast_attachment}
+
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
         raise saildocs.BadQuery("Forecast was too large (%d bytes) for sailmail!"
                        % len(compressed_forecast))
     # creates the new mime email
-    file_fmt = '%Y-%m-%d_%H%m.fcst'
-    filename = datetime.datetime.today().strftime(file_fmt)
-    filename = '_'.join([query['type'], filename])
     weather_email = emaillib.create_email(reply_to, _windbreaker_email,
                               _email_body,
                               subject=subject or query_summary(query),
-                              attachments={filename: forecast_attachment})
+                              attachments=attachments)
     logging.debug('Sending email to %s' % reply_to)
     emaillib.send_email(weather_email)
     logging.debug('Email sent.')

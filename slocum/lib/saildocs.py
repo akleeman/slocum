@@ -439,7 +439,7 @@ def parse_spot_request(request):
     parses a request for a spot forecast
     """
     warnings = []
-    model_domain, time_str, variables = split_fields(request, 3)
+    model_domain, time_str, variables, image = split_fields(request, 4)
     spot, location_str = model_domain.split(':', 1)
     assert spot.lower() == 'spot'
     if ':' in location_str:
@@ -459,12 +459,15 @@ def parse_spot_request(request):
     variables, var_warnings = validate_variables(variables)
     warnings.extend(var_warnings)
 
+    send_image = image is not None
+
     return {'type': 'spot',
             'model': model,
             'location': location,
             'hours': hours,
             'vars': variables,
-            'warnings': warnings}
+            'warnings': warnings,
+            'send-image': send_image}
 
 
 def parse_send_request(body):
