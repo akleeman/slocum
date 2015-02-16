@@ -28,7 +28,6 @@ requires = {'grib': ['gribapi'],
                         'pyproj >= 1.9.3',
                         'pandas >= 0.13.1',
                         'matplotlib >= 1.2.0',
-                        'netcdf4',
                         'basemap']}
 requires['full'] = list(set(itertools.chain(*requires.values())))
 

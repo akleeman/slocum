@@ -20,26 +20,36 @@ logger.addHandler(console_handler)
 logger.setLevel("INFO")
 
 import windbreaker
-from lib import (griblib, tinylib, rtefcst, enslib, saildocs, conventions)
+from lib import (griblib, tinylib, rtefcst, saildocs)
 
 
 def handle_spot(args):
     """
     Converts a packed spot forecast to a spot text message.
     """
+    # leave this inside handle_spot so matplotlib isn't required
+    # to run this script.
+    import matplotlib.pyplot as plt
+    if args.input is None:
+        raise argparse.ArgumentError(args.input,
+                                     "--input is required, specify -h for usage.")
     payload = args.input.read()
     windbreaker.plot_spot(payload)
+    if args.output is None:
+        plt.show()
+    else:
+        plt.savefig(args.output.name)
 
 
 def handle_netcdf(args):
     """
-    Converts a packed ensemble forecast to a netCDF4 file.
+    Converts a packed ensemble forecast to a netCDF3 file.
     """
     tinyfcst = zlib.decompress(args.input.read())
     fcst = tinylib.from_beaufort(tinyfcst)
     out_file = args.output.name
     args.output.close()
-    fcst.dump(out_file)
+    windbreaker.to_file(fcst, out_file)
 
 
 def handle_grib(args):
@@ -71,6 +81,7 @@ def handle_email(args):
     an packed ensemble forecast.
     """
     try:
+        args.input = args.input or sys.stdin
         # process the email
         windbreaker.process_email(args.input.read(),
                                   ncdf_weather=args.forecast,
@@ -112,14 +123,19 @@ def handle_route_forecast(args):
     args.output.close()
 
 
-def setup_parser_grib(p):
-    """
-    Configures the argument subparser for handle_grib.  p is the
-    ArgumentParser object for the route_forecast subparser.
-    """
-    p.add_argument('--input', type=argparse.FileType('rb'), default=sys.stdin)
-    p.add_argument('--output', type=argparse.FileType('wb'),
-                   default=sys.stdout)
+def add_common_arguments(p):
+    # This allows the user to explicitly specify the input
+    # argument using --input, or infer it as the first
+    # positional argument.
+    p.add_argument('input_file', metavar='input', nargs='?',
+                   type=argparse.FileType('rb'))
+    p.add_argument('--input',
+                   type=argparse.FileType('rb'))
+    # similarly, output is either explicitly specified using
+    # --output, or inferred as the second positional argument.
+    p.add_argument('output_file', metavar='output', nargs='?',
+                   type=argparse.FileType('wb'))
+    p.add_argument('--output', type=argparse.FileType('wb'))
 
 
 def setup_parser_email(p):
@@ -127,10 +143,7 @@ def setup_parser_email(p):
     Configures the argument subparser for handle_email.  p is the
     ArgumentParser object for the route_forecast subparser.
     """
-    p.add_argument('--input', type=argparse.FileType('rb'),
-                   default=sys.stdin)
-    p.add_argument('--output', type=argparse.FileType('wb'),
-                   default=sys.stdout)
+    add_common_arguments(p)
     p.add_argument('--forecast', default=None,
                    help="path to a netCDF forecast")
     p.add_argument('--fail-hard', default=False,
@@ -142,13 +155,7 @@ def setup_parser_route_forecast(p):
     Configures the argument subparser for handle_route_forecast.  p is the
     ArgumentParser object for the route_forecast subparser.
     """
-    p.add_argument('--input', metavar='fcst_file',
-                   type=argparse.FileType('rb'), default=sys.stdin,
-                   help='windbreaker forecast file; stdin if not specified')
-    p.add_argument('--output', metavar='gpx_file', type=argparse.FileType('w'),
-                   help=('waypoints with wind data along route; will '
-                         'overwrite if exists; stdout if not specified'),
-                   default=sys.stdout)
+    add_common_arguments(p)
     p.add_argument('--rtefile', metavar='file',
                    type=argparse.FileType('r'), required=True,
                    help='input file with route definition')
@@ -160,37 +167,14 @@ def setup_parser_route_forecast(p):
                    help='utc of departure; default is current utc')
     p.add_argument('--speed', metavar='SOG', type=float,
                    help=('expected average speed over ground in kn; can '
-                         'be ommitted if rtefile contains speeds for each '
+                         'be omitted if rtefile contains speeds for each '
                          'leg of the route'))
     p.add_argument('--truewind', action='store_true',
                    help=('if specified, output will show true rather than '
                          'apparent wind at forecast waypoints'))
     p.add_argument('--notimelabel', action='store_true',
-                   help=('if specified, time labels will be ommitted from '
+                   help=('if specified, time labels will be omitted from '
                          'forecast waypoint names'))
-
-
-def setup_parser_spot(p):
-
-    variable_choices = [fv[0] for fv in enslib._fcst_vars]
-    p.add_argument(
-            '--input', metavar='FILE', required='True',
-            type=argparse.FileType('rb'), help="input file with "
-            "windbreaker SPOT forecast ensemble")
-    p.add_argument(
-            '--variable', metavar='VARIABLE', choices=variable_choices,
-            help="forecast variable for which to create plot; valid "
-            "choices: %s; combined plot will be created if not specified" %
-            ', '.join(variable_choices))
-    p.add_argument(
-            '--plot', metavar='TYPE', choices=['box', 'bar'],
-            default='box', help="plot type to be created ('bar'|'box'), "
-            "defaults to 'box'; ignored if no forecast variable is specified "
-            "in which case boxplots for wind and pressure will be created")
-    p.add_argument(
-            '--export', metavar='PATH', help="if specified, the plot "
-            "will be saved to the directory specified by PATH under the "
-            "name 'se_<lat-lon>_<t0>_<plot type>.svg'")
 
 
 # The _task_handler dictionary maps each 'command' to a (task_handler,
@@ -199,11 +183,11 @@ def setup_parser_spot(p):
 # setup handler is called to add the details.
 _task_handler = {'email': (handle_email, setup_parser_email),
                  'query': (handle_query, setup_parser_email),
-                 'grib': (handle_grib, setup_parser_grib),
-                 'netcdf': (handle_netcdf, setup_parser_grib),
+                 'grib': (handle_grib, add_common_arguments),
+                 'netcdf': (handle_netcdf, add_common_arguments),
                  'route-forecast': (handle_route_forecast,
                                     setup_parser_route_forecast),
-                 'spot': (handle_spot, setup_parser_spot)}
+                 'spot': (handle_spot, add_common_arguments)}
 
 
 def main():
@@ -227,6 +211,8 @@ def main():
 
     # parse the arguments and run the handler associated with each task
     args = parser.parse_args()
+    args.input = args.input_file or args.input
+    args.output = args.output_file or args.output
     args.func(args)
 
 if __name__ == "__main__":

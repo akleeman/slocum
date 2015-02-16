@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import xray
-import tarfile
 import logging
 import tempfile
 import datetime
@@ -58,8 +57,23 @@ def get_forecast(query, path=None):
     else:
         fcst = poseidon.forecast(query)
         if path is not None:
-            fcst.dump(path)
+            to_file(fcst, path)
     return fcst
+
+
+def to_file(ds, path):
+    """
+    Try saving to disk using netCDF4, but falling back to netCDF3.
+    This is useful since netCDF4 requires installing HDF5 which
+    can be a pain.
+    """
+    try:
+        ds.dump(path)
+    except:
+        logging.warn("Failed to save as netCDF4, trying netCDF3")
+        # xray.Dataset.dumps() uses Scipy.io, which is netCDF3
+        with open(path, 'w') as f:
+            f.write(ds.dumps())
 
 
 def parse_query(query_string):
