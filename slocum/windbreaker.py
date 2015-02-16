@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import xray
-import tarfile
 import logging
 import tempfile
 import datetime
@@ -58,8 +57,23 @@ def get_forecast(query, path=None):
     else:
         fcst = poseidon.forecast(query)
         if path is not None:
-            fcst.dump(path)
+            to_file(fcst, path)
     return fcst
+
+
+def to_file(ds, path):
+    """
+    Try saving to disk using netCDF4, but falling back to netCDF3.
+    This is useful since netCDF4 requires installing HDF5 which
+    can be a pain.
+    """
+    try:
+        ds.dump(path)
+    except:
+        logging.warn("Failed to save as netCDF4, trying netCDF3")
+        # xray.Dataset.dumps() uses Scipy.io, which is netCDF3
+        with open(path, 'w') as f:
+            f.write(ds.dumps())
 
 
 def parse_query(query_string):
@@ -104,6 +118,19 @@ def query_to_beaufort(query, forecast_path=None):
     return compressed_forecast
 
 
+def decided_extension(reply_to):
+    """
+    Some email services have strict rules on which extensions they can
+    recieve.  For sailmail users (for example) the .fcst extension is
+    the best choice, while for iridium users .fcst won't make it through
+    their firewall, in which case something like .txt is better.
+    """
+    if 'iridium' in reply_to:
+        return 'txt'
+    else:
+        return 'fcst'
+
+
 def respond_to_query(query, reply_to, subject=None, forecast_path=None):
     """
     Takes a parsed query string fetches the forecast,
@@ -146,7 +173,8 @@ def respond_to_query(query, reply_to, subject=None, forecast_path=None):
     else:
         logging.debug('Sending the compressed forecasts')
         forecast_attachment = StringIO(compressed_forecast)
-        attachments = {'%s.fcst' % filename: forecast_attachment}
+        ext = decided_extension(reply_to)
+        attachments = {'%s.%s' % (filename, ext): forecast_attachment}
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
         raise saildocs.BadQuery("Forecast was too large (%d bytes) for sailmail!"
