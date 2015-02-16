@@ -118,7 +118,7 @@ def query_to_beaufort(query, forecast_path=None):
     return compressed_forecast
 
 
-def decided_extension(reply_to):
+def decide_extension(reply_to):
     """
     Some email services have strict rules on which extensions they can
     recieve.  For sailmail users (for example) the .fcst extension is
@@ -173,7 +173,7 @@ def respond_to_query(query, reply_to, subject=None, forecast_path=None):
     else:
         logging.debug('Sending the compressed forecasts')
         forecast_attachment = StringIO(compressed_forecast)
-        ext = decided_extension(reply_to)
+        ext = decide_extension(reply_to)
         attachments = {'%s.%s' % (filename, ext): forecast_attachment}
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
