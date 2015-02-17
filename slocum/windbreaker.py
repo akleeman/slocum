@@ -123,10 +123,10 @@ def decide_extension(reply_to):
     Some email services have strict rules on which extensions they can
     recieve.  For sailmail users (for example) the .fcst extension is
     the best choice, while for iridium users .fcst won't make it through
-    their firewall, in which case something like .txt is better.
+    their firewall, in which case something like .zip is better.
     """
     if 'iridium' in reply_to:
-        return 'txt'
+        return 'zip'
     else:
         return 'fcst'
 
