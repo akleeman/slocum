@@ -5,7 +5,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from matplotlib import cm
-from mpl_toolkits.basemap import Basemap
 from mpl_toolkits.axes_grid1 import AxesGrid
 
 from slocum.lib import units
@@ -339,6 +338,8 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     # heatmap color scaling and levels
     spread_levels = np.linspace(0., max_level, 50)
 
+    # leave this here to make Basemap optional
+    from mpl_toolkits.basemap import Basemap
     m = Basemap(projection='merc', llcrnrlon=lons[0], llcrnrlat=lats[0],
             urcrnrlon=lons[-1], urcrnrlat=lats[-1], resolution='l')
 

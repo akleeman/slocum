@@ -15,7 +15,7 @@ if sys.version_info[:2] < (2, 6):
 
 MAJOR = 0
 MINOR = 1
-MICRO = 0
+MICRO = 1
 ISRELEASED = True
 VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
 
@@ -24,7 +24,8 @@ if not ISRELEASED:
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
 requires = {'grib': ['gribapi'],
-            'gridded': ['xray == 0.3.1',
+            'plotting': ['basemap'],
+            'standard': ['xray == 0.3.1',
                         'pyproj >= 1.9.3',
                         'pandas >= 0.13.1',
                         'matplotlib >= 1.2.0',
@@ -39,7 +40,7 @@ setup(name='slocum',
       author_email='akleeman@gmail.com',
       license='MIT',
       packages=find_packages(),
-      install_requires=requires['gridded'],
+      install_requires=requires['standard'],
       tests_require=['nose >= 1.0'],
       test_suite='nose.collector',
       zip_safe=False,
