@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import logging
-import netCDF4 as nc4
 
 import slocum.lib.conventions as conv
 
@@ -176,7 +175,7 @@ def set_time(source, grib):
     # reference time is assumed to be the origin of the source
     # time variable.  This is the case with GFS but perhaps
     # not with other forecasts.
-    rt = nc4.num2date([0], unit)[0]
+    rt = conv.decode_cf_datetime([0], unit)[0]
     gribapi.grib_set_long(grib, "dataDate", "%04d%02d%02d" % (rt.year,
                                                               rt.month,
                                                               rt.day))

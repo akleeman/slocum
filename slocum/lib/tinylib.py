@@ -438,7 +438,7 @@ def small_time(time_var):
     time to ordinal + seconds, then stores the incremental differences
     using small_array()
     """
-    time_var = xray.conventions.encode_cf_variable(time_var)
+    time_var = conv.encode_cf_time_variable(time_var)
     assert time_var.attrs[conv.UNITS].lower().startswith('hour')
     origin = xray.conventions.decode_cf_datetime([0],
                                                  time_var.attrs[conv.UNITS],

@@ -15,7 +15,7 @@ if sys.version_info[:2] < (2, 6):
 
 MAJOR = 0
 MINOR = 1
-MICRO = 1
+MICRO = 3
 ISRELEASED = True
 VERSION = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
 
@@ -26,10 +26,11 @@ if not ISRELEASED:
 requires = {'grib': ['gribapi'],
             'plotting': ['basemap'],
             'standard': ['xray == 0.3.1',
-                        'pyproj >= 1.9.3',
-                        'pandas >= 0.13.1',
-                        'matplotlib >= 1.2.0',
-                        'basemap']}
+                         'pyproj >= 1.9.3',
+                         'pandas >= 0.13.1',
+                         'matplotlib >= 1.2.0',
+                         'coards']}
+
 requires['full'] = list(set(itertools.chain(*requires.values())))
 
 setup(name='slocum',

@@ -52,7 +52,7 @@ def get_forecast(query, path=None):
     """
     warnings = []
     if path and os.path.exists(path):
-        fcst = poseidon.forecast(query, xray.open_dataset(path))
+        fcst = poseidon.forecast(query, xray.open_dataset(path, decode_coords=False))
         warnings.append('Using cached forecasts (%s) which may be old.' % path)
     else:
         fcst = poseidon.forecast(query)
