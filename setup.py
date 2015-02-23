@@ -25,7 +25,7 @@ if not ISRELEASED:
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
 requires = {'grib': ['gribapi'],
             'plotting': ['basemap'],
-            'standard': ['xray == 0.3.1',
+            'standard': ['xray >= 0.3.1',
                          'pyproj >= 1.9.3',
                          'pandas >= 0.13.1',
                          'matplotlib >= 1.2.0',
