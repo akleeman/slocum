@@ -46,7 +46,7 @@ def _clean_cf_time_units(units):
     return '%s since %s' % (delta, ref_date)
 
 
-def _encode_cf_datetime_using_coards(dates, units=None, calendar=None):
+def encode_cf_datetime(dates, units=None, calendar=None):
     dates = np.asarray(dates)
 
     if units is None:
@@ -57,7 +57,7 @@ def _encode_cf_datetime_using_coards(dates, units=None, calendar=None):
     units = _clean_cf_time_units(units)
 
     if calendar is None:
-        calendar = 'standard'
+        calendar = 'proleptic_gregorian'
     assert calendar in xray.conventions._STANDARD_CALENDARS
 
     if np.issubdtype(dates.dtype, np.datetime64):
@@ -73,9 +73,6 @@ def _encode_cf_datetime_using_coards(dates, units=None, calendar=None):
     num = np.array([encode_datetime(d) for d in dates.flat])
     num = num.reshape(dates.shape)
     return (num, units, calendar)
-
-encode_cf_datetime = (xray.conventions.encode_cf_datetime
-                      if _has_nc4 else _encode_cf_datetime_using_coards)
 
 
 def encode_cf_time_variable(time_var):
@@ -94,6 +91,22 @@ def encode_cf_time_variable(time_var):
 
 def decode_cf_datetime(num_dates, units, calendar=None):
     if not _has_nc4:
-        calendar = calendar or 'standard'
-        assert calendar in xray.conventions._STANDARD_CALENDARS
+        calendar = calendar or 'proleptic_gregorian'
+        if not calendar in xray.conventions._STANDARD_CALENDARS:
+            raise ValueError("netCDF4 is not installed, but is required for "
+                             "non-standard calendars")
     return xray.conventions.decode_cf_datetime(num_dates, units, calendar)
+
+
+def decode_cf_time_variable(time_var):
+    units = time_var.attrs.pop('units',
+                               time_var.encoding.get('units', None))
+    calendar = time_var.attrs.pop('calendar',
+                                  time_var.encoding.get('calendar', None))
+    dates = decode_cf_datetime(time_var.values, units, calendar)
+    time_var.encoding.update({'units': units,
+                              'calendar': calendar})
+
+    return xray.Variable(time_var.dims,
+                         dates, time_var.attrs,
+                         time_var.encoding)

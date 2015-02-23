@@ -45,7 +45,7 @@ def plot_spot_ensemble(fcsts, f_var=None, plot_type='box', save_path=None):
             t[2][conv.UNITS].replace('hours since ', '') + 'Z')
     lat = f0[conv.LAT][1][0]
     lon = f0[conv.LON][1][0]
-    f_times = xray.conventions.decode_cf_datetime(t[1], t[2][conv.UNITS])
+    f_times = conv.decode_cf_datetime(t[1], t[2][conv.UNITS])
     f_times = f_times.astype('M8[h]')
 
     title = ("SPOT Ensemble for lat: %.1f lon: %.1f\n($n = %d$, $t_0 =$ %s)" %
@@ -292,8 +292,8 @@ def plot_gridded_ensemble(gfsx, contour_units=None, max_level=None,
     if isinstance(gfsx, np.datetime64): # True is gfsx has not been packed
         f_times = gfsx[conv.TIME].values
     else:                               # time variable has int offsets
-        f_times = xray.conventions.decode_cf_datetime(
-                gfsx['time'], gfsx['time'].attrs['units'])
+        f_times = conv.decode_cf_datetime(gfsx['time'],
+                                          gfsx['time'].attrs['units'])
 
     lats = gfsx[conv.LAT].values
     lons = gfsx[conv.LON].values

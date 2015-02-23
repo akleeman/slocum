@@ -222,9 +222,9 @@ def subset_time(fcst, hours):
     # we are assuming that the first time is the reference time
     # we can check that by converting back to cf units and making
     # sure that the first cf time is 0.
-    ref_time = xray.conventions.decode_cf_datetime(0.,
-                                  fcst['time'].encoding['units'],
-                                  fcst['time'].encoding.get('calendar', None))
+    ref_time = conv.decode_cf_datetime(0.,
+                                       fcst['time'].encoding['units'],
+                                       fcst['time'].encoding.get('calendar', None))
     hours = np.array(hours)
     # make sure hours are all integers
     np.testing.assert_array_almost_equal(hours, hours.astype('int'))

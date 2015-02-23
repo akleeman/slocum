@@ -438,13 +438,19 @@ def small_time(time_var):
     time to ordinal + seconds, then stores the incremental differences
     using small_array()
     """
-    time_var = conv.encode_cf_time_variable(time_var)
+    if np.issubdtype(time_var.dtype, np.datetime64):
+        time_var = conv.encode_cf_time_variable(time_var)
+    else:
+        # if the time_var does not have datetime values we want
+        # to make sure it is an encoded datetime.
+        assert np.issubdtype(time_var.dtype, np.int)
+        assert 'since' in time_var.attrs.get('units', '')
+
     assert time_var.attrs[conv.UNITS].lower().startswith('hour')
-    origin = xray.conventions.decode_cf_datetime([0],
-                                                 time_var.attrs[conv.UNITS],
-                                                 calendar='standard')
-    origin = pd.to_datetime(origin[0])
+    origin = conv.decode_cf_datetime([0], time_var.attrs[conv.UNITS])[0]
+    origin = pd.to_datetime(origin)
     diffs = np.diff(np.concatenate([[0], time_var.values[:]]))
+    diffs = np.round(diffs, 6)
     np.testing.assert_array_equal(diffs.astype('int'), diffs)
     fromordinal = datetime.datetime.fromordinal(origin.toordinal())
     seconds = int(datetime.timedelta.total_seconds(origin - fromordinal))
@@ -687,5 +693,5 @@ def from_beaufort(payload):
     """
     variables = beaufort_to_dict(payload)
     out = xray.Dataset(variables)
-    out[conv.TIME] = xray.conventions.decode_cf_variable(out[conv.TIME])
+    out[conv.TIME] = conv.decode_cf_time_variable(out[conv.TIME])
     return units.normalize_variables(out)

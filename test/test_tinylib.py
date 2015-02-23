@@ -3,7 +3,7 @@ import xray
 import numpy as np
 import unittest
 
-from slocum.lib import tinylib
+from slocum.lib import tinylib, conventions
 
 
 class TinylibTest(unittest.TestCase):
@@ -102,10 +102,11 @@ class TinylibTest(unittest.TestCase):
         ds = xray.Dataset()
         ds['time'] = (('time'), np.arange(10),
                       {'units': 'hours since 2013-12-12 12:00:00'})
-        sm_time = tinylib.small_time(ds['time'])
+        as_datetime = conventions.decode_cf_time_variable(ds['time'])
+        sm_time = tinylib.small_time(as_datetime)
         ret = tinylib.expand_small_time(**sm_time)
         self.assertTrue(np.all(ret[0] == ds['time'].values))
-        self.assertTrue(ret[1] == ds['time'].attrs['units'])
+        self.assertTrue(ret[1] == ds['time'].encoding['units'])
 
     def test_beaufort(self):
         np.random.seed(1982)
