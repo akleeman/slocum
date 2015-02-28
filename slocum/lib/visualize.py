@@ -9,6 +9,29 @@ from slocum.lib import tinylib, units
 from slocum.lib import conventions as conv
 
 
+beaufort_in_knots = tinylib._beaufort_scale * 1.94384449
+beaufort_colors = [
+          '#ffffff',# white
+          '#d7d7d7',# light grey
+          '#a1eeff',# lightest blue
+          '#42b1e5',# light blue
+          '#60fd4b',# green
+          '#1cea00',# yellow-green
+          '#fbef36',# yellow
+          '#fbc136',# orange
+          '#ff4f02',# red
+          '#d50c02',# darker-red
+          '#ff00c0',# red-purple
+          '#b30d8a',# dark purple
+          '#000000',# black
+          ]
+wind_cmap = plt.cm.colors.ListedColormap(beaufort_colors, 'beaufort_map')
+wind_cmap.set_over('0.25')
+wind_cmap.set_under('0.75')
+
+wind_norm = plt.cm.colors.BoundaryNorm(beaufort_in_knots, wind_cmap.N)
+
+
 def axis_figure(axis=None, figure=None):
     """
     A utility function used to parse axis and figure
@@ -178,6 +201,57 @@ def square_bin(y, y_bins, x=None, ax=None, *args, **kwdargs):
                          *args, **kwdargs)
 
 
+def gridded_plot_single_time(fcst):
+    import matplotlib as mpl
+    from mpl_toolkits.basemap import Basemap
+
+    print fcst['time'].values
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+
+    west_lon = np.mod(fcst[conv.LON].values[0] - 0.5, 360)
+    east_lon = np.mod(fcst[conv.LON].values[-1] + 0.5, 360)
+
+    m = Basemap(projection='cyl',
+                llcrnrlat=np.min(fcst[conv.LAT].values) - 0.5,
+                urcrnrlat=np.max(fcst[conv.LAT].values) + 0.5,
+                llcrnrlon=west_lon,
+                urcrnrlon=east_lon,
+                resolution='i',
+                ax=ax)
+
+    radius = min(np.diff(fcst[conv.LAT])[0], np.diff(fcst[conv.LON])[0])
+
+    m.drawcoastlines()
+    m.drawcountries()
+    m.drawparallels(np.arange(-90., 91., 181.))
+    m.drawmeridians(np.arange(-180., 181., 361.))
+
+    for la, one_lat in fcst.groupby(conv.LAT):
+        for lo, one_lonlat in one_lat.groupby(conv.LON):
+            x, y = m(np.mod(lo, 360), la)
+            circle = WindCircle(x, y,
+                                speeds=one_lonlat['wind_speed'].values,
+                                directions=one_lonlat['wind_dir'].values,
+                                radius=0.4 * radius,
+                                cmap=wind_cmap,
+                                norm=wind_norm)
+    cax = fig.add_axes([0.92, 0.05, 0.05, 0.9])
+    mpl.colorbar.ColorbarBase(cax, cmap=wind_cmap, norm=wind_norm)
+
+    def onclick(event):
+        print 'button=%d, x=%d, y=%d, xdata=%f, ydata=%f'%(
+            event.button, event.x, event.y, event.xdata, event.ydata)
+
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+
+    plt.show()
+
+
+def gridded_plot(fcsts):
+    for _, fcst in fcsts.groupby('time'):
+        gridded_plot_single_time(fcst)
+
+
 class WindCircle(object):
 
     def __init__(self, x, y, speeds, directions, radius,
@@ -216,8 +290,10 @@ class WindCircle(object):
         return patches.Polygon(xy, closed=True, color=color, zorder=11)
 
     def _build_polys(self, speeds, directions):
-        speeds = speeds.flatten()
-        directions = directions.flatten()
+        speeds = speeds.reshape(-1)
+        inds = np.argsort(speeds)
+        speeds = speeds[inds]
+        directions = directions.reshape(-1)[inds]
         isvalid = np.logical_and(np.isfinite(speeds), np.isfinite(directions))
         return [self._poly(ws, wd)
                 for ws, wd in zip(speeds[isvalid], directions[isvalid])]

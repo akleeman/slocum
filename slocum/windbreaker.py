@@ -68,12 +68,12 @@ def to_file(ds, path):
     can be a pain.
     """
     try:
-        ds.dump(path)
+        ds.to_netcdf(path)
     except:
         logging.warn("Failed to save as netCDF4, trying netCDF3")
         # xray.Dataset.dumps() uses Scipy.io, which is netCDF3
         with open(path, 'w') as f:
-            f.write(ds.dumps())
+            f.write(ds.to_netcdf())
 
 
 def parse_query(query_string):
@@ -103,6 +103,13 @@ def plot_spot(compressed_forecast):
         assert fcst[conv.LON].size == 1
         fcst = fcst.isel(**{conv.LON: 0, conv.LAT: 0})
         visualize.spot_plot(fcst)
+
+
+def plot_gridded(compressed_forecast):
+    from lib import visualize
+    fcst = tinylib.from_beaufort(compressed_forecast)
+    if conv.ENSEMBLE in fcst:
+        visualize.gridded_plot(fcst)
 
 
 def query_to_beaufort(query, forecast_path=None):
@@ -174,7 +181,9 @@ def respond_to_query(query, reply_to, subject=None, forecast_path=None):
         logging.debug('Sending the compressed forecasts')
         forecast_attachment = StringIO(compressed_forecast)
         ext = decide_extension(reply_to)
-        attachments = {'%s.%s' % (filename, ext): forecast_attachment}
+        attachment_name = '%s.%s' % (filename, ext)
+        logging.debug("Attaching forecast as %s" % attachment_name)
+        attachments = {attachment_name: forecast_attachment}
     # Make sure the forecast file isn't too large for sailmail
     if 'sailmail' in reply_to and len(compressed_forecast) > 25000:
         raise saildocs.BadQuery("Forecast was too large (%d bytes) for sailmail!"

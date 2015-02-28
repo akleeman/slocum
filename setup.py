@@ -45,7 +45,7 @@ setup(name='slocum',
       tests_require=['nose >= 1.0'],
       test_suite='nose.collector',
       zip_safe=False,
-    entry_points={'console_scripts': ['slocum=slocum.run:main']},
+      entry_points={'console_scripts': ['slocum=slocum.run:main']},
       classifiers=[
         'Development Status :: 3 - Alpha',
         'License :: OSI Approved :: MIT License',

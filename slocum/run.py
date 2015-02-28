@@ -41,6 +41,24 @@ def handle_spot(args):
         plt.savefig(args.output.name)
 
 
+def handle_gridded(args):
+    """
+    Converts a packed spot forecast to a spot text message.
+    """
+    # leave this inside handle_spot so matplotlib isn't required
+    # to run this script.
+    import matplotlib.pyplot as plt
+    if args.input is None:
+        raise argparse.ArgumentError(args.input,
+                                     "--input is required, specify -h for usage.")
+    payload = args.input.read()
+    windbreaker.plot_gridded(payload)
+    if args.output is None:
+        plt.show()
+    else:
+        plt.savefig(args.output.name)
+
+
 def handle_netcdf(args):
     """
     Converts a packed ensemble forecast to a netCDF3 file.
@@ -187,7 +205,8 @@ _task_handler = {'email': (handle_email, setup_parser_email),
                  'netcdf': (handle_netcdf, add_common_arguments),
                  'route-forecast': (handle_route_forecast,
                                     setup_parser_route_forecast),
-                 'spot': (handle_spot, add_common_arguments)}
+                 'spot': (handle_spot, add_common_arguments),
+                 'gridded': (handle_gridded, add_common_arguments)}
 
 
 def main():
