@@ -206,7 +206,7 @@ def gridded_plot_single_time(fcst):
     from mpl_toolkits.basemap import Basemap
 
     print fcst['time'].values
-    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
 
     west_lon = np.mod(fcst[conv.LON].values[0] - 0.5, 360)
     east_lon = np.mod(fcst[conv.LON].values[-1] + 0.5, 360)
@@ -217,14 +217,14 @@ def gridded_plot_single_time(fcst):
                 llcrnrlon=west_lon,
                 urcrnrlon=east_lon,
                 resolution='i',
-                ax=ax)
+                ax=axes[0])
 
     radius = min(np.diff(fcst[conv.LAT])[0], np.diff(fcst[conv.LON])[0])
 
     m.drawcoastlines()
     m.drawcountries()
-    m.drawparallels(np.arange(-90., 91., 181.))
-    m.drawmeridians(np.arange(-180., 181., 361.))
+    m.drawparallels(np.linspace(-90., 90., 181.))
+    m.drawmeridians(np.linspace(-180., 180., 361.))
 
     for la, one_lat in fcst.groupby(conv.LAT):
         for lo, one_lonlat in one_lat.groupby(conv.LON):
@@ -233,14 +233,24 @@ def gridded_plot_single_time(fcst):
                                 speeds=one_lonlat['wind_speed'].values,
                                 directions=one_lonlat['wind_dir'].values,
                                 radius=0.4 * radius,
+                                ax=axes[0],
                                 cmap=wind_cmap,
                                 norm=wind_norm)
     cax = fig.add_axes([0.92, 0.05, 0.05, 0.9])
+
+#     import ipdb; ipdb.set_trace()
+#     loc = m.scatter(*)
     mpl.colorbar.ColorbarBase(cax, cmap=wind_cmap, norm=wind_norm)
 
+    loc = fcst.isel(latitude=fcst.dims['latitude'] / 2,
+                    longitude=fcst.dims['longitude'] / 2)
+    wind_spread_plot(loc, ax=axes[1])
+
     def onclick(event):
-        print 'button=%d, x=%d, y=%d, xdata=%f, ydata=%f'%(
-            event.button, event.x, event.y, event.xdata, event.ydata)
+        print m(event.xdata, event.ydata, inverse=True)
+#         import ipdb; ipdb.set_trace()
+#         print 'button=%d, x=%d, y=%d, xdata=%f, ydata=%f'%(
+#             event.button, event.x, event.y, event.xdata, event.ydata)
 
     cid = fig.canvas.mpl_connect('button_press_event', onclick)
 
@@ -250,6 +260,7 @@ def gridded_plot_single_time(fcst):
 def gridded_plot(fcsts):
     for _, fcst in fcsts.groupby('time'):
         gridded_plot_single_time(fcst)
+        break
 
 
 class WindCircle(object):
