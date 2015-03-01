@@ -6,6 +6,38 @@ import unittest
 from slocum.lib import tinylib, conventions
 
 
+def create_data():
+    np.random.seed(1982)
+    ds = xray.Dataset()
+    ds['time'] = ('time', np.arange(10),
+                  {'units': 'hours since 2013-12-12 12:00:00'})
+    ds['longitude'] = (('longitude'),
+                       np.mod(np.arange(235., 240.) + 180, 360) - 180,
+                       {'units': 'degrees east'})
+    ds['latitude'] = ('latitude',
+                      np.arange(35., 40.),
+                      {'units': 'degrees north'})
+    shape = tuple([ds.dims[x]
+                   for x in ['time', 'longitude', 'latitude']])
+    mids = 0.5 * (tinylib._beaufort_scale[1:] +
+                  tinylib._beaufort_scale[:-1])
+    speeds = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
+    speeds = speeds.reshape(shape)
+    dirs = tinylib._direction_bins + np.pi / 16
+    dirs = dirs[np.random.randint(mids.size, size=10 * 5 * 5)]
+    dirs = dirs.reshape(shape)
+    uwnd = - speeds * np.sin(dirs)
+    uwnd = uwnd.reshape(shape).astype(np.float32)
+    vwnd = - speeds * np.cos(dirs)
+    vwnd = vwnd.reshape(shape).astype(np.float32)
+
+    ds['uwnd'] = (('time', 'longitude', 'latitude'),
+                  uwnd, {'units': 'm/s'})
+    ds['vwnd'] = (('time', 'longitude', 'latitude'),
+                  vwnd, {'units': 'm/s'})
+    return ds
+
+
 class TinylibTest(unittest.TestCase):
 
     def test_bool(self):
@@ -56,7 +88,6 @@ class TinylibTest(unittest.TestCase):
         self.assertLessEqual(np.max(np.abs(precip - recovered)),
                              np.max(np.diff(tiny['divs'])))
 
-
     def test_pack_unpack(self):
         # test packing 2 bit ints of odd length
         orig = np.mod(np.arange(15), 4)
@@ -88,6 +119,25 @@ class TinylibTest(unittest.TestCase):
         recovered = tinylib.unpack_ints(**packed)
         self.assertTrue(np.all(orig == recovered))
 
+    def test_stringify_consistency(self):
+        expected = 'THISISATEST'
+        payload = tinylib._stringify(conventions.WIND_SPEED, expected)
+        actual_name, actual_info, _ = tinylib._unstring_single_variable(payload)
+
+        self.assertEqual(actual_name, conventions.WIND_SPEED)
+        self.assertEqual(expected, actual_info['packed_array'])
+
+    def test_version_assert(self):
+        # create a forecast that looks like its from a newer version
+        # and make sure an assertion is raised.
+        ds = create_data()
+        original_version = tinylib._VERSION
+        tinylib._VERSION = np.array(tinylib._VERSION + 1, dtype=np.uint8)
+        beaufort = tinylib.to_beaufort(ds)
+        tinylib._VERSION = original_version
+        self.assertRaises(ValueError,
+                          lambda: tinylib.from_beaufort(beaufort))
+
     def test_small(self):
         least_significant_digit = 2
         expected = np.random.normal(size=102).reshape(51, 2)
@@ -99,9 +149,7 @@ class TinylibTest(unittest.TestCase):
                                    atol=np.power(10, -least_significant_digit))
 
     def test_small_time(self):
-        ds = xray.Dataset()
-        ds['time'] = (('time'), np.arange(10),
-                      {'units': 'hours since 2013-12-12 12:00:00'})
+        ds = create_data()
         as_datetime = conventions.decode_cf_time_variable(ds['time'])
         sm_time = tinylib.small_time(as_datetime)
         ret = tinylib.expand_small_time(**sm_time)
@@ -109,36 +157,8 @@ class TinylibTest(unittest.TestCase):
         self.assertTrue(ret[1] == ds['time'].encoding['units'])
 
     def test_beaufort(self):
-        np.random.seed(1982)
-        ds = xray.Dataset()
 
-        ds['time'] = ('time', np.arange(10),
-                      {'units': 'hours since 2013-12-12 12:00:00'})
-        ds['longitude'] = (('longitude'),
-                           np.mod(np.arange(235., 240.) + 180, 360) - 180,
-                           {'units': 'degrees east'})
-        ds['latitude'] = ('latitude',
-                          np.arange(35., 40.),
-                          {'units': 'degrees north'})
-
-        shape = tuple([ds.dims[x]
-                       for x in ['time', 'longitude', 'latitude']])
-        mids = 0.5 * (tinylib._beaufort_scale[1:] +
-                      tinylib._beaufort_scale[:-1])
-        speeds = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
-        speeds = speeds.reshape(shape)
-        dirs = tinylib._direction_bins + np.pi / 16
-        dirs = dirs[np.random.randint(mids.size, size=10 * 5 * 5)]
-        dirs = dirs.reshape(shape)
-        uwnd = - speeds * np.sin(dirs)
-        uwnd = uwnd.reshape(shape).astype(np.float32)
-        vwnd = - speeds * np.cos(dirs)
-        vwnd = vwnd.reshape(shape).astype(np.float32)
-
-        ds['uwnd'] = (('time', 'longitude', 'latitude'),
-                      uwnd, {'units': 'm/s'})
-        ds['vwnd'] = (('time', 'longitude', 'latitude'),
-                      vwnd, {'units': 'm/s'})
+        ds = create_data()
 
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
@@ -152,7 +172,7 @@ class TinylibTest(unittest.TestCase):
         precip = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
 
         ds['precip'] = (('time', 'longitude', 'latitude'),
-                        precip.reshape(shape),
+                        precip.reshape(ds['uwnd'].shape),
                         {'units': 'kg.m-2.s-1'})
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)
@@ -168,7 +188,7 @@ class TinylibTest(unittest.TestCase):
                       tinylib._pressure_scale[:-1])
         pres = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
         ds['pressure'] = (('time', 'longitude', 'latitude'),
-                           pres.reshape(shape),
+                           pres.reshape(ds['uwnd'].shape),
                            {'units': 'Pa'})
         beaufort = tinylib.to_beaufort(ds)
         actual = tinylib.from_beaufort(beaufort)

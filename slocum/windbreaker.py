@@ -229,12 +229,12 @@ def process_email(mime_text, ncdf_weather=None,
             # tons of error emails to the user.
             logging.error(e)
             emaillib.send_error('akleeman@gmail.com',
-                                ('Bad query: %s.' % query_string), e,
-                                reply_to)
+                                ('Bad query: %s.' % query_string), e)
             emaillib.send_error(reply_to,
-                                ("Bad query: '%s'.  If there were other " +
-                                 "queries in the same email they won't be " +
-                                 "processed.\n") % query_string, e)
+                                ("Bad query: '%s'.  If there were other "
+                                 "queries in the same email they won't be "
+                                 "processed.\n Query failed with error %s"
+                                 % query_string, e))
             if fail_hard:
                 raise
         except exceptions, e:

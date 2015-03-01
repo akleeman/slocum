@@ -19,6 +19,9 @@ from collections import OrderedDict
 import slocum.lib.conventions as conv
 
 from slocum.lib import objects, units
+from slocum.lib.saildocs import BadQuery
+
+_VERSION = np.array(0, dtype=np.uint8)
 
 # the beaufort scale in m/s
 _beaufort_knots = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
@@ -570,18 +573,69 @@ def to_beaufort(obj):
                 bits=_variables[conv.PRESSURE]['bits'], divs=_pressure_scale)
         encoded_variables[conv.PRESSURE] = tiny_pres['packed_array']
 
-    def stringify(vname, packed):
-        vid = _variable_order.index(vname)
-        l = np.array(len(packed), dtype=np.uint16)
-        # make sure the length fits in 16 bits
-        assert len(packed) == l
-        l0 = (l >> 8) & 0xff
-        l1 = l & 0xff
-        header = np.array([vid, l0, l1], dtype=np.uint8).tostring()
-        return ''.join([header, packed])
-
-    payload = ''.join(stringify(k, v) for k, v in encoded_variables.iteritems())
+    payload = ''.join(_stringify(k, v)
+                      for k, v in encoded_variables.iteritems())
+    payload = ''.join([_VERSION.tostring(), payload])
     return zlib.compress(payload, 9)
+
+
+def _stringify(vname, packed):
+    """
+    Creates a string that describes a packed variable.
+
+    The first byte is the variable ID, followed by 3 bytes
+    that hold the length of the packed array and and then
+    the actual packed data.
+    """
+    vid = _variable_order.index(vname)
+    l = np.array(len(packed), dtype=np.uint32)
+    # make sure the length can be stored in 24 bits or less
+    if not len(packed) <= 2 ** 24:
+        raise BadQuery("The variable %s is too large for the compression "
+                       "algorithm, consider reducing the size of the query."
+                       % vname)
+    l0 = (l >> 16) & 0xff
+    l1 = (l >> 8) & 0xff
+    l2 = l & 0xff
+    header = np.array([vid, l0, l1, l2], dtype=np.uint8).tostring()
+    return ''.join([header, packed])
+
+
+def _unstring_single_variable(payload):
+    """
+    Interprets a single variable from a payload (that may contain
+    more than one variable) that has been serialized using _stringify().
+
+    This first chops off the variable ID and length information,
+    then creates a dictionary that is used by the unpack_* methods and
+    returns the remaining payload.
+
+    Returns
+    -------
+    vname : string
+        Variable name
+    info : dict
+        Dictionary containing information about how to unpack the
+        variable.
+    remaining_payload : string
+        The rest of the payload.
+    """
+    # the first bit is the variable id,
+    # the second and third bits store the length of the array
+    offset = 4
+    vid, l0, l1, l2 = np.fromstring(payload[:offset], dtype=np.uint8)
+    # convert the two single bit lengths to the full length
+    vlen = (l0 << 16) + (l1 << 8) + l2
+    # the packed array resides in the rest of the payload
+    packed = payload[offset:(vlen + offset)]
+    # determine the variable name
+    vname = _variable_order[vid]
+    # use the _variable lookup table to infer dimensions etc ...
+    info = _variables[vname]
+    # the resulting info should be unpackable
+    info['packed_array'] = packed
+    # discard the now parsed variable
+    return vname, info, payload[(vlen + offset):]
 
 
 def unstring_beaufort(payload):
@@ -591,22 +645,21 @@ def unstring_beaufort(payload):
     length of the data.  This can be later used, along with the
     _variables lookup table, to rebuild a full xray object.
     """
+    version = np.fromstring(payload[0], dtype=np.uint8)[0]
+    payload = payload[1:]
+    if version > _VERSION:
+        raise ValueError("The forecast was compressed using a"
+                         "newer version than the version currently "
+                         "installed.  Consider either upgrading slocum")
+    elif version < _VERSION:
+        # TODO:  Allow queries to specify the version, so that users
+        # with older versions can request forecasts they can still read.
+        raise NotImplementedError("Backward comaptibility is not currently "
+                                  "supported.  Your version of slocum is newer "
+                                  "than the server, consider rolling back")
+    # this iterates through the payload an yields individual variables
     while len(payload):
-        # the first bit is the variable id,
-        # the second and third bits store the length of the array
-        vid, l0, l1 = np.fromstring(payload[:3], dtype=np.uint8)
-        # convert the two single bit lengths to the full length
-        vlen = (l0 << 8) + l1
-        # the packed array resides in the rest of the payload
-        packed = payload[3:(vlen + 3)]
-        # determine the variable name
-        vname = _variable_order[vid]
-        # use the _variable lookup table to infer dimensions etc ...
-        info = _variables[vname]
-        # the resulting info should be unpackable
-        info['packed_array'] = packed
-        # discard the now parsed variable
-        payload = payload[(vlen + 3):]
+        vname, info, payload = _unstring_single_variable(payload)
         yield vname, info
 
 
