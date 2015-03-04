@@ -52,11 +52,9 @@ def handle_gridded(args):
         raise argparse.ArgumentError(args.input,
                                      "--input is required, specify -h for usage.")
     payload = args.input.read()
-    windbreaker.plot_gridded(payload)
-    if args.output is None:
-        plt.show()
-    else:
-        plt.savefig(args.output.name)
+    from slocum.lib import interactive
+    fcst = tinylib.from_beaufort(payload)
+    interactive.InteractivePlot(fcst)
 
 
 def handle_netcdf(args):

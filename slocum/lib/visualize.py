@@ -142,9 +142,7 @@ def wind_spread_plot(fcst, ax=None):
 
 
 def spread_plot(variable, bin_divs, ax=None):
-    if ax is None:
-        ax = plt.gca()
-
+    ax, _ = axis_figure(axis=ax)
     assert variable.dims == (conv.TIME, conv.ENSEMBLE)
     # the number of ensembles
     n = variable.shape[variable.dims.index(conv.ENSEMBLE)]
@@ -153,14 +151,15 @@ def spread_plot(variable, bin_divs, ax=None):
     times = variable[conv.TIME].values
     times = times.astype('M8[m]')
 
-    bins = np.digitize(variable.values.reshape(-1), bin_divs)
-    bins = bins.reshape(variable.shape)
-    assert np.all(bins > 0)
+    bins = bin_matrix(variable.values, bin_divs)
 
-    pm = square_bin(variable.values.T, bin_divs, zorder=-100, ax=ax)
+    probs, _ = bin_probs(variable.values.T, bin_divs)
+    pm = ax.pcolormesh(probs, cmap=plt.cm.get_cmap('Blues'),
+                         norm=plt.Normalize(vmin=0., vmax=1.),
+                         zorder=-100)
     xs = np.arange(times.size) + 0.5
     ys = np.arange(bin_divs.size)
-    ax.plot(xs, bins - 0.5, alpha=0.2)
+    lines = ax.plot(xs, bins - 0.5, alpha=0.2)
 
     wind_speeds = np.round(bin_divs, 0).astype('int')
     ax.yaxis.set_ticks(ys)
@@ -185,82 +184,24 @@ def spread_plot(variable, bin_divs, ax=None):
     max_bin = np.sum(bin_divs <= np.max(variable.values)) + 1
     max_bin = np.minimum(max_bin, variable.size)
     ax.set_ylim([min_bin, max_bin])
+    return pm, lines
 
 
-def square_bin(y, y_bins, x=None, ax=None, *args, **kwdargs):
-    if ax is None:
-        ax = plt.gca()
+def bin_matrix(y, bins):
+    z = np.digitize(y.reshape(-1), bins)
+    z = z.reshape(y.shape)
+    assert np.all(z > 0)
+    return z
+
+
+def bin_probs(y, bins):
     xbins = y.shape[1]
     n = y.shape[0]
     xs = np.arange(xbins).repeat(n)
-    counts, xbins, y_bins = np.histogram2d(xs, y.T.reshape(-1),
-                                          bins=(np.arange(xbins + 1), y_bins))
+    counts, xbins, bins = np.histogram2d(xs, y.T.reshape(-1),
+                                         bins=(np.arange(xbins + 1), bins))
     probs = counts.T / np.sum(counts, axis=1)
-    return ax.pcolormesh(probs, cmap=plt.cm.get_cmap('Blues'),
-                         norm=plt.Normalize(vmin=0., vmax=1.),
-                         *args, **kwdargs)
-
-
-def gridded_plot_single_time(fcst):
-    import matplotlib as mpl
-    from mpl_toolkits.basemap import Basemap
-
-    print fcst['time'].values
-    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-
-    west_lon = np.mod(fcst[conv.LON].values[0] - 0.5, 360)
-    east_lon = np.mod(fcst[conv.LON].values[-1] + 0.5, 360)
-
-    m = Basemap(projection='cyl',
-                llcrnrlat=np.min(fcst[conv.LAT].values) - 0.5,
-                urcrnrlat=np.max(fcst[conv.LAT].values) + 0.5,
-                llcrnrlon=west_lon,
-                urcrnrlon=east_lon,
-                resolution='i',
-                ax=axes[0])
-
-    radius = min(np.diff(fcst[conv.LAT])[0], np.diff(fcst[conv.LON])[0])
-
-    m.drawcoastlines()
-    m.drawcountries()
-    m.drawparallels(np.linspace(-90., 90., 181.))
-    m.drawmeridians(np.linspace(-180., 180., 361.))
-
-    for la, one_lat in fcst.groupby(conv.LAT):
-        for lo, one_lonlat in one_lat.groupby(conv.LON):
-            x, y = m(np.mod(lo, 360), la)
-            circle = WindCircle(x, y,
-                                speeds=one_lonlat['wind_speed'].values,
-                                directions=one_lonlat['wind_dir'].values,
-                                radius=0.4 * radius,
-                                ax=axes[0],
-                                cmap=wind_cmap,
-                                norm=wind_norm)
-    cax = fig.add_axes([0.92, 0.05, 0.05, 0.9])
-
-#     import ipdb; ipdb.set_trace()
-#     loc = m.scatter(*)
-    mpl.colorbar.ColorbarBase(cax, cmap=wind_cmap, norm=wind_norm)
-
-    loc = fcst.isel(latitude=fcst.dims['latitude'] / 2,
-                    longitude=fcst.dims['longitude'] / 2)
-    wind_spread_plot(loc, ax=axes[1])
-
-    def onclick(event):
-        print m(event.xdata, event.ydata, inverse=True)
-#         import ipdb; ipdb.set_trace()
-#         print 'button=%d, x=%d, y=%d, xdata=%f, ydata=%f'%(
-#             event.button, event.x, event.y, event.xdata, event.ydata)
-
-    cid = fig.canvas.mpl_connect('button_press_event', onclick)
-
-    plt.show()
-
-
-def gridded_plot(fcsts):
-    for _, fcst in fcsts.groupby('time'):
-        gridded_plot_single_time(fcst)
-        break
+    return probs, bins
 
 
 class WindCircle(object):
@@ -321,3 +262,75 @@ class WindCircle(object):
         self.axis.draw_artist(self.circle)
         [self.axis.draw_artist(poly) for poly in self.polys]
         self.fig.canvas.blit(self.axis.bbox)
+
+
+class SpotWind(object):
+
+    def _check_forecast(self, spot_forecast):
+        dims = spot_forecast[conv.WIND_SPEED].dims
+        if not dims == (conv.TIME, conv.ENSEMBLE):
+            raise ValueError("Expected a forecast with dims time, ensemble")
+
+        wind_speed = spot_forecast[conv.WIND_SPEED]
+        units.convert_units(wind_speed, 'knot')
+        return wind_speed
+
+    def __init__(self, spot_forecast, ax=None, fig=None):
+        self.ax, self.fig = axis_figure(axis=ax, figure=fig)
+
+        beaufort = xray.Variable('beaufort',
+                                 tinylib._beaufort_scale.astype('float32'),
+                                 {'units': 'm/s'})
+        _, beaufort_knots, _ = units.convert_units(beaufort, 'knot')
+        self.beaufort_knots = np.round(beaufort_knots)
+
+        wind_speed = self._check_forecast(spot_forecast)
+        self.prob_mesh, self.lines = spread_plot(wind_speed,
+                                                 self.beaufort_knots, ax)
+        import pandas as pd
+        labels = [d.strftime('%m-%d %Hh')
+                  for d in pd.to_datetime(spot_forecast[conv.TIME].values)]
+        self.ax.set_xticks(np.arange(spot_forecast.dims[conv.TIME]) + 0.5)
+        self.ax.set_xticklabels(labels, rotation='vertical')
+        self.ax.set_xlabel("Forecast Time (UTC)")
+        self.ax.set_ylabel("Wind Speed (force / knots)")
+
+        force_nums = np.arange(beaufort_knots.size - 1)
+        forces = ['F-{0:<12}'.format(i) for i in force_nums]
+        ax.yaxis.set_ticks(force_nums + 0.5, minor=True)
+        ax.yaxis.set_ticklabels(forces, minor=True)
+
+        max_bin = np.sum(beaufort_knots <= np.max(wind_speed.values)) + 1
+        max_bin = np.minimum(max_bin, beaufort_knots.size)
+        ax.set_ylim([0, max_bin])
+
+        def create_circle(i, one_time):
+            circle = WindCircle(i + 0.5, max_bin - 0.5,
+                                speeds=np.ones(one_time.shape),
+                                directions=np.mod(one_time.values + 180., 360.),
+                                radius=0.45, ax=ax,
+                                cmap=plt.cm.get_cmap('Blues'),
+                                norm=plt.Normalize(vmin=0., vmax=1),
+                                wind_alpha=0.3)
+            return circle
+
+        # add a wind circle for each time
+        iter_time = spot_forecast[conv.WIND_DIR].groupby(conv.TIME)
+#         self.circles = [create_circle(i, one_time)
+#                         for i, (_, one_time) in enumerate(iter_time)]
+        ax.set_ylabel("Wind Speed (knots)")
+        ax.set_title("Wind", fontstyle='oblique')
+
+    def update(self, spot_forecast):
+        wind_speed = self._check_forecast(spot_forecast)
+        # update the lines
+        bins = bin_matrix(wind_speed.values.T, bins=self.beaufort_knots)
+        [x.set_data(x.get_data()[0], b) for x, b in zip(self.lines, bins)]
+        # update the probabilities
+        probs, bin_divs = bin_probs(wind_speed.values.T, bins=self.beaufort_knots)
+        self.prob_mesh.set_array(probs.ravel())
+        # update the directions
+        iter_time = spot_forecast[conv.WIND_DIR].groupby(conv.TIME)
+#         [circ.update(np.ones(one_time.shape), np.mod(one_time.values + 180., 360.))
+#          for circ, (_, one_time) in zip(self.circles, iter_time)]
+        plt.draw()

@@ -69,7 +69,11 @@ def _convert(v, possible_units, cur_units, new_units, validate=None):
     data = data * mult
     if validate is not None:
         data = validate(data)
-    v.values[...] = data
+    # TODO: remove this in place modification
+    if v.ndim == 0:
+        v.values = data
+    else:
+        v.values[...] = data
     v.attrs[conv.UNITS] = new_units
     return (v.dims, data, v.attrs)
 
