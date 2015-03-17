@@ -8,12 +8,13 @@ import datetime as dt
 
 # Configure the logger
 fmt = "%(asctime)s [%(filename)-12.12s] [%(levelname)-5.5s]  %(message)s"
-logging.basicConfig(filename='/tmp/slocum.log',
+_log_path = os.path.join(tempfile.gettempdir(), "slocum.log")
+logging.basicConfig(filename=_log_path,
                     level=logging.DEBUG,
                     format=fmt)
 
 logger = logging.getLogger(os.path.basename(__file__))
-file_handler = logging.FileHandler("/%s/slocum.log" % tempfile.gettempdir())
+file_handler = logging.FileHandler(_log_path)
 logger.addHandler(file_handler)
 console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
