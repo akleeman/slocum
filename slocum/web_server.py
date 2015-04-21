@@ -1,5 +1,5 @@
-import os
 import cherrypy
+import datetime
 
 from io import BytesIO
 
@@ -45,13 +45,16 @@ class SlocumQuery(object):
             'vars': variables,
             'warnings': warnings,
             'send-image': send_image}
-        fcst = windbreaker.query_to_beaufort(query, '/home/kleeman/dev/slocum/cache.nc')
-        temp_file = os.path.join(os.path.dirname(__file__), 'temp-output')
-        with open(temp_file, 'w') as f:
-            f.write(fcst)
-        return "<a href='%s'>hi</a>" % temp_file
-#        return fcst
+        fcst = windbreaker.query_to_beaufort(query)
+        file_fmt = '%Y-%m-%d_%H%m'
+        filename = datetime.datetime.today().strftime(file_fmt)
+        filename = '_'.join([query['type'], filename])
+        return cherrypy.lib.static.serve_fileobj(fileobj=BytesIO(fcst),
+                                                 content_type="application/x-download",
+                                                 disposition="attachment",
+                                                 name=None)
 
 
 if __name__ == '__main__':
+    cherrypy.config.update({"server.socket_host": "0.0.0.0"})
     cherrypy.quickstart(SlocumQuery())
