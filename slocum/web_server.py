@@ -52,7 +52,7 @@ class SlocumQuery(object):
         return cherrypy.lib.static.serve_fileobj(fileobj=BytesIO(fcst),
                                                  content_type="application/x-download",
                                                  disposition="attachment",
-                                                 name=None)
+                                                 name=filename)
 
 
 if __name__ == '__main__':
