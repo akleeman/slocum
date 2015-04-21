@@ -461,6 +461,8 @@ def parse_spot_request(request):
 
     send_image = image is not None
 
+    import ipdb; ipdb.set_trace()
+
     return {'type': 'spot',
             'model': model,
             'location': location,
