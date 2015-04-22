@@ -10,11 +10,22 @@ from slocum.lib import saildocs
 
 class SlocumQuery(object):
     @cherrypy.expose
-    def index(self):
-        return "Hello world!"
+    def spot(self):
+        return """<html>
+          <head></head>
+          <body>
+            <form method="get" action="spot_request">
+              <input type="text" value="32N" name="latitude" />
+              <input type="text" value="122W" name="longitude" />
+              <input type="text" value="4,3" name="hours" />
+              <input type="text" value="wind,prmsl" name="vars" />
+              <button type="submit">Request Forecast</button>
+            </form>
+          </body>
+        </html>"""
 
     @cherrypy.expose
-    def spot(self,
+    def spot_request(self,
              latitude, longitude,
              hours='4,3',
              variables=None,
