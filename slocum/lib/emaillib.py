@@ -33,6 +33,8 @@ def create_email(to, fr, body, subject=None, attachments=None):
     of which must be valid email addresses
     """
     msg = Multipart.MIMEMultipart()
+    if 'winlink' in to:
+        subject = '//WL2K R/%s' % subject
     msg['Subject'] = subject or '(no subject)'
     msg['From'] = fr
     if isinstance(to, list):
