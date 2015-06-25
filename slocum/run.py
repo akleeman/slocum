@@ -4,7 +4,10 @@ import zlib
 import logging
 import argparse
 import tempfile
+import warnings
 import datetime as dt
+
+warnings.simplefilter('once')
 
 # Configure the logger
 fmt = "%(asctime)s [%(filename)-12.12s] [%(levelname)-5.5s]  %(message)s"

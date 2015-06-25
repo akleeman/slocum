@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+
 import spot
 import utils
 import interactive
@@ -40,6 +42,7 @@ def plot_forecast(fcst, variable_name=None):
     type of plot is most appropriate.
     """
     if utils.is_spot_forecast(fcst):
-        plot_spot_forecast(fcst, variable_name)
+        plot_spot(fcst, variable_name)
+        plt.show()
     else:
         plot_gridded_forecast(fcst, variable_name)

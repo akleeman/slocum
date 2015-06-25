@@ -171,7 +171,7 @@ class SpotVelocityPlot(object):
         # the direction circles.
         all_speeds =fcsts[self.variable.speed_name].values
         max_speed = max_speed or np.max(all_speeds)
-        max_bin = np.sum(self.bins <= max_speed) + 1
+        max_bin = np.sum(self.bins <= max_speed) + 2
         self.max_bin = np.minimum(max_bin, self.bins.size)
 
         # convert the data to knots and radians
