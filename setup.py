@@ -23,13 +23,13 @@ if not ISRELEASED:
     VERSION = '%sa0' % VERSION
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
-requires = {'grib': ['gribapi'],
-            'plotting': ['basemap'],
+requires = {'server': ['joblib', 'retrying', 'requests'],
             'standard': ['xray >= 0.3.1',
                          'pyproj >= 1.9.3',
                          'pandas >= 0.13.1',
                          'matplotlib >= 1.2.0',
-                         'coards']}
+                         'coards',
+                         'basemap']}
 
 requires['full'] = list(set(itertools.chain(*requires.values())))
 

@@ -2,18 +2,18 @@ import numpy as np
 import logging
 import datetime
 
-import slocum.lib.conventions as conv
-
 _precip_rate = {'mm/hr': 3600.,
                 'kg.m-2.s-1': 1.,
                 'kg m-2 s-1': 1.}
 
 _length = {'m': 3.2808399,
-           'ft': 1.0}
+           'ft': 1.0,
+           'nautical_mile': 6076.}
 
 _speed = {'m/s': 1.94384449,
           'm s-1': 1.94384449,
           'knot': 1.0,
+          'knots': 1.0,
           'mph': 0.868976242}
 
 _longitude = {'degrees_east': 1.,
@@ -60,10 +60,8 @@ _all_units = [(_speed, 'm/s', None),
 
 def _convert(v, possible_units, cur_units, new_units, validate=None):
     if cur_units == new_units and validate is None:
-        logging.debug("units %s and %s are the same, skipping conversion"
-                      % (cur_units, new_units))
         return v
-    assert v.values.dtype == np.float32
+    assert v.values.dtype.kind == 'f'
     data = v.values
     mult = (possible_units[cur_units] / possible_units[new_units])
     data = data * mult
@@ -74,14 +72,14 @@ def _convert(v, possible_units, cur_units, new_units, validate=None):
         v.values = data
     else:
         v.values[...] = data
-    v.attrs[conv.UNITS] = new_units
+    v.attrs['units'] = new_units
     return (v.dims, data, v.attrs)
 
 
 def convert_units(v, new_units):
     # convert the units
-    if conv.UNITS in v.attrs:
-        cur_units = v.attrs[conv.UNITS]
+    if 'units' in v.attrs:
+        cur_units = v.attrs['units']
         for (possible_units, _, _) in _all_units:
             if cur_units in possible_units:
                 return _convert(v, possible_units, cur_units, new_units)
@@ -97,8 +95,8 @@ def normalize_units(v):
     done in place
     """
     # convert the units
-    if conv.UNITS in v.attrs:
-        cur_units = v.attrs[conv.UNITS]
+    if 'units' in v.attrs:
+        cur_units = v.attrs['units']
         for (possible_units, default, validate) in _all_units:
             if cur_units in possible_units:
                 return _convert(v, possible_units, cur_units, default,
