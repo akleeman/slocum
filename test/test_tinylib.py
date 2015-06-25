@@ -2,41 +2,11 @@ import sys
 import xray
 import numpy as np
 import unittest
+import warnings
 
-from slocum.lib import tinylib, conventions
+from slocum.compression import tinylib
 
-
-def create_data():
-    np.random.seed(1982)
-    ds = xray.Dataset()
-    ds['time'] = ('time', np.arange(10),
-                  {'units': 'hours since 2013-12-12 12:00:00'})
-    ds['longitude'] = (('longitude'),
-                       np.mod(np.arange(235., 240.) + 180, 360) - 180,
-                       {'units': 'degrees east'})
-    ds['latitude'] = ('latitude',
-                      np.arange(35., 40.),
-                      {'units': 'degrees north'})
-    shape = tuple([ds.dims[x]
-                   for x in ['time', 'longitude', 'latitude']])
-    mids = 0.5 * (tinylib._beaufort_scale[1:] +
-                  tinylib._beaufort_scale[:-1])
-    speeds = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
-    speeds = speeds.reshape(shape)
-    dirs = tinylib._direction_bins + np.pi / 16
-    dirs = dirs[np.random.randint(mids.size, size=10 * 5 * 5)]
-    dirs = dirs.reshape(shape)
-    uwnd = - speeds * np.sin(dirs)
-    uwnd = uwnd.reshape(shape).astype(np.float32)
-    vwnd = - speeds * np.cos(dirs)
-    vwnd = vwnd.reshape(shape).astype(np.float32)
-
-    ds['uwnd'] = (('time', 'longitude', 'latitude'),
-                  uwnd, {'units': 'm/s'})
-    ds['vwnd'] = (('time', 'longitude', 'latitude'),
-                  vwnd, {'units': 'm/s'})
-    return ds
-
+from utils import create_data
 
 class TinylibTest(unittest.TestCase):
 
@@ -61,9 +31,9 @@ class TinylibTest(unittest.TestCase):
 
     def test_consistent(self):
         np.random.seed(seed=1982)
-        dirs = np.random.uniform(-np.pi, np.pi, size=(3960,)).astype('float32')
-        dir_bins = tinylib._direction_bins
-
+        dirs = np.random.uniform(-np.pi, np.pi,
+                                 size=(3960,)).astype('float32')
+        dir_bins = np.linspace(-15 * np.pi/16., 15 * np.pi/16., 16)
         tiny = tinylib.tiny_array(dirs, divs=dir_bins, wrap=True)
         tiny['wrap_val'] = np.pi
         recovered = tinylib.expand_array(**tiny)
@@ -87,6 +57,48 @@ class TinylibTest(unittest.TestCase):
         self.assertEqual(precip.shape, recovered.shape)
         self.assertLessEqual(np.max(np.abs(precip - recovered)),
                              np.max(np.diff(tiny['divs'])))
+
+    def test_tiny(self):
+        bins = np.arange(11.)
+        # all this data falls exactly on the mid points so it
+        # should be preserved through a round trip
+        linear = np.arange(10.) + 0.5
+        tiny = tinylib.tiny_array(linear, bits=4, divs=bins)
+        recovered = tinylib.expand_array(**tiny)
+        np.testing.assert_array_equal(linear, recovered)
+        # check idempotent
+        tiny = tinylib.tiny_array(recovered, bits=4, divs=bins)
+        recovered_again = tinylib.expand_array(**tiny)
+        np.testing.assert_array_equal(recovered_again, recovered)
+
+        # now we should get some that fall outside the divs
+        # which should get rounded to the upper and lower limits.
+        linear = np.arange(12.) - 0.5
+        with warnings.catch_warnings(record=True) as w:
+            tiny = tinylib.tiny_array(linear, bits=4, divs=bins)
+            recovered = tinylib.expand_array(**tiny)
+        assert len(w)
+
+        np.testing.assert_array_equal(recovered[1:-1], linear[1:-1])
+        self.assertTrue(recovered[0] < bins[0])
+        self.assertTrue(recovered[-1] > bins[-1])
+        # check idempotent
+        tiny = tinylib.tiny_array(recovered, bits=4, divs=bins)
+        recovered_again = tinylib.expand_array(**tiny)
+        np.testing.assert_array_equal(recovered_again, recovered)
+
+        # give it a shot with wrapping
+        wrap_val = 10.5
+        tiny = tinylib.tiny_array(linear, bits=4, divs=bins, wrap=True)
+        recovered = tinylib.expand_array(wrap_val=wrap_val, **tiny)
+        np.testing.assert_array_equal(recovered[1:-1], linear[1:-1])
+        # anything less than zero or greater than 10 should end up 10.5
+        self.assertEqual(recovered[0], wrap_val)
+        self.assertEqual(recovered[-1], wrap_val)
+        # check idempotent
+        tiny = tinylib.tiny_array(recovered, bits=4, divs=bins, wrap=True)
+        recovered_again = tinylib.expand_array(wrap_val=wrap_val, **tiny)
+        np.testing.assert_array_equal(recovered_again, recovered)
 
     def test_pack_unpack(self):
         # test packing 2 bit ints of odd length
@@ -119,25 +131,6 @@ class TinylibTest(unittest.TestCase):
         recovered = tinylib.unpack_ints(**packed)
         self.assertTrue(np.all(orig == recovered))
 
-    def test_stringify_consistency(self):
-        expected = 'THISISATEST'
-        payload = tinylib._stringify(conventions.WIND_SPEED, expected)
-        actual_name, actual_info, _ = tinylib._unstring_single_variable(payload)
-
-        self.assertEqual(actual_name, conventions.WIND_SPEED)
-        self.assertEqual(expected, actual_info['packed_array'])
-
-    def test_version_assert(self):
-        # create a forecast that looks like its from a newer version
-        # and make sure an assertion is raised.
-        ds = create_data()
-        original_version = tinylib._VERSION
-        tinylib._VERSION = np.array(tinylib._VERSION + 1, dtype=np.uint8)
-        beaufort = tinylib.to_beaufort(ds)
-        tinylib._VERSION = original_version
-        self.assertRaises(ValueError,
-                          lambda: tinylib.from_beaufort(beaufort))
-
     def test_small(self):
         least_significant_digit = 2
         expected = np.random.normal(size=102).reshape(51, 2)
@@ -150,56 +143,15 @@ class TinylibTest(unittest.TestCase):
 
     def test_small_time(self):
         ds = create_data()
-        as_datetime = conventions.decode_cf_time_variable(ds['time'])
-        sm_time = tinylib.small_time(as_datetime)
-        ret = tinylib.expand_small_time(**sm_time)
-        self.assertTrue(np.all(ret[0] == ds['time'].values))
-        self.assertTrue(ret[1] == ds['time'].encoding['units'])
 
-    def test_beaufort(self):
+        sm_time = tinylib.small_time(ds['time'])
+        num_times, units = tinylib.expand_small_time(sm_time['packed_array'])
+        actual = xray.Dataset({'time': ('time', num_times,
+                                        {'units': units})})
+        actual = xray.decode_cf(actual)
+        self.assertTrue(np.all(actual['time'].values == ds['time'].values))
+        self.assertTrue(units == ds['time'].encoding['units'])
 
-        ds = create_data()
-
-        beaufort = tinylib.to_beaufort(ds)
-        actual = tinylib.from_beaufort(beaufort)
-        np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
-                                   atol=1e-4, rtol=1e-4)
-        np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
-                                   atol=1e-4, rtol=1e-4)
-
-        # now add precip and test everything
-        mids = 0.5 * (tinylib._precip_scale[1:] + tinylib._precip_scale[:-1])
-        precip = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
-
-        ds['precip'] = (('time', 'longitude', 'latitude'),
-                        precip.reshape(ds['uwnd'].shape),
-                        {'units': 'kg.m-2.s-1'})
-        beaufort = tinylib.to_beaufort(ds)
-        actual = tinylib.from_beaufort(beaufort)
-        np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
-                                   atol=1e-4, rtol=1e-4)
-        np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
-                                   atol=1e-4, rtol=1e-4)
-        np.testing.assert_allclose(actual['precip'].values, ds['precip'].values,
-                                   atol=1e-4, rtol=1e-4)
-
-        # add pressure and test everything
-        mids = 0.5 * (tinylib._pressure_scale[1:] +
-                      tinylib._pressure_scale[:-1])
-        pres = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
-        ds['pressure'] = (('time', 'longitude', 'latitude'),
-                           pres.reshape(ds['uwnd'].shape),
-                           {'units': 'Pa'})
-        beaufort = tinylib.to_beaufort(ds)
-        actual = tinylib.from_beaufort(beaufort)
-        np.testing.assert_allclose(actual['uwnd'].values, ds['uwnd'].values,
-                                   atol=1e-4, rtol=1e-4)
-        np.testing.assert_allclose(actual['vwnd'].values, ds['vwnd'].values,
-                                   atol=1e-4, rtol=1e-4)
-        np.testing.assert_allclose(actual['precip'].values, ds['precip'].values,
-                                   atol=1e-4, rtol=1e-4)
-        np.testing.assert_allclose(actual['pressure'].values, ds['pressure'].values,
-                                   atol=1e-4, rtol=1e-4)
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

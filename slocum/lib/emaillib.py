@@ -33,6 +33,8 @@ def create_email(to, fr, body, subject=None, attachments=None):
     of which must be valid email addresses
     """
     msg = Multipart.MIMEMultipart()
+    if 'winlink' in to:
+        subject = '//WL2K R/%s' % subject
     msg['Subject'] = subject or '(no subject)'
     msg['From'] = fr
     if isinstance(to, list):
@@ -62,6 +64,7 @@ def send_email(mime_email):
     s = smtplib.SMTP('localhost')
     server = smtplib.SMTP(_smtp_server)
     server.sendmail(fr, to, mime_email.as_string())
+    logging.debug("Sending an email to: %s from: %s" % (to, fr))
     s.quit()
 
 
@@ -93,3 +96,5 @@ def send_error(to, body, exception=None, fr=None):
     logger.debug(body)
     fr = fr or _no_reply
     send_email(create_email(to, fr, body))
+    send_email(create_email("akleeman@gmail.com", fr, body))
+

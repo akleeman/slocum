@@ -8,70 +8,55 @@ import datetime as dt
 
 # Configure the logger
 fmt = "%(asctime)s [%(filename)-12.12s] [%(levelname)-5.5s]  %(message)s"
-logging.basicConfig(filename='/tmp/slocum.log',
+_log_path = os.path.join(tempfile.gettempdir(), "slocum.log")
+logging.basicConfig(filename=_log_path,
                     level=logging.DEBUG,
                     format=fmt)
 
 logger = logging.getLogger(os.path.basename(__file__))
-file_handler = logging.FileHandler("/%s/slocum.log" % tempfile.gettempdir())
+file_handler = logging.FileHandler(_log_path)
 logger.addHandler(file_handler)
 console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
 logger.setLevel("INFO")
 
-import windbreaker
-from lib import (griblib, tinylib, rtefcst, saildocs)
+from query import request
+from compression import compress
 
 
-def handle_spot(args):
-    """
-    Converts a packed spot forecast to a spot text message.
-    """
-    # leave this inside handle_spot so matplotlib isn't required
-    # to run this script.
+def handle_plot(args):
+    # we save these imports so the script can be run as a server
+    # without requiring matplotlib.
     import matplotlib.pyplot as plt
+    import visualize
+
+    # read in the input
     if args.input is None:
         raise argparse.ArgumentError(args.input,
                                      "--input is required, specify -h for usage.")
     payload = args.input.read()
-    windbreaker.plot_spot(payload)
+    # decompress
+    fcst = compress.decompress_dataset(payload)
+    # plot
+    visualize.plot_forecast(fcst)
+    # save or show
     if args.output is None:
         plt.show()
     else:
         plt.savefig(args.output.name)
 
 
-def handle_netcdf(args):
-    """
-    Converts a packed ensemble forecast to a netCDF3 file.
-    """
-    tinyfcst = zlib.decompress(args.input.read())
-    fcst = tinylib.from_beaufort(tinyfcst)
-    out_file = args.output.name
-    args.output.close()
-    windbreaker.to_file(fcst, out_file)
-
-
-def handle_grib(args):
-    """
-    Converts a packed ensemble forecast to a standard GRIB.
-    """
-    tinyfcst = zlib.decompress(args.input.read())
-    fcst = tinylib.from_beaufort(tinyfcst)
-    griblib.save(fcst, target=args.output, append=False)
-
-
 def handle_query(args):
     """
     Process a queries from the command line.  This is mostly used
-    for debuging.
+    for debugging.
     """
-    queries = list(saildocs.iterate_query_strings(args.input.read()))
+    queries = list(request.iterate_query_strings(args.input.read()))
     if len(queries) != 1:
         raise NotImplementedError("Can only process one query at a time")
-    query = windbreaker.parse_query(queries.pop(0))
-    args.output.write(windbreaker.query_to_beaufort(query,
-                                                    args.forecast))
+    query = request.parse_query_string(queries.pop(0))
+    args.output.write(request.process_query(query,
+                                            args.forecast))
 
 
 def handle_email(args):
@@ -83,10 +68,10 @@ def handle_email(args):
     try:
         args.input = args.input or sys.stdin
         # process the email
-        windbreaker.process_email(args.input.read(),
-                                  ncdf_weather=args.forecast,
-                                  fail_hard=args.fail_hard,
-                                  log_input=True)
+        request.process_email(args.input.read(),
+                              url=args.forecast,
+                              fail_hard=args.fail_hard,
+                              log_input=True)
     except Exception, e:
         logging.exception(e)
         raise
@@ -97,6 +82,9 @@ def handle_route_forecast(args):
     Generates a gpx waypoint file with wind forecast info along a route
     provided in an input file.
     """
+    # TODO
+    raise NotImplementedError("This needs to be refactored to work "
+                              "with the new version of slocum")
     tinyfcst = zlib.decompress(args.input.read())
     args.input.close()
     fcst = tinylib.from_beaufort(tinyfcst)
@@ -130,12 +118,16 @@ def add_common_arguments(p):
     p.add_argument('input_file', metavar='input', nargs='?',
                    type=argparse.FileType('rb'))
     p.add_argument('--input',
+                   default=sys.stdin,
                    type=argparse.FileType('rb'))
     # similarly, output is either explicitly specified using
     # --output, or inferred as the second positional argument.
     p.add_argument('output_file', metavar='output', nargs='?',
                    type=argparse.FileType('wb'))
-    p.add_argument('--output', type=argparse.FileType('wb'))
+    p.add_argument('--output',
+                   default=sys.stdout,
+                   type=argparse.FileType('wb'))
+    p.add_argument('--profile', default=None)
 
 
 def setup_parser_email(p):
@@ -146,6 +138,9 @@ def setup_parser_email(p):
     add_common_arguments(p)
     p.add_argument('--forecast', default=None,
                    help="path to a netCDF forecast")
+    p.add_argument('--cache-forecast',
+                   default=None,
+                   help="path where subset forecast is cached.")
     p.add_argument('--fail-hard', default=False,
                    action='store_true')
 
@@ -183,11 +178,9 @@ def setup_parser_route_forecast(p):
 # setup handler is called to add the details.
 _task_handler = {'email': (handle_email, setup_parser_email),
                  'query': (handle_query, setup_parser_email),
-                 'grib': (handle_grib, add_common_arguments),
-                 'netcdf': (handle_netcdf, add_common_arguments),
                  'route-forecast': (handle_route_forecast,
                                     setup_parser_route_forecast),
-                 'spot': (handle_spot, add_common_arguments)}
+                 'plot': (handle_plot, add_common_arguments),}
 
 
 def main():
@@ -213,7 +206,11 @@ def main():
     args = parser.parse_args()
     args.input = args.input_file or args.input
     args.output = args.output_file or args.output
-    args.func(args)
+    if args.profile:
+        import cProfile
+        cProfile.runctx('args.func(args)', globals(), locals(), args.profile)
+    else:
+        args.func(args)
 
 if __name__ == "__main__":
     main()

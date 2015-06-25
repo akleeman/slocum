@@ -167,11 +167,11 @@ def set_time(source, grib):
     Sets the dataDate, dataTime, unitOfTimeRange, P2, timeRangeIndicator,
     parameters in the grib message 'grib' using the time variable in source.
     """
-    if source[conv.TIME].size != 1:
+    if source['time'].size != 1:
         raise ValueError("expected a single time step")
     # analysis, forecast start, verify time, obs time,
     # (start of forecast for now)
-    unit = source[conv.TIME].attrs[conv.UNITS]
+    unit = source['time'].attrs['units']
     # reference time is assumed to be the origin of the source
     # time variable.  This is the case with GFS but perhaps
     # not with other forecasts.
@@ -194,7 +194,7 @@ def set_time(source, grib):
     if grib_time_code is None:
         raise ValueError("Unexpected unit")
     gribapi.grib_set_long(grib, 'unitOfTimeRange', 1)
-    vt = np.asscalar(source[conv.TIME].values)
+    vt = np.asscalar(source['time'].values)
     assert int(vt) == vt
     gribapi.grib_set_long(grib, 'P2', vt)
     # forecast is valid at reference + P2
@@ -217,11 +217,11 @@ def set_grid(source, grib):
     gribapi.grib_set_long(grib, "shapeOfTheEarth", 6)
 
     dim_shape = dict(zip(source.dimensions, source.shape))
-    gribapi.grib_set_long(grib, "Ni", dim_shape[conv.LON])
-    gribapi.grib_set_long(grib, "Nj", dim_shape[conv.LAT])
+    gribapi.grib_set_long(grib, "Ni", dim_shape['longitude'])
+    gribapi.grib_set_long(grib, "Nj", dim_shape['latitude'])
 
-    lon = source[conv.LON].values
-    lat = source[conv.LAT].values
+    lon = source['longitude'].values
+    lat = source['latitude'].values
     # TODO: Dateline but: this will break when crossing the dateline.
     assert np.unique(np.diff(lon)).size == 1
     assert np.unique(np.diff(lat)).size == 1
@@ -294,7 +294,7 @@ def set_data(source, grib):
     code = reverse_codes[conv.to_grib1[var_name]]
     _, grib_unit = codes[code]
     # default to the grib default unit
-    unit = source[var_name].attrs.get(conv.UNITS, grib_unit)
+    unit = source[var_name].attrs.get('units', grib_unit)
     mult = 1.
     if not unit == grib_unit:
         mult = units._speed[unit] / units._speed[grib_unit]
@@ -336,15 +336,15 @@ def save(source, target, append=False, sample_file=_sample_file):
         grib_file = target
     else:
         raise ValueError("Can only save grib to filename or writable")
-    if not conv.LAT in source.variables or not conv.LON in source.variables:
+    if not 'latitude' in source.variables or not 'longitude' in source.variables:
         raise ValueError("Did not find either latitude or longitude.")
-    if source[conv.LAT].ndim != 1 or source[conv.LON].ndim != 1:
+    if source['latitude'].ndim != 1 or source['longitude'].ndim != 1:
         raise ValueError("Latitude and Longitude should be regular.")
-    if not conv.TIME in source.variables:
+    if not 'time' in source.variables:
         raise ValueError("Expected time coordinate")
     # sort the lats and lons
-    source = source.indexed(latitude=np.argsort(source[conv.LAT].values))
-    lons = source[conv.LON].values
+    source = source.indexed(latitude=np.argsort(source['latitude'].values))
+    lons = source['longitude'].values
     if np.any(np.abs(np.diff(lons)) > 180.):
         # the latitudes must cross the dateline since we only allow 180
         # degree wide bounding boxes, and there is more than a 180 degree
@@ -356,17 +356,17 @@ def save(source, target, append=False, sample_file=_sample_file):
             # specifications for global data ... but its not a high priority
             # so that will wait for later.
             raise ValueError("Longitudes span more than 180 degrees and the dateline?")
-    source[conv.LON].values[:] = lons
+    source['longitude'].values[:] = lons
     source = source.indexed(longitude=np.argsort(lons))
     # iterate over variables, unless they are considered
     # auxiliary variables (ie, variables used by slocum
     # but not in grib files).
-    auxilary_variables = [conv.WIND_SPEED, conv.WIND_DIR]
+    auxilary_variables = ['wind_speed', 'wind_from_direction']
     for single_var in (v for k, v in source.noncoordinates.iteritems()
                        if not k in auxilary_variables):
         # then iterate over time slices
-        iter_time = (single_var.indexed(**{conv.TIME: [i]})
-                     for i in range(single_var.coordinates[conv.TIME].size))
+        iter_time = (single_var.indexed(**{'time': [i]})
+                     for i in range(single_var.coordinates['time'].size))
         for obj in iter_time:
             # Save this slice to the grib file
             gribapi.grib_gribex_mode_off()
