@@ -51,21 +51,21 @@ def axis_figure(axis=None, figure=None):
 
 
 def bounding_box(fcst, pad=0.1, lon_pad=None, lat_pad=None):
-    lons = fcst['longitude'].values
-    lats = fcst['latitude'].values
+    lons = np.unique(fcst['longitude'].values)
+    lats = np.unique(fcst['latitude'].values)
 
     lon_diffs = angles.angle_diff(lons[:, None], lons)
     lat_diffs = angles.angle_diff(lats[:, None], lats)
 
     western_most_ind = np.nonzero(np.all(lon_diffs >= 0., axis=0))[0]
-    western_most = lons[western_most_ind].item()
+    western_most = np.unique(lons[western_most_ind]).item()
     eastern_most_ind = np.nonzero(np.all(lon_diffs <= 0., axis=0))[0]
-    eastern_most = lons[eastern_most_ind].item()
+    eastern_most = np.unique(lons[eastern_most_ind]).item()
 
     northern_most_ind = np.nonzero(np.all(lat_diffs <= 0., axis=0))[0]
-    northern_most = lats[northern_most_ind].item()
+    northern_most = np.unique(lats[northern_most_ind]).item()
     southern_most_ind = np.nonzero(np.all(lat_diffs >= 0., axis=0))[0]
-    southern_most = lats[southern_most_ind].item()
+    southern_most = np.unique(lats[southern_most_ind]).item()
 
     # count the number of lons greater than and less than each lon
     # and take the difference.  The longitude (or pair of lons) that
@@ -109,16 +109,18 @@ def get_basemap(fcst, pad=0.1, lat_pad=None, lon_pad=None, **kwdargs):
     Creates a basemap.Basemap object that bounds the forecast
     """
     kwdargs['projection'] = kwdargs.get('projection', 'cyl')
-    kwdargs['resolution'] = kwdargs.get('resolution', 'i')
+#     kwdargs['resolution'] = kwdargs.get('resolution', 'i')
     bm_args = bounding_box(fcst, pad=pad, lat_pad=lat_pad, lon_pad=lon_pad)
     bm_args.update(kwdargs)
+    # explicitly specify axis, even if its just the gca.
+    bm_args['ax'] = axis_figure(bm_args.get('ax', None))[0]
     m = basemap.Basemap(**bm_args)
     m.drawcoastlines()
     m.drawcountries()
     m.fillcontinents()
     m.ax.set_axis_bgcolor('#389090')
     #m.drawlsmask(land_color='#387f2b', ocean_color='#389090', grid=1.25)
-    m.drawparallels(fcst['latitude'].values, labels=[1, 0, 0, 0])
-    m.drawmeridians(fcst['longitude'].values, labels=[0, 0, 0, 1], rotation=90)
+#     m.drawparallels(fcst['latitude'].values, labels=[1, 0, 0, 0])
+#     m.drawmeridians(fcst['longitude'].values, labels=[0, 0, 0, 1], rotation=90)
 
     return m

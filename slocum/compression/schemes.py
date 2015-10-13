@@ -7,6 +7,7 @@ to compress and expand variables.
 import xray
 import logging
 import warnings
+import itertools
 import numpy as np
 
 import tinylib
@@ -265,6 +266,40 @@ class TimeCoordinate(AbstractVariable):
         return xray.decode_cf(ds)
 
 
+class CombinedVariable(AbstractVariable):
+
+    def __init__(self, variables):
+        self.variables = variables
+
+    def required_variables(self):
+        return itertools.chain(*[x.required_variables()
+                                 for x in self.variables])
+
+    def normalize(self, ds):
+        # this performs variable specific normalization
+        for v in self.variables:
+            if v.variable_name in ds:
+                ds = v.normalize(ds)
+        return ds
+
+    def compress(self, ds):
+        individual = [x.compress(ds) for x in self.variables]
+        # for now we assume that each variable is the same
+        # size once compressed
+        assert len(set([len(x) for x in individual])) == 1
+        return ''.join(individual)
+
+    def decompress(self, compressed, coords):
+        out = coords.copy(deep=True)
+        n = len(compressed) / float(len(self.variables))
+        assert int(n) == n
+        n = int(n)
+        parts = map(''.join, zip(*[iter(compressed)] * n))
+        for x, p in zip(self.variables, parts):
+            out.update(x.decompress(p, coords))
+        return self.normalize(out)
+
+
 class VelocityVariable(AbstractVariable):
     """
     Some variables such as wind and current are velocities so actually
@@ -376,9 +411,6 @@ class VelocityVariable(AbstractVariable):
         n = int(n)
         tiny_speed = compressed[:n]
         tiny_direction = compressed[n:]
-        # infer the shape of the resulting data using any data
-        # that has already been decompressed (coords)
-        dims, shape = infer_shape(self.dim_order, coords)
         # expand the speed and direction
         speed = self.speed.decompress(tiny_speed, coords, bins=speed_bins)
         directions = self.direction.decompress(tiny_direction, coords)

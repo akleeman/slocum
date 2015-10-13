@@ -8,34 +8,13 @@ from slocum.query import saildocs, utils
 
 class SaildocsTest(unittest.TestCase):
 
-    def test_parse_grid(self):
-
-        tests = [('0.5,0.5', (0.5, 0.5)),
-                 ('1.0,0.5', (1.0, 0.5)),
-                 ('2,2', (2., 2.))]
-
-        for grid_str, expected in tests:
-            actual = saildocs.parse_grid(grid_str)
-#             self.assertTrue(len(warns) == 0)
-            self.assertAlmostEqual(actual, expected, places=2)
-
-        actual = saildocs.parse_grid(None)
-        self.assertAlmostEqual(actual, (2., 2.), places=2)
-
-        bad_queries = ['0.6,0.5,0.7', '0.5']
-
-        for bad in bad_queries:
-            self.assertRaises(utils.BadQuery,
-                              lambda: saildocs.parse_grid(bad))
-
-
     def test_parse_forecast_request(self):
 
         tests = [('GFS:14S,20S,154W,146W|0.5,0.5|0,3..120|WIND',
                   {'domain': utils.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
                    'type': 'gridded',
-                   'grid_delta': (0.5, 0.5),
+                   'resolution': 0.5,
                    'hours': list(np.arange(41.) * 3),
                    'variables': ['wind'],
                    }),
@@ -43,7 +22,7 @@ class SaildocsTest(unittest.TestCase):
                   {'domain': utils.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
                    'type': 'gridded',
-                   'grid_delta': (0.5, 0.5),
+                   'resolution': 0.5,
                    'hours': list(np.arange(41.) * 3),
                    'variables': ['wind']
                    }),
@@ -51,7 +30,7 @@ class SaildocsTest(unittest.TestCase):
                   {'domain': utils.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
                    'type': 'gridded',
-                   'grid_delta': (0.5, 0.5),
+                   'resolution': 0.5,
                    'hours': [24., 48., 72.],
                    'variables': ['wind']
                    }),
@@ -59,7 +38,7 @@ class SaildocsTest(unittest.TestCase):
                   {'domain': utils.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
                    'type': 'gridded',
-                   'grid_delta': (2., 2.),
+                   'resolution': 2.,
                    'hours': [24., 48., 72.],
                    'variables': ['wind']
                    }),
@@ -67,7 +46,15 @@ class SaildocsTest(unittest.TestCase):
                   {'domain': utils.parse_domain('14S,20S,154W,146W'),
                    'model': 'gfs',
                    'type': 'gridded',
-                   'grid_delta': (0.5, 0.5),
+                   'resolution': 0.5,
+                   'hours': list(np.arange(41.) * 3),
+                   'variables': ['wind']
+                   }),
+                 ('GFS : 14S,20S,154W, 146W/  native |0, 3.. 120| WIND,',
+                  {'domain': utils.parse_domain('14S,20S,154W,146W'),
+                   'model': 'gfs',
+                   'type': 'gridded',
+                   'resolution': None,
                    'hours': list(np.arange(41.) * 3),
                    'variables': ['wind']
                    })]

@@ -70,14 +70,17 @@ def latitude_slicer(lats, query):
 
     The resulting slice will result in latitudes which descend from north
     to south, with a grid delta that is closest to the request grid delta,
-    query['grid_delta'][0].
+    query['resolution'].
     """
     domain = query['domain']
     # make sure north is actually north of south.
     assert query['domain']['N'] >= query['domain']['S']
+    # grid_delta was made obsolete
+    if 'grid_delta' in query:
+        warnings.warn('grid_delta in queries is obsolete, use resolution')
     lats = np.asarray(lats, dtype=np.float32)
 
-    lat_delta, _ = query.get('grid_delta', (None, None))
+    lat_delta = query.get('resolution', None)
     slicer = angle_slicer(lats, domain['S'], domain['N'],
                           lat_delta)
 
@@ -100,12 +103,14 @@ def longitude_slicer(lons, query):
 
     The resulting slice will result in longitudes which increase from west
     to east, with a grid delta that is closest to the request grid delta,
-    query['grid_delta'][1].
+    query['resolution'].
     """
     domain = query['domain']
     lons = np.asarray(lons, dtype=np.float32)
+    if 'grid_delta' in query:
+        warnings.warn('grid_delta in queries is obsolete, use resolution')
 
-    _, lon_delta = query.get('grid_delta', (None, None))
+    lon_delta = query.get('resolution', None)
     slicer = angle_slicer(lons, domain['W'], domain['E'], lon_delta)
 
     # at least one point west of the eastern edge
@@ -188,7 +193,7 @@ def subset_gridded_dataset(remote_dataset, query, additional_slicers=None):
     # has been loaded locally.
     local_dataset = remote_dataset.isel(**slicers)
     local_dataset = subset_time(local_dataset, query['hours'])
-    local_dataset.load_data()
+    local_dataset.load()
     return local_dataset
 
 

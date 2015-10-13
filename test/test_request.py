@@ -47,7 +47,7 @@ class RequestTest(unittest.TestCase):
                               'W': -154.},
                    'model': 'gfs',
                    'type': 'gridded',
-                   'grid_delta': (0.5, 0.5),
+                   'resolution': 0.5,
                    'hours': list(np.arange(41.) * 3),
                    'variables': ['wind'],
                    })]

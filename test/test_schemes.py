@@ -1,6 +1,7 @@
 import unittest
 import numpy as np
 
+from slocum.lib import angles
 from slocum.compression import schemes
 
 import utils
@@ -83,7 +84,7 @@ class TinyDirectionTest(unittest.TestCase, CommonTests):
         self.assertTrue(np.all(np.abs(diff) <= np.pi/16))
 
 
-class TinyWindTest(unittest.TestCase, CommonTests):
+class VelocityVariableTest(unittest.TestCase, CommonTests):
 
     def get_scheme(self):
         beaufort_bins = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
@@ -93,3 +94,22 @@ class TinyWindTest(unittest.TestCase, CommonTests):
 
     def get_data(self):
         return utils.create_data()
+
+
+class CombinedVariableTest(unittest.TestCase, CommonTests):
+
+    def get_scheme(self):
+        wave_direction = schemes.TinyDirection('sea_surface_wave_to_direction')
+        wave_height = schemes.TinyVariable('sea_surface_wave_significant_height',
+                                           units='m',
+                                           bins=np.array([0., 0.2, 0.5, 0.75, 1., 1.5, 2.,
+                                                          3., 4., 5., 6., 7., 8., 10., 15.]))
+        wave = schemes.CombinedVariable([wave_height, wave_direction])
+        return wave
+
+    def get_data(self):
+        scheme = self.get_scheme()
+        ds = utils.create_data()
+        for x in scheme.variables:
+            ds = utils.add_tiny_variable(x, ds)
+        return ds
