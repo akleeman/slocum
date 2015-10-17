@@ -109,7 +109,7 @@ def get_basemap(fcst, pad=0.1, lat_pad=None, lon_pad=None, **kwdargs):
     Creates a basemap.Basemap object that bounds the forecast
     """
     kwdargs['projection'] = kwdargs.get('projection', 'cyl')
-#     kwdargs['resolution'] = kwdargs.get('resolution', 'i')
+    kwdargs['resolution'] = kwdargs.get('resolution', 'i')
     bm_args = bounding_box(fcst, pad=pad, lat_pad=lat_pad, lon_pad=lon_pad)
     bm_args.update(kwdargs)
     # explicitly specify axis, even if its just the gca.
@@ -119,8 +119,7 @@ def get_basemap(fcst, pad=0.1, lat_pad=None, lon_pad=None, **kwdargs):
     m.drawcountries()
     m.fillcontinents()
     m.ax.set_axis_bgcolor('#389090')
-    #m.drawlsmask(land_color='#387f2b', ocean_color='#389090', grid=1.25)
-#     m.drawparallels(fcst['latitude'].values, labels=[1, 0, 0, 0])
-#     m.drawmeridians(fcst['longitude'].values, labels=[0, 0, 0, 1], rotation=90)
+    m.drawparallels(fcst['latitude'].values, labels=[1, 0, 0, 0])
+    m.drawmeridians(fcst['longitude'].values, labels=[0, 0, 0, 1], rotation=90)
 
     return m

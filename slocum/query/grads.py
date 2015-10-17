@@ -84,7 +84,6 @@ def most_recent_dataset(url_format, freq_hours, n=None):
     # return the first dataset that exists, since the datasets
     # are in reverse chronological order that should be the most recent
     most_recent = first(zip(exists, datasets), key=lambda x:x[0])[1]
-    import ipdb; ipdb.set_trace()
     logging.debug("Most recent dataset: %s" % most_recent)
     return most_recent
 
