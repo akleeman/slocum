@@ -15,6 +15,7 @@ _models = {'gefs': grads.GEFS(),
            'gfs': grads.GFS(),
            'cmcens': grads.CMCENS(),
            'fens': grads.FENS(),
+           'ww3': grads.WW3(),
            'rtofs': grads.RTOFS()}
 
 # Variable names should not have white space, it gets removed
@@ -61,47 +62,56 @@ def available_variables(fcst):
             if contains_variable(fcst, v)]
 
 
-def dealias(k):
+def dealias(k, aliases=None):
     """
     A convenience function that applies aliasing if it exists.
     """
+    aliases = aliases or _aliases
     # if the variable name is in the aliases lookup table
     # we use the alias, otherwise stick with the original
-    return _aliases[k] if k in _aliases else k
+    return aliases[k] if k in aliases else k
 
 
-def lookup(k, lut):
+def lookup(k, lut, aliases=None):
     """
     Looks up a key, k, in lookup table, lut.  If the key isn't
     found directly we try aliasing and removing whitespace.
+
+    Returns the key that was used and the corresponding value in lut.
     """
     k = k.lower()
     # if the key is directly in the lookup table return it.
     if k in lut:
-        return lut[k]
+        return k, lut[k]
     # otherwise dealias and see if we can find it.
-    k = dealias(k)
+    k = dealias(k, aliases)
     if k in lut:
-        return lut[k]
+        return k, lut[k]
     # finally try removing white space and search again.
-    k = dealias(re.sub('[_\W]', '', k))
-    if not k in lut:
-        raise BadQuery("Unsupported value: %s" % k)
-    return k
+    k = dealias(re.sub('[_\W]', '', k), aliases)
+    if k in lut:
+        return k, lut[k]
+    return None
 
 
 def get_model(model_name):
     """
     Lookup a model by name
     """
-    return lookup(model_name, _models)
+    model = lookup(model_name, _models)
+    if model is None:
+        raise BadQuery("Unknown model name %s" % model_name)
+    return model[1]
 
 
 def get_variable(variable_name):
     """
     Lookup a variable by string name
     """
-    return lookup(variable_name, _variables)
+    variable = lookup(variable_name, _variables)
+    if variable is None:
+        raise BadQuery("Unknown variable name %s" % variable_name)
+    return variable[1]
 
 
 def get_variable_names(variable_names):
@@ -195,7 +205,7 @@ def parse_domain(domain_str):
     def floatify(latlon):
         """ Turns a latlon string into a float """
         sign = -2. * (latlon[-1].lower() in ['s', 'w']) + 1
-        return float(latlon[:-1]) * sign
+        return np.round(float(latlon[:-1]) * sign, 8)
     corners = domain_str.strip().split(',')
     if not len(corners) == 4:
         raise BadQuery("Expected four comma seperated values "
@@ -360,3 +370,58 @@ def parse_times(time_str):
         warnings.warn('Maximum spot forecast period is 14 days')
     hours = np.arange(days * 24 + 1)[::interval]
     return hours.tolist()
+
+
+def parse_resolution(resol_str):
+    """
+    Parses a string representation of resolution, makes sure
+    it is valid and then returns the corresponding resolution.
+
+    Parameters
+    ----------
+    resolution : string or None
+        Must be a float, pair of identical floats or 'native'
+        If None, the default of 2 degrees is used.
+    """
+    # default to a grid size of 2 degrees, this is what
+    # saildocs does.
+    if resol_str == "native":
+        return None
+    if resol_str is None:
+        return 2.
+    # fails with an appropriate warning if a value is not a float
+    def floatify(x):
+        try:
+            return np.abs(float(x))
+        except:
+            raise BadQuery("Expected resolution to contain "
+                           "floating point numbers, got %s"
+                           % x)
+    parts = resol_str.split(',')
+    if len(parts) == 1:
+        if parts[0].lower() == 'native':
+            resol = None
+        else:
+            try:
+                # a single value was given assume its the resolution
+                resol = floatify(parts[0])
+            except:
+                import ipdb; ipdb.set_trace()
+    elif len(parts) == 2:
+        # sail docs supports different resolutions for latitude and
+        # longitude, but that's kind of silly.  We only support a
+        # single resolution, but let users use the old format but
+        # default to the coarsest resolution and issue a warning.
+        lat_delta, lon_delta = map(floatify, resol_str.split(','))
+        # if they are different issue a warning.
+        if lat_delta == lon_delta:
+            resol = lat_delta
+        else:
+            resol = max(lat_delta, lon_delta)
+            warnings.warn("latitude and longitude deltas must be the same"
+                          " using the coarsest resolution %4.2f" % resol)
+    else:
+        raise BadQuery("Expected grid deltas to be a single number "
+                       " got '%s' which doesn't follow those rules"
+                       % resol_str)
+    return resol

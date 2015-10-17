@@ -18,10 +18,10 @@ class SubsetTest(unittest.TestCase):
                    ((-10., -30.), 0.5, np.linspace(-10., -30., 41)),
                    ((10., -10.), 2.0, np.linspace(10., -10., 11)),]
 
-        for (north, south), delta, expected in queries:
+        for (north, south), resol, expected in queries:
             query = {'domain': {'N': north, 'S': south,
                                 'E': -150, 'W': -170},
-                 'grid_delta': (delta, 0.5)}
+                     'resolution': resol}
 
             lats = np.linspace(-90, 90., 361)
             slicer = subset.latitude_slicer(lats, query)
@@ -45,10 +45,10 @@ class SubsetTest(unittest.TestCase):
                    ((170., -170.), 1.1, np.linspace(170., 190., 21)),
                    ]
 
-        for (west, east), delta, expected in queries:
+        for (west, east), resol, expected in queries:
             query = {'domain': {'N': 10., 'S': -10.,
                                 'E': east, 'W': west},
-                 'grid_delta': (0.5, delta)}
+                     'resolution': resol}
 
             lons = np.linspace(0., 360., 721)
             slicer = subset.longitude_slicer(lons, query)

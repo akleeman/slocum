@@ -79,44 +79,11 @@ def iterate_query_strings(query_text):
             yield query.groups()[0]
 
 
-def parse_grid(grid_str):
-    """
-    Parses a string representation of grid deltas, makes sure
-    they are valid and then returns their floating point
-    representations
-
-    Parameters
-    ----------
-    grid_str : string or None
-        If a string it must be of the format '%f,%f' corresponding
-        to lat_diff,lon_diff.  If None, the default of 2 degrees
-        is used.
-    """
-    # default to a grid size of 2 degrees, this is what
-    # saildocs does.
-    if grid_str == "native":
-        return (None, None)
-    if grid_str is None:
-        return (2., 2.)
-    parts = grid_str.split(',')
-    if len(parts) != 2:
-        raise utils.BadQuery(("Expected grid deltas to be of form " +
-                              "dlat,dlon the string %s doesn't follow " +
-                              "those rules") % grid_str)
-    lat_delta, lon_delta = grid_str.split(',')
-    try:
-        lat_delta = float(lat_delta)
-        lon_delta = float(lon_delta)
-    except:
-        raise utils.BadQuery("Expected grid deltas to be floating point numbers")
-    return (np.abs(lat_delta), np.abs(lon_delta))
-
-
 def split_fields(request, k):
     """
     Saildoc fields can be separated by '|', '/' or '\u015a'
     """
-    fields = re.split(u'[\|\/\u015a]', unicode(request.strip()))
+    fields = re.split(u'\s*[\|\/\u015a]\s*', unicode(request.strip()))
     return list(itertools.chain(fields, [None] * k))[:k]
 
 
@@ -131,7 +98,7 @@ def parse_forecast_request(request):
     # parse the domain and make sure its ok
     domain = utils.parse_domain(domain_str)
     # parse the grid_string
-    grid_delta = parse_grid(grid_str)
+    resol = utils.parse_resolution(grid_str)
     # parse the hours string
     hours = utils.parse_hours(hours_str)
     # check the variables
@@ -143,7 +110,7 @@ def parse_forecast_request(request):
     return {'type': 'gridded',
             'model': model.lower().strip(),
             'domain': domain,
-            'grid_delta': grid_delta,
+            'resolution': resol,
             'hours': hours,
             'variables': variables}
 

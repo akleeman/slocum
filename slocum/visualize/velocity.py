@@ -136,13 +136,13 @@ class VelocityField(object):
         fcst = self.normalize(fcst)
         # use the longitude grid to define the radius of the circles
         sorted_lats = np.sort(fcst['latitude'].values)
-        grid_delta = np.median(angles.angle_diff(sorted_lats[1:],
-                                                 sorted_lats[:-1]))
+        resol = np.median(angles.angle_diff(sorted_lats[1:],
+                                            sorted_lats[:-1]))
 
         # create the map
         self.m = utils.get_basemap(fcst, ax=self.ax,
-                                   lon_pad=0.75 * grid_delta,
-                                   lat_pad = 0.75 * grid_delta)
+                                   lon_pad=0.75 * resol,
+                                   lat_pad = 0.75 * resol)
         def create_circle(one_loc):
             # determine the circle center
             x, y = self.m(one_loc['longitude'].values,
@@ -154,7 +154,7 @@ class VelocityField(object):
                                    speeds=np.atleast_1d(speeds),
                                    directions=np.atleast_1d(dirs),
                                    orientation=orientation,
-                                   radius=0.4 * grid_delta,
+                                   radius=0.4 * resol,
                                    ax=self.ax, **kwdargs)
 
         self.circles = [[create_circle(one_lonlat)

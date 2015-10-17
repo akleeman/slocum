@@ -78,8 +78,8 @@ current = schemes.MaskedVelocity(u_name='sea_water_x_velocity',
                                  direction_orientation='to')
 
 wave_direction = schemes.TinyDirection('sea_surface_wave_to_direction')
-
 wave_height = schemes.TinyVariable('sea_surface_wave_significant_height',
                                    units='m',
                                    bins=np.array([0., 0.2, 0.5, 0.75, 1., 1.5, 2.,
                                                   3., 4., 5., 6., 7., 8., 10., 15.]))
+wave = schemes.CombinedVariable([wave_height, wave_direction])

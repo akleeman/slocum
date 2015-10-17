@@ -2,6 +2,7 @@
 import xray
 import numpy as np
 
+from slocum.query import variables
 from slocum.compression import schemes
 
 
@@ -37,19 +38,22 @@ def create_data():
     ds['y_wind'] = (('time', 'longitude', 'latitude'),
                     vwnd, {'units': 'm/s'})
 
-    pressure_scale = np.array([97500., 99000., 99750,
-                                       100500., 100700., 100850.,
-                                       101000., 101150., 101350.,
-                                       101600., 101900., 102150.,
-                                       102500., 103100., 104000.])
-    mids = 0.5 * (pressure_scale[1:] +
-                  pressure_scale[:-1])
-    pres = mids[np.random.randint(mids.size, size=10 * 5 * 5)]
-    ds['air_pressure_at_sea_level'] = (('time', 'longitude', 'latitude'),
-                       pres.reshape(ds['x_wind'].shape),
-                       {'units': 'Pa'})
+    ds = add_tiny_variable(variables.pressure, ds)
 
     return xray.decode_cf(ds)
+
+
+def add_tiny_variable(variable, ds):
+    # generates random data for a tiny variable such that all the
+    # values fall in the middle of bins.  This way roundtrips
+    # should come out equivalent.
+    variable.bins
+    mids = 0.5 * (variable.bins[1:] + variable.bins[:-1])
+    data = mids[np.random.randint(mids.size, size=ds['x_wind'].size)]
+    ds[variable.variable_name] = (ds['x_wind'].dims,
+                                  data.reshape(ds['x_wind'].shape),
+                                  {'units': variable.units})
+    return ds
 
 
 def create_ensemble_data():

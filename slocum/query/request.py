@@ -137,7 +137,7 @@ def _response_to_query(query, reply_to, subject=None, url=None):
 
     file_fmt = '%Y-%m-%d_%H%m'
     filename = datetime.datetime.today().strftime(file_fmt)
-    filename = '_'.join([query['type'], filename])
+    filename = '_'.join([query['type'], query['model'], filename])
     if query.get('send-image', False):
         logging.debug('Sending an image of the forecast')
         fcst = compress.decompress_dataset(compressed_forecast)

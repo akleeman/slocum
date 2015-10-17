@@ -63,6 +63,26 @@ class QueryUtilsTest(unittest.TestCase):
             self.assertRaises(utils.BadQuery,
                               lambda: utils.parse_domain(bad))
 
+    def test_parse_grid(self):
+
+        tests = [('0.5,0.5', 0.5),
+                 ('native', None),
+                 ('1.0,0.5', 1.),
+                 ('2,2', 2.)]
+
+        for resol_str, expected in tests:
+            actual = utils.parse_resolution(resol_str)
+            self.assertAlmostEqual(actual, expected, places=2)
+
+        actual = utils.parse_resolution(None)
+        self.assertAlmostEqual(actual, 2., places=2)
+
+        bad_queries = ['0.6,0.5,0.7', ]
+
+        for bad in bad_queries:
+            self.assertRaises(utils.BadQuery,
+                              lambda: utils.parse_resolution(bad))
+
     def test_validate_variables(self):
 
         supported = utils._variables.keys()
@@ -79,8 +99,8 @@ class QueryUtilsTest(unittest.TestCase):
                     unsup_vars.extend(sup_vars)
                     actual = utils.validate_variables(unsup_vars)
                     self.assertSetEqual(set(sup_vars), set(actual))
-#                 self.assertEqual(len(w), 1)
-#                 self.assertIn(unsup_vars[0], w[0].message.message)
+                    self.assertEqual(len(w), 1)
+                    self.assertIn(unsup_vars[0], w[0].message.message)
 
         actual = utils.validate_variables([' wind'])
         self.assertEqual(['wind'], actual)

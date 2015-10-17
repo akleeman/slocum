@@ -287,7 +287,7 @@ def example_spot_single_velocity():
     fcst['latitude'] = ('latitude', [-8])
     fcst['longitude'] = ('longitude', [115])
     fcst['wind_speed'] = (('time', 'longitude', 'latitude'),
-                          np.arange(n).reshape((n, 1, 1)),
+                          np.arange(float(n)).reshape((n, 1, 1)),
                           {'units': 'knots'})
     fcst['wind_from_direction'] = (('time', 'longitude', 'latitude'),
                               np.linspace(-np.pi, np.pi, n).reshape((n, 1, 1)),
