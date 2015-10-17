@@ -49,6 +49,25 @@ WIND PRESS
                  'hours': np.arange(25.) * 3,
                  'variables': ['press', 'wind'],
                 }),
+                 (
+"""
+days: 3
+meteo: GFS
+hours: 3
+area: 40.1N,35.1N,120W,-125E
+WIND PRESS
+waves: WW3-GLOBAL
+grid: 0.25
+        """,    {'domain': {'N': np.float64(40.1),
+                            'S': np.float64(35.1),
+                            'W': np.float64(-125.),
+                            'E': np.float64(-120.)},
+                 'model': 'gfs',
+                 'type': 'gridded',
+                 'resolution': 0.25,
+                 'hours': np.arange(25.) * 3,
+                 'variables': ['press', 'wind'],
+                }),
                  ]
 
         for query, expected in tests:
