@@ -1,3 +1,5 @@
+.. _ensembles:
+
 Ensemble Forecasts
 ===========================
 

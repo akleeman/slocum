@@ -166,6 +166,8 @@ class SpotVelocityPlot(object):
                              velocity_variable.speed_bins.copy(),
                              {'units': velocity_variable.units})
         _, self.bins, _ = units.convert_units(bins, speed_units)
+        # convert the data to knots and radians
+        fcsts = self.normalize(fcsts)
 
         # determine the upper bound on speed so we can place
         # the direction circles.
@@ -173,9 +175,6 @@ class SpotVelocityPlot(object):
         max_speed = max_speed or np.max(all_speeds)
         max_bin = np.sum(self.bins <= max_speed) + 2
         self.max_bin = np.minimum(max_bin, self.bins.size)
-
-        # convert the data to knots and radians
-        fcsts = self.normalize(fcsts)
         self.plot(fcsts)
 
     def normalize(self, fcsts):

@@ -1,6 +1,16 @@
 Introduction
 ===========================
 
+What inspired slocum?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+While crossing the Pacific in our boat `Saltbreaker <http://www.saltbreaker.com>`_ we would use our single
+side band radio and a modem to download weather forecasts using `saildocs <http://www.saildocs.com/>`_.
+As you can imagine the connection was *extremely* slow (4,000 bits/minute on a good day) leading to
+downloads that could take 15-30 minutes and draining precious battery power.
+
+At some point I looked at what exactly was being sent in a grib file and realized that
+
+
 Why the name slocum?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 | `Joshua Slocum <http://en.wikipedia.org/wiki/Joshua_Slocum>`_ (February 20, 1844 -on or shortly after November 14, 1909) was a Canadian-American seaman and adventurer, a noted writer, and the first man to sail single-handedly around the world. In 1900 he told the story of this in Sailing Alone Around the World. He disappeared in November 1909 while aboard his boat, the Spray. [1]_
@@ -29,10 +39,7 @@ For details see the page on <a href="email.html">e-mail based forecasts</a>, rou
 * Send the e-mail to query@ensembleweather.com.
 * `Grab a cup of coffee <http://media.giphy.com/media/AOjF59lD6eOPe/giphy.gif>`_ and wait for a response.
 * The response e-mail contains a forecast file attached, save it to your computer.
-* Plot the forecast using slocum by opening a `terminal <http://blog.teamtreehouse.com/introduction-to-the-mac-os-x-command-line>`_:
-::
-
-	slocum ./path_to_forecast.fcst`
+* Plot the forecast using slocum by opening a `terminal <http://blog.teamtreehouse.com/introduction-to-the-mac-os-x-command-line>`_ and running ``slocum ./path_to_forecast.fcst``.
 
 
 You'll notice that this is identical to how sailmail or zygrib work with one exception,
