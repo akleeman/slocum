@@ -20,41 +20,113 @@ For a better explanation send an email to info@ensembleweather.com
 
 _supported_commands = ['send']
 
-_send_usage = """
-SEND requests use the format:
-
-send model:lat0,lat1,lon0,lon1|[lat_delta,lon_delta]|[hours]|[variables]
+_spot_usage = """
+send spot:model:location|[days,interval]|[variables]
 
 Parameters in brackets are optional, but the requests are order dependent
-so, for example, the hours parameter must follow the second pipe character (|).
+so, for example, these structures are also valid:
 
-model : The forecast model used (%(models)s)
+    ``send model:location``
 
-lat0,lat1,lon0,lon1 : These should be numbers specifying the latitudes
-    and longitudes (in degrees) of the bounding box that surrounds the
-    area where a forecast is desired.  Latitudes must include either
+    ``send model:location||variables``
+
+model
+    One of %(models)s
+
+    The forecast model used, Defaults to ``gefs``.
+
+location
+    Latitude,Longitude
+
+    Latitudes must include either an 'S' or 'N' suffix (ie, 10S or -10N)
+    and Longitudes must include either an 'E' or 'W' suffix (ie 190E or 170W).
+    The resulting forecast is for the nearest modeled grid point.  Slocum
+    doesn't NOT interpolate between points.  Such interpolation tends to
+    reduce extreme values in forecasts.
+
+days,interval
+    Two integers.  The number of days followed by the hourly interval.
+
+    The first integer is the duration of the forecast in days, the second
+    is the number of hours between forecast points.  For example, to get
+    a forecast for the next four days every three days you would use
+    ``4,3``.
+
+variables
+    A list variables. Available variables include: %(variables)s
+
+    Default is 'WIND'
+
+    The list of variables to be included in the forecast.  Each
+    variable should be separated by a comma.
+""" % {'models': ', '.join(['``%s``' % x for x in utils._models.keys()]),
+       'variables': ', '.join(['``%s``' % x for x in utils._variables.keys()])}
+
+
+_gridded_usage = """
+    ``send model:region|[resolution]|[hours]|[variables]``
+
+Parameters in brackets are optional, but the requests are order dependent
+so, for example, these structures are also valid:
+
+    ``send model:region``
+
+    ``send model:region||hours``
+
+    ``send model:region|resolution``
+
+    ``send model:region|||variables``
+
+model
+    One of %(models)s
+
+    The forecast model used, Defaults to ``gfs``.
+
+region
+    Bounding box given by ``lat0,lat1,lon0,lon1``.
+
+    The region is required and is specified by giving the corners
+    of the region in degrees of latitude
+    and longitude that surrounds the desired forecast area.
+    Latitudes must include either
     an 'S' or 'N' suffix (ie, 10S or -10N) and Longitudes must include
-    either an 'E' or 'W' suffix (ie 190E or 170W).  The bounding box
-    cannot span more than 180 degrees of longitude.  For example,
-    '35S,45S,166E,179E' would cover most of New Zealand.
+    either an 'E' or 'W' suffix (ie 190E or 170W). For example,
+    '35S,45S,166E,179E' would cover most of New Zealand. The bounding box
+    cannot span more than 180 degrees of longitude.
 
-lat_delta,lon_delta : These specify the coarseness of the resulting
-    forecast grid in degrees.  GFS forecast's highest resolution is
-    0.5 degrees, so the deltas should be multiples of 0.5.  If no
-    grid deltas are specified the default of 2 degrees is used.
+resolution
 
-hours : Indicates which hours of the forecast are desired.  Hours
-    should be comma separated and ellipses can be used to avoid
-    unnecessarily long queries.  The default is '24,48,72'.  When
-    ellipsis are used the difference between the previous two values
-    is continued until the end time.  For example, '0,6,12,24,36,48,60,72'
-    is equivalent to '0,6,12,24...72'.
+    Number of degrees or the word 'native'.
 
-variables : The list of variables to be included in the forecast.  Each
-    variable should be separated by a comma.  Current choices for variables
-    are: %(variables)s
-""" % {'models': utils._models.keys(),
-       'variables': utils._variables.keys()}
+    Specifies the width of each grid in the desired forecast.  Default is
+    'native'.
+
+    For example, GFS has a native resolution of 0.5 degrees.
+    By default this native resolution is used, but if you may want a
+    more coarse grid if you are requesting a forecast for a larger area.
+    Resolution values will be rounded to the nearest multiple of the
+    native grid.
+
+hours
+
+    List of integer hours.
+
+    Indicates which hours of the forecast are desired. Defaults to '24,48,72'.
+    Hours should be comma separated and ellipses can be used to avoid
+    unnecessarily long queries. When ellipsis are used the difference
+    between the previous two values is continued until the end time.
+    For example, '0,6,12,24,36,48,60,72' is equivalent to '0,6,12,24...72'.
+
+variables
+
+    A list variables. Available variables include: %(variables)s
+
+    Default is 'WIND'
+
+    The list of variables to be included in the forecast.  Each
+    variable should be separated by a comma.
+""" % {'models': ', '.join(['``%s``' % x for x in utils._models.keys()]),
+       'variables': ', '.join(['``%s``' % x for x in utils._variables.keys()])}
 
 
 def iterate_query_strings(query_text):
@@ -87,7 +159,7 @@ def split_fields(request, k):
     return list(itertools.chain(fields, [None] * k))[:k]
 
 
-def parse_forecast_request(request):
+def parse_gridded_request(request):
     """
     Parses a request for a gridded forecast.
     """
@@ -125,10 +197,12 @@ def parse_spot_request(request):
     if ':' in location_str:
         model, location_str = location_str.split(':', 1)
         model = model.lower()
+        import ipdb; ipdb.set_trace()
     else:
-        model = 'gfs'
+        model = 'gefs'
     location = utils.parse_location(location_str)
-
+    # default to 4 days every three hours
+    time_str = time_str or '5,6'
     hours = utils.parse_times(time_str)
 
     if variables is None:
@@ -160,7 +234,7 @@ def parse_send_request(body):
     if model == 'spot':
         return parse_spot_request(body)
     else:
-        return parse_forecast_request(body)
+        return parse_gridded_request(body)
 
 
 def parse_saildocs_query(query_str):
@@ -204,6 +278,9 @@ def parse_saildocs_query(query_str):
 
     if command.lower() == 'send':
         query = parse_send_request(args)
+    elif command.lower() in ['sub', 'cancel']:
+        raise utils.BadQuery("slocum doesn't support subscriptions, "
+                             "use send instead of sub.")
     else:
         raise utils.BadQuery("Unknown command handler.  %s"
                              % command)

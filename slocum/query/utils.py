@@ -17,6 +17,7 @@ _models = {'gefs': grads.GEFS(),
            'fens': grads.FENS(),
            'ww3': grads.WW3(),
            'rtofs': grads.RTOFS()}
+_model_names = _models.keys()
 
 # Variable names should not have white space, it gets removed
 # when doing lookups.
@@ -31,6 +32,7 @@ _variables = OrderedDict([('time', variables.time),
                           ('waveheight', variables.wave_height,),
                           ('wavedirection', variables.wave_direction),
                          ])
+_variable_names = _variables.keys()
 
 _aliases = {'gfsens': 'gefs',
             'fnens': 'fens',
@@ -383,12 +385,9 @@ def parse_resolution(resol_str):
         Must be a float, pair of identical floats or 'native'
         If None, the default of 2 degrees is used.
     """
-    # default to a grid size of 2 degrees, this is what
-    # saildocs does.
-    if resol_str == "native":
+    # default to native grid resolution.
+    if resol_str == "native" or resol_str is None:
         return None
-    if resol_str is None:
-        return 2.
     # fails with an appropriate warning if a value is not a float
     def floatify(x):
         try:

@@ -43,8 +43,8 @@ class DirectionCircle(object):
         self.y = y
         self.center = np.array([self.x, self.y]).flatten()
         self.radius = radius
-        self.cm = cmap
-        self.norm = norm
+        self.cm = cmap or plt.cm.get_cmap('Blues')
+        self.norm = norm or plt.Normalize()
         self.arrow_alpha = arrow_alpha
         self.circle_alpha = circle_alpha
         assert orientation in ['from', 'to']
@@ -128,10 +128,11 @@ class VelocityField(object):
         self.ax, self.fig = utils.axis_figure(ax, fig)
 
         # add the color bar
-        self.cax = self.fig.add_axes([0.92, 0.05, 0.05, 0.9])
-        mpl.colorbar.ColorbarBase(self.cax,
-                                  cmap=kwdargs['cmap'],
-                                  norm=kwdargs['norm'])
+        self.cax = self.fig.add_axes([0.92, 0.05, 0.03, 0.9])
+        cbar = mpl.colorbar.ColorbarBase(self.cax,
+                                         cmap=kwdargs['cmap'],
+                                         norm=kwdargs['norm'])
+        cbar.set_label("Knots")
 
         fcst = self.normalize(fcst)
         # use the longitude grid to define the radius of the circles

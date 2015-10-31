@@ -51,7 +51,10 @@ help:
 clean:
 	rm -rf $(BUILDDIR)/*
 
-html:
+querydocs:
+	python ./source/make_query_docs.py
+
+html: querydocs
 	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(BUILDDIR)/html
 	@echo
 	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."

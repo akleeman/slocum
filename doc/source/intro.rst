@@ -1,6 +1,21 @@
 Introduction
 ===========================
 
+Sending a forecast query.
+~~~~~~~~~~~~~~~~~~
+
+Slocum uses a query syntax that is similar to saildocs.  If you're familiar with these, using slocum will be easy.
+
+Here are some examples:
+
+``send GFS:35N,45N,120W,130W|1,1|0,6..144|WIND``  will send a single gridded forecast from the GFS model which
+covers a ten by ten degree area around San Francisco.  The forecast will be 1 degree resolution and contain
+a wind forecast every six hours for the next six days.
+
+``send spot:32N,-117E|8,6|wind`` will send a `spot forecast <spot.html>`_ just off the coast of San Diego that
+has a wind forecast for every six hours for the next eight days.
+
+
 What inspired slocum?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 While crossing the Pacific in our boat `Saltbreaker <http://www.saltbreaker.com>`_ we would use our single
@@ -9,6 +24,10 @@ As you can imagine the connection was *extremely* slow (4,000 bits/minute on a g
 downloads that could take 15-30 minutes and draining precious battery power.
 
 At some point I looked at what exactly was being sent in a grib file and realized that
+
+::
+    from slocum.query import saildocs
+    print saildocs._send_usage
 
 
 Why the name slocum?

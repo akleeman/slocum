@@ -15,6 +15,7 @@
 import sys
 import os
 import shlex
+from slocum.query import saildocs
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -37,8 +38,13 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.ifconfig',
     'sphinx.ext.viewcode',
+    'sphinx.ext.napoleon',
     'matplotlib.sphinxext.plot_directive',
 ]
+
+# Napoleon settings
+napoleon_google_docstring = True
+napoleon_numpy_docstring = True
 
 plot_html_show_source_link = False
 plot_html_show_formats = False

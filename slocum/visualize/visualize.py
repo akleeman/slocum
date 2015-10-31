@@ -24,24 +24,24 @@ def plot_spot(fcst, variable_name=None):
                                   "the moment.")
 
 
-def plot_gridded_forecast(fcst, variable_name=None):
+def plot_gridded_forecast(fcst, variable_name=None, **kwdargs):
     """
     Creates an interactive plot of a gridded forecast.
     """
     variable_name = variable_name or utils.infer_variable(fcst)
     variable = query_utils.get_variable(variable_name)
     if isinstance(variable, schemes.VelocityVariable):
-        velocity.VelocityField(fcst, variable)
+        velocity.VelocityField(fcst, variable, **kwdargs)
     else:
         raise NotImplementedError("Only support velocity variables at "
                                   "the moment.")
 
 
-def plot_interactive_forecast(fcst, variable_name=None):
+def plot_interactive_forecast(fcst, variable_name=None, **kwdargs):
     variable_name = variable_name or utils.infer_variable(fcst)
     variable = query_utils.get_variable(variable_name)
     if isinstance(variable, schemes.VelocityVariable):
-        interactive.InteractiveVelocity(fcsts, velocity_variable)
+        interactive.InteractiveVelocity(fcst, variable, **kwdargs)
     else:
         raise NotImplementedError("Only support velocity variables at "
                                   "the moment.")
