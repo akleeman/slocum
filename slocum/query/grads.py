@@ -13,6 +13,7 @@ import variables
 
 logging.basicConfig(level=logging.DEBUG)
 
+from slocum.lib import units
 
 def recent_datasets(url_format, freq_hours=None, n=None):
     """
@@ -165,6 +166,9 @@ s        """
         ref_time = pd.to_datetime(ds['time'].values[0])
         new_units = ref_time.strftime('hours since %Y-%m-%d %H:%M:%SZ')
         ds['time'].encoding['units'] = new_units
+        ds['longitude'] = units.normalize_units(ds['longitude'])
+        ds['longitude'].attrs.update({'minimum':-180.,
+                                      'maximum': 180.})
         # extract only the variables that we recognize
         return ds[[x for x in self.grads_names.values()
                    if x in ds]]
