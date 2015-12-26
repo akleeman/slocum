@@ -383,7 +383,7 @@ def parse_resolution(resol_str):
     ----------
     resolution : string or None
         Must be a float, pair of identical floats or 'native'
-        If None, the default of 2 degrees is used.
+        If None, None is return to indicate native resolution should be used.
     """
     # default to native grid resolution.
     if resol_str == "native" or resol_str is None:

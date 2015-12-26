@@ -1,0 +1,3 @@
+# Use the requirements specified in setup.py
+# https://caremad.io/2013/07/setup-vs-requirement/
+-e .

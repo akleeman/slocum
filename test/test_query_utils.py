@@ -31,20 +31,20 @@ class QueryUtilsTest(unittest.TestCase):
 
     def test_parse_domain(self):
 
-        tests = [('10N,10S,10E,20E', {'N': 10., 'S': -10.,
+        tests = [('10N,10S,10E,20E', {'N': 10., 'S':-10.,
                                       'W': 10., 'E': 20.}),
-                 ('10S,10N,20E,10E', {'N': 10., 'S': -10.,
+                 ('10S,10N,20E,10E', {'N': 10., 'S':-10.,
                                       'W': 10., 'E': 20.}),
-                 ('10N,10S,10W,20E', {'N': 10., 'S': -10.,
-                                      'W': -10, 'E': 20.}),
+                 ('10N,10S,10W,20E', {'N': 10., 'S':-10.,
+                                      'W':-10, 'E': 20.}),
                  ('10N,20N,10W,20E', {'N': 20., 'S': 10.,
-                                      'W': -10, 'E': 20.}),
+                                      'W':-10, 'E': 20.}),
                  ('10N,20N,170W,170E', {'N': 20., 'S': 10.,
-                                        'W': 170., 'E': -170.}),
+                                        'W': 170., 'E':-170.}),
                  ('10N,20N,170E,170W', {'N': 20., 'S': 10.,
-                                        'W': 170., 'E': -170.}),
+                                        'W': 170., 'E':-170.}),
                  ('10N,20N,190E,170E', {'N': 20., 'S': 10.,
-                                        'W': 170., 'E': -170.})
+                                        'W': 170., 'E':-170.})
                  ]
 
         for domain_str, expected in tests:
@@ -74,8 +74,14 @@ class QueryUtilsTest(unittest.TestCase):
             actual = utils.parse_resolution(resol_str)
             self.assertAlmostEqual(actual, expected, places=2)
 
+        # make sure that None is propagated to indicate native
+        # resolution.
         actual = utils.parse_resolution(None)
-        self.assertAlmostEqual(actual, 2., places=2)
+        self.assertTrue(actual is None)
+        # make sure 'native' string is handled the same as None
+        actual = utils.parse_resolution('native')
+        self.assertTrue(actual is None)
+
 
         bad_queries = ['0.6,0.5,0.7', ]
 

@@ -23,15 +23,15 @@ if not ISRELEASED:
     VERSION = '%sa0' % VERSION
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
-requires = {'server': ['joblib', 'retrying', 'requests'],
-            'standard': ['xray >= 0.3.1',
-                         'pyproj >= 1.9.3',
-                         'pandas >= 0.13.1',
-                         'matplotlib >= 1.2.0',
-                         'coards',
-                         'basemap']}
-
-requires['full'] = list(set(itertools.chain(*requires.values())))
+requires = ['xray >= 0.3.1',
+            'pyproj >= 1.9.3',
+            'pandas >= 0.13.1',
+            'matplotlib >= 1.2.0',
+            'coards',
+            'joblib',
+            'retrying',
+            'basemap',
+            'requests']
 
 setup(name='slocum',
       version=VERSION,
@@ -41,7 +41,7 @@ setup(name='slocum',
       author_email='akleeman@gmail.com',
       license='MIT',
       packages=find_packages(),
-      install_requires=requires['full'],
+      install_requires=requires,
       tests_require=['nose >= 1.0'],
       test_suite='nose.collector',
       zip_safe=False,
