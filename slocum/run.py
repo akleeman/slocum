@@ -27,6 +27,28 @@ from query import request
 from compression import compress
 
 
+def handle_gui():
+    from Tkinter import Tk
+    from tkFileDialog import askopenfilename
+    # we save these imports so the script can be run as a server
+    # without requiring matplotlib.
+    import matplotlib.pyplot as plt
+    import visualize
+
+    Tk().withdraw()# we don't want a full GUI, so keep the root window from appearing
+    filename = askopenfilename()# show an "Open" dialog box and return the path to the selected file
+
+
+    with open(filename, 'r') as f:
+      payload = f.read()
+    # decompress
+    fcst = compress.decompress_dataset(payload)
+    # plot
+    visualize.plot_forecast(fcst)
+    # save or show
+    plt.show()
+
+
 def handle_plot(args):
     # we save these imports so the script can be run as a server
     # without requiring matplotlib.
@@ -183,7 +205,7 @@ _task_handler = {'email': (handle_email, setup_parser_email),
                  'query': (handle_query, setup_parser_email),
                  'route-forecast': (handle_route_forecast,
                                     setup_parser_route_forecast),
-                 'plot': (handle_plot, add_common_arguments),}
+                 'plot': (handle_plot, add_common_arguments), }
 
 
 def main():
@@ -198,22 +220,24 @@ def main():
 
     # add subparser for each task
     subparsers = parser.add_subparsers()
-
     for k in _task_handler.keys():
         func, p_setup = _task_handler[k]
         p = subparsers.add_parser(k, help=func.__doc__)
         p.set_defaults(func=func)
         p_setup(p)
 
-    # parse the arguments and run the handler associated with each task
-    args = parser.parse_args()
-    args.input = args.input_file or args.input
-    args.output = args.output_file or args.output
-    if args.profile:
-        import cProfile
-        cProfile.runctx('args.func(args)', globals(), locals(), args.profile)
+    if (len(sys.argv) < 2):
+      handle_gui()
     else:
-        args.func(args)
+      # parse the arguments and run the handler associated with each task
+      args = parser.parse_args()
+      args.input = args.input_file or args.input
+      args.output = args.output_file or args.output
+      if args.profile:
+          import cProfile
+          cProfile.runctx('args.func(args)', globals(), locals(), args.profile)
+      else:
+          args.func(args)
 
 if __name__ == "__main__":
     main()
