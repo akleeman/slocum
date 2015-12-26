@@ -1,3 +1,7 @@
+master:
+.. image:: https://travis-ci.org/akleeman/slocum.svg?branch=master
+    :target: https://travis-ci.org/akleeman/slocum
+
 Slocum -- A tool for ocean passage planning
 ===========================================
 
