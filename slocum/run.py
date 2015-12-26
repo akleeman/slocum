@@ -39,7 +39,7 @@ def handle_gui():
     filename = askopenfilename()# show an "Open" dialog box and return the path to the selected file
 
 
-    with open(filename, 'r') as f:
+    with open(filename, 'rb') as f:
       payload = f.read()
     # decompress
     fcst = compress.decompress_dataset(payload)
