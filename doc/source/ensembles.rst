@@ -9,7 +9,7 @@ What are ensemble forecasts?
 `Ensemble forecasting <https://en.wikipedia.org/wiki/Ensemble_forecasting>`_ is commonly used to help
 understand how much you can trust a given weather forecast.  The concept is relatively simple, a numerical weather
 model (such as GFS) is run multiple times using slightly different inputs.  The result is not just one
-forecast, but an entire ensemble of forecasts.  You can then look at how much the forecasts agree to
+forecast, but an entire set (or ensemble) of forecasts.  You can then look at how much the forecasts agree to
 get a sense of how much you can trust them.
 
 Take this forecast for a location off the coast of San Francisco as an example.  The plot shows
@@ -43,6 +43,8 @@ an numerical model and numerical models are never perfect. To truly understand t
 of a particular forecast you'd need to not only know the internal uncertainty (this is what
 ensemble forecasts provide) but also the model uncertainty -- i.e, what is it that the model
 is not capable of producing.
+
+.. _visualize-ensemble:
 
 Visualizing Ensemble Forecasts
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

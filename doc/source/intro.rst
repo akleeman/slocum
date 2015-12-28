@@ -1,33 +1,42 @@
 Introduction
 ===========================
 
-Sending a forecast query.
-~~~~~~~~~~~~~~~~~~
+Getting Forecasts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Slocum uses a query syntax that is similar to saildocs.  If you're familiar with these, using slocum will be easy.
+Slocum is (primarily) intended to be used as an e-mail based forecast provider and supports most of the same
+query syntax as `saildocs <http://www.saildocs.com/gribinfo>`_ and `zygrib <http://www.zygrib.org/?page=gribauto>`_,
+if you are familiar with either of those simply redirect one of your requsts to query@ensembleweather.com.
+For more details see the page on :doc:`query syntax <queries>`.
 
-Here are some examples:
+Here is a basic example:
 
-``send GFS:35N,45N,120W,130W|1,1|0,6..144|WIND``  will send a single gridded forecast from the GFS model which
-covers a ten by ten degree area around San Francisco.  The forecast will be 1 degree resolution and contain
-a wind forecast every six hours for the next six days.
+* Create an e-mail with a query request (such as ``send GEFS:35N,45N,120W,130W|native|0,6..144|WIND``) in the body.
+* Send the e-mail to query@ensembleweather.com.
+* `Grab a cup of coffee <http://media.giphy.com/media/AOjF59lD6eOPe/giphy.gif>`_ and wait for a response.
+* The response e-mail will have a forecast file attached, download it.
+* :ref:`Run slocum <run-slocum>` using the forecast file to plot it.
 
-``send spot:32N,-117E|8,6|wind`` will send a `spot forecast <spot.html>`_ just off the coast of San Diego that
-has a wind forecast for every six hours for the next eight days.
-
+You'll notice that this is similar to how sailmail or zygrib work with one exception,
+because slocum uses a unique compression algorithm (instead of less efficient grib files)
+you'll need slocum installed on your computer in order to open the forecasts.  In otherwords,
+you will not be able to use a grib viewer to view the forecast so be sure you have slocum
+install before cutting your dock lines.
 
 What inspired slocum?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 While crossing the Pacific in our boat `Saltbreaker <http://www.saltbreaker.com>`_ we would use our single
-side band radio and a modem to download weather forecasts using `saildocs <http://www.saildocs.com/>`_.
-As you can imagine the connection was *extremely* slow (4,000 bits/minute on a good day) leading to
+side band radio and a modem to download weather forecasts through `saildocs <http://www.saildocs.com/>`_.
+The connection was *extremely* slow (4,000 bits/minute on a good day) leading to
 downloads that could take 15-30 minutes and draining precious battery power.
 
-At some point I looked at what exactly was being sent in a grib file and realized that
-
-::
-    from slocum.query import saildocs
-    print saildocs._send_usage
+At some point I looked at what exactly was being sent in a grib file and noticed the files held
+far more information than sailors need to know.  For example, we don't need to know if the wind
+speed will be 17.54367 knots, knowing it will be between 15 and 20 is perfectly sufficient.  This
+inspired the compression algorithm used by slocum which sends the `Beaufort Force <https://en.wikipedia.org/wiki/Beaufort_scale>`_
+number (instead of floating point decimal values) resulting in forecast files that are an
+order of magnitude smaller than grib files.  A similar scheme is used to send other weather
+variables important to sailors.
 
 
 Why the name slocum?
@@ -42,29 +51,6 @@ talks about his tin clock,
 |
 
 If Joshua Slocum was able to successfully circumnavigate via celestial navigation using a clock with no minute hand, then modern day sailors should be able to get by using weather forecasts without floating point precision.
-
-
-Getting Forecasts
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Slocum is (primarily) intended to be used as an e-mail based forecast provider and supports most of the same
-`query syntax <http://www.saildocs.com/gribinfo>`_ as saildocs and zygrib, if you are familiar with either of
-those simply redirect one of your requsts to query@ensembleweather.com.
-
-To obtain a forecast you send an e-mail to query@ensembleweather.com with a forecast request in the body, then wait a few minutes for an e-mail response.  The respone will contain an attachment which holds an ultra-compressed forecast.  You then run the slocum program on your computer to decompress and plot the forecast.
-For details see the page on <a href="email.html">e-mail based forecasts</a>, roughly the process goes as follows
-
-* Create an e-mail with an e-mail request in the body.
-* Send the e-mail to query@ensembleweather.com.
-* `Grab a cup of coffee <http://media.giphy.com/media/AOjF59lD6eOPe/giphy.gif>`_ and wait for a response.
-* The response e-mail contains a forecast file attached, save it to your computer.
-* Plot the forecast using slocum by opening a `terminal <http://blog.teamtreehouse.com/introduction-to-the-mac-os-x-command-line>`_ and running ``slocum ./path_to_forecast.fcst``.
-
-
-You'll notice that this is identical to how sailmail or zygrib work with one exception,
-because slocum uses a unique compression algorithm you'll need slocum installed on your computer
-in order to open the forecasts.  In otherwords, you will not be able to use a grib viewer
-to view the forecast so be sure you have slocum install before cutting your dock lines.
 
 
 .. [1] `wikipedia <http://en.wikipedia.org/wiki/Joshua_Slocum>`_
