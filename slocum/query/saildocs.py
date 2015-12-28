@@ -26,9 +26,9 @@ send spot:model:location|[days,interval]|[variables]
 Parameters in brackets are optional, but the requests are order dependent
 so, for example, these structures are also valid:
 
-    ``send model:location``
+    ``send spot:model:location``
 
-    ``send model:location||variables``
+    ``send spot:model:location||variables``
 
 model
     One of %(models)s
@@ -95,11 +95,10 @@ region
     cannot span more than 180 degrees of longitude.
 
 resolution
-
-    Number of degrees or the word 'native'.
+    Number of degrees or the word `native`.
 
     Specifies the width of each grid in the desired forecast.  Default is
-    'native'.
+    `native`.
 
     For example, GFS has a native resolution of 0.5 degrees.
     By default this native resolution is used, but if you may want a
@@ -108,20 +107,18 @@ resolution
     native grid.
 
 hours
-
     List of integer hours.
 
-    Indicates which hours of the forecast are desired. Defaults to '24,48,72'.
+    Indicates which hours of the forecast are desired. Defaults to `24,48,72`.
     Hours should be comma separated and ellipses can be used to avoid
     unnecessarily long queries. When ellipsis are used the difference
     between the previous two values is continued until the end time.
-    For example, '0,6,12,24,36,48,60,72' is equivalent to '0,6,12,24...72'.
+    For example, `0,6,12,24,36,48,60,72` is equivalent to `0,6,12,24...72`.
 
 variables
-
     A list variables. Available variables include: %(variables)s
 
-    Default is 'WIND'
+    Default is `WIND`
 
     The list of variables to be included in the forecast.  Each
     variable should be separated by a comma.

@@ -40,4 +40,5 @@ forecast.
     plt.show()
 
 Note however that the single forecast plot contains much less information and is only half
-the size of the request with 21 forecasts.  Unless you are really bandwidth constrained
+the size of the request with 21 forecasts.  Unless you are extremely bandwidth constrained
+you'll probably want to use the full spot forecasts.
