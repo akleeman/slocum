@@ -199,7 +199,12 @@ def parse_spot_request(request):
     location = utils.parse_location(location_str)
     # default to 4 days every three hours
     time_str = time_str or '5,6'
-    hours = utils.parse_times(time_str)
+    # First try parsing the format `days,period`
+    try:
+      hours = utils.parse_times(time_str)
+    except ValueError, e:
+      # if that fails try the gridded format `hour0,hour1,...,hourn`
+      hours = utils.parse_hours(time_str)
 
     if variables is None:
         variables = []

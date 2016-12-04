@@ -114,6 +114,14 @@ class SaildocsTest(unittest.TestCase):
                    'hours': np.linspace(0, 96, 33).astype('int'),
                    'variables': ['wind']
                    }),
+                 ('spot:26S,32.9E|0,3..180|WIND',
+                  {'location': {'latitude': -26., 'longitude': 32.9},
+                   'model': 'gefs',
+                   'type': 'spot',
+                   'send-image': False,
+                   'hours': np.linspace(0, 180, 61).astype('int'),
+                   'variables': [u'wind']
+                    }),
                  ]
 
         for request, expected in tests:
@@ -121,6 +129,12 @@ class SaildocsTest(unittest.TestCase):
             actual = saildocs.parse_spot_request(request)
             np.testing.assert_array_equal(actual.pop('hours'),
                                           expected.pop('hours'))
+            actual_location = actual.pop('location')
+            expected_location = expected.pop('location')
+            np.testing.assert_allclose([actual_location['latitude'],
+                                        actual_location['longitude']],
+                                       [expected_location['latitude'],
+                                        expected_location['longitude']])
             self.assertDictEqual(actual, expected)
 
 
