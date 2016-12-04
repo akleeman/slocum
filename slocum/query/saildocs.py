@@ -194,7 +194,6 @@ def parse_spot_request(request):
     if ':' in location_str:
         model, location_str = location_str.split(':', 1)
         model = model.lower()
-        import ipdb; ipdb.set_trace()
     else:
         model = 'gefs'
     location = utils.parse_location(location_str)

@@ -401,11 +401,8 @@ def parse_resolution(resol_str):
         if parts[0].lower() == 'native':
             resol = None
         else:
-            try:
-                # a single value was given assume its the resolution
-                resol = floatify(parts[0])
-            except:
-                import ipdb; ipdb.set_trace()
+              # a single value was given assume its the resolution
+              resol = floatify(parts[0])
     elif len(parts) == 2:
         # sail docs supports different resolutions for latitude and
         # longitude, but that's kind of silly.  We only support a
