@@ -21,7 +21,7 @@ file_handler = logging.FileHandler(_log_path)
 logger.addHandler(file_handler)
 console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
-logger.setLevel("INFO")
+logger.setLevel("DEBUG")
 
 from query import request
 from compression import compress

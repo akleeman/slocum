@@ -239,7 +239,7 @@ def process_email(mime_text, url=None,
                                 ("Bad query: '%s'.  If there were other "
                                  "queries in the same email they won't be "
                                  "processed.\n Query failed with error %s"
-                                 % email_body[0], e))
+                                 % (email_body[0], e)))
             if fail_hard:
                 raise
         except exceptions, e:
