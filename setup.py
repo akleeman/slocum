@@ -42,7 +42,7 @@ setup(name='slocum',
       license='MIT',
       packages=find_packages(),
       install_requires=requires,
-      tests_require=['pytest', 'pytest-coverage'],
+      tests_require=['pytest', 'pytest-coverage', 'mock'],
       zip_safe=False,
       entry_points={'console_scripts': ['slocum=slocum.run:main']},
       classifiers=[

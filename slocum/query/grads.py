@@ -4,7 +4,6 @@ import urllib2
 import logging
 import datetime
 import retrying
-import requests
 
 import numpy as np
 import pandas as pd
@@ -14,6 +13,7 @@ import variables
 logging.basicConfig(level=logging.DEBUG)
 
 from slocum.lib import units
+
 
 def recent_datasets(url_format, freq_hours=None, n=None):
     """

@@ -12,6 +12,7 @@ dependencies:
 - requests
 - pytest
 - netCDF4
+- mock
 - pip:
     - pytest-xdist
     - pytest-coverage
