@@ -50,9 +50,13 @@ def axis_figure(axis=None, figure=None):
     return axis, figure
 
 
-def bounding_box(fcst, pad=0.1, lon_pad=None, lat_pad=None):
+def bounding_box_from_forecast(fcst, *args, **kwdargs):
     lons = np.unique(fcst['longitude'].values)
     lats = np.unique(fcst['latitude'].values)
+    return bounding_box(lons, lats, *args, **kwdargs)
+
+
+def bounding_box(lons, lats, pad=0.1, lon_pad=None, lat_pad=None):
 
     lon_diffs = angles.angle_diff(lons[:, None], lons)
     lat_diffs = angles.angle_diff(lats[:, None], lats)
@@ -110,7 +114,8 @@ def get_basemap(fcst, pad=0.1, lat_pad=None, lon_pad=None, **kwdargs):
     """
     kwdargs['projection'] = kwdargs.get('projection', 'cyl')
     kwdargs['resolution'] = kwdargs.get('resolution', 'i')
-    bm_args = bounding_box(fcst, pad=pad, lat_pad=lat_pad, lon_pad=lon_pad)
+    bm_args = bounding_box_from_forecast(fcst, pad=pad,
+                                         lat_pad=lat_pad, lon_pad=lon_pad)
     bm_args.update(kwdargs)
     # explicitly specify axis, even if its just the gca.
     bm_args['ax'] = axis_figure(bm_args.get('ax', None))[0]
