@@ -1,9 +1,8 @@
+import copy
 import xray
 import warnings
 import itertools
 import numpy as np
-
-import utils
 
 from slocum.lib import angles
 from slocum.query import utils
@@ -21,6 +20,7 @@ def angle_slicer(x, low, high, delta=None, tolerance=4):
     diffs = np.unique(np.round(diffs, tolerance))
     # assume angles are equally spaced.
     assert diffs.size == 1
+    # assume angles are increasing
     native_delta = np.abs(diffs[0])
     # round to the nearest native stride but make sure we dont hit zero
     delta = delta or native_delta
@@ -34,10 +34,19 @@ def angle_slicer(x, low, high, delta=None, tolerance=4):
     high_diff = angles.angle_diff(x, high)
     low_diff = angles.angle_diff(x, low)
     inside_domain = np.logical_and(high_diff <= 0, low_diff >= 0)
-    # if the edges are in the domain, make sure everything is
-    # otherwise we will have to use multiple slicers.
+
+    # This next bit is meant to handle slicing longitudinal
+    # requests which cross zero longitude.  When that happens the
+    # GEFS data needs to be sliced twice and then stitched back
+    # together.
     if inside_domain[0] and inside_domain[-1]:
-        assert np.all(inside_domain)
+        # The request domain spans the boundary, we'll have to
+        # slice in two chunks and rejoint the results.
+        assert diffs > 0
+        slice_low = angle_slicer(x, low, x[-1] - delta + 0.01)
+        slice_high = angle_slicer(x, x[0], high)
+        return [slice_low, slice_high]
+
     # returns the index which minimizes x conditional on 'cond' being true
     def argmin_conditional(x, cond):
         x = x.copy()
@@ -59,6 +68,7 @@ def angle_slicer(x, low, high, delta=None, tolerance=4):
     if not len(possible_slicers):
         raise ValueError("Couldn't find a slice that would provide contain "
                          "the desired domain")
+
     return possible_slicers[0]
 
 
@@ -83,6 +93,9 @@ def latitude_slicer(lats, query):
     lat_delta = query.get('resolution', None)
     slicer = angle_slicer(lats, domain['S'], domain['N'],
                           lat_delta)
+    if isinstance(slicer, list):
+        raise ValueError("The latitude query must be malformed. %s"
+                         % query)
 
     # at least one point south of the northern edge
     assert np.any(lats[slicer] <= domain['N'])
@@ -111,18 +124,23 @@ def longitude_slicer(lons, query):
         warnings.warn('grid_delta in queries is obsolete, use resolution')
 
     lon_delta = query.get('resolution', None)
-    slicer = angle_slicer(lons, domain['W'], domain['E'], lon_delta)
+    slices = angle_slicer(lons, domain['W'], domain['E'], lon_delta)
+
+    if isinstance(slices, list):
+        sliced = np.concatenate([lons[s] for s in slices])
+    else:
+        sliced = lons[slices]
 
     # at least one point west of the eastern edge
-    assert np.any(angles.angle_diff(lons[slicer], domain['E']) <= 0.)
+    assert np.any(angles.angle_diff(sliced, domain['E']) <= 0.)
     # east of the eastern edge
-    assert np.any(angles.angle_diff(lons[slicer], domain['E']) >= 0.)
+    assert np.any(angles.angle_diff(sliced, domain['E']) >= 0.)
     # east of the western edge
-    assert np.any(angles.angle_diff(lons[slicer], domain['W']) >= 0.)
+    assert np.any(angles.angle_diff(sliced, domain['W']) >= 0.)
     # west of the western edge
-    assert np.any(angles.angle_diff(lons[slicer], domain['W']) <= 0.)
+    assert np.any(angles.angle_diff(sliced, domain['W']) <= 0.)
 
-    return slicer
+    return slices
 
 
 def time_slicer(time_coordinate, query):
@@ -185,16 +203,32 @@ def subset_gridded_dataset(remote_dataset, query, additional_slicers=None):
     required_variables = list(itertools.chain(*[v.required_variables()
                                                 for v in variables]))
     remote_dataset = remote_dataset[required_variables]
-    # Until this point all the data might live on a remote server,
-    # so we'd like to download as little as possible.  As a result
-    # we split the subsetting into two steps, the first can be done
-    # using slicers which minimizes downloading from openDAP servers,
-    # the second pulls out the actual requested domain once the data
-    # has been loaded locally.
-    local_dataset = remote_dataset.isel(**slicers)
-    local_dataset = subset_time(local_dataset, query['hours'])
-    local_dataset.load()
-    return local_dataset
+
+    def get_one_slice(one_slice):
+        # Until this point all the data might live on a remote server,
+        # so we'd like to download as little as possible.  As a result
+        # we split the subsetting into two steps, the first can be done
+        # using slicers which minimizes downloading from openDAP servers,
+        # the second pulls out the actual requested domain once the data
+        # has been loaded locally.
+        local_dataset = remote_dataset.isel(**one_slice)
+        local_dataset = subset_time(local_dataset, query['hours'])
+        local_dataset.load()
+        return local_dataset
+
+    if (isinstance(slicers['longitude'], list)
+        and len(slicers['longitude']) > 1):
+
+        def modify_slice(lon_slice):
+            new_slicer = copy.copy(slicers)
+            new_slicer['longitude'] = lon_slice
+            return new_slicer
+
+        data_chunks = [get_one_slice(modify_slice(lon_slice))
+                       for lon_slice in slicers['longitude']]
+        return xray.concat(data_chunks, dim='longitude')
+    else:
+        return get_one_slice(slicers)
 
 
 def query_containing_point(spot_query):
