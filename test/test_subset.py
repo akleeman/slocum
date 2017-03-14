@@ -39,7 +39,8 @@ class SubsetTest(unittest.TestCase):
 
     def test_longitude_slicer(self):
 
-        queries = [((10., 30.), 0.5, np.linspace(10., 30., 41)),
+        queries = [((-10., 10.), 0.5, np.mod(np.linspace(-10, 10., 41), 360.)),
+                   ((10., 30.), 0.5, np.linspace(10., 30., 41)),
                    ((10., 30.), 1.0, np.linspace(10., 30., 21)),
                    ((170., -170.), 0.5, np.linspace(170., 190., 41)),
                    ((170., -170.), 1.1, np.linspace(170., 190., 21)),
@@ -50,21 +51,32 @@ class SubsetTest(unittest.TestCase):
                                 'E': east, 'W': west},
                      'resolution': resol}
 
-            lons = np.linspace(0., 360., 721)
-            slicer = subset.longitude_slicer(lons, query)
-            np.testing.assert_array_equal(expected, lons[slicer])
+            # Try when the longitudes are defined on 0. to 360.
+            lons = np.linspace(0., 359.5, 720)
+            slices = subset.longitude_slicer(lons, query)
+            
+            if isinstance(slices, list):
+                sliced = np.concatenate([lons[s] for s in slices])
+            else:
+                sliced = lons[slices]
 
-        lons = np.linspace(0., 360., 721)
+            np.testing.assert_array_equal(expected, sliced)
+
+            # And again when they're defined on -180. to 180.
+            lons_180 = np.mod(lons + 180., 360.) - 180.
+            slices = subset.longitude_slicer(lons_180, query)
+
+            if isinstance(slices, list):
+                sliced = np.concatenate([lons[s] for s in slices])
+            else:
+                sliced = lons[slices]
+
+            np.testing.assert_array_equal(expected, sliced)
+
+
+        lons = np.linspace(0., 359.5, 720)
         # add an irregularly spaced grid
         lons[180] = 1.1
-        self.assertRaises(Exception,
-                          lambda: subset.longitude_slicer(lons, query))
-
-        lons = np.linspace(0., 360., 721)
-        query = {'domain': {'N': 10., 'S': -10.,
-                            'E': 10., 'W': -10.},
-                 'grid_delta': (0.5, 0.5)}
-
         self.assertRaises(Exception,
                           lambda: subset.longitude_slicer(lons, query))
 
