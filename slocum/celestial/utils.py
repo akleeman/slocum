@@ -66,6 +66,7 @@ def parse_one_sight(sight):
     lon = maybe_convert_to_decimal(sight.get('longitude', np.nan))
     alt = maybe_convert_to_decimal(sight.get('altitude', np.nan))
     radius = maybe_convert_to_decimal(sight.get('radius', np.nan))
+    body = sight.get('body', 'sun')
     return {'time': time,
             'gha': gha,
             'declination': dec,
@@ -75,19 +76,47 @@ def parse_one_sight(sight):
             'radius': radius}
 
 
-def read_csv(file_name):
+def parse_one_course(course):
+    """
+    Pull out all the information from one line in a csv of courses.
+    Not all the information may be present, in which case nans
+    are filled in.
+    """
+    time = np.datetime64(course.get('utc', np.nan))
+    cog = maybe_convert_to_decimal(course.get('cog', np.nan))
+    sog = maybe_convert_to_decimal(course.get('sog', np.nan))
+    lat = maybe_convert_to_decimal(course.get('latitude', np.nan))
+    lon = maybe_convert_to_decimal(course.get('longitude', np.nan))
+    return {'time': time,
+            'cog': cog,
+            'latitude': lat,
+            'longitude': lon,
+            'sog': sog, }
+
+
+def read_csv(file_name, expected_fields = []):
     """
     Reads in a csv of sights into a list of dictionaries.
     """
 
     with open(file_name, 'r') as f:
         reader = csv.DictReader(f)
-        expected_names = set(['utc', 'altitude', 'latitude', 'longitude',
-                              'gha', 'dec', 'radius'])
+        expected_names = set(expected_fields)
         if len(expected_names.difference(reader.fieldnames)):
             raise ValueError("Expected fields with names %s, got %s, missing %s"
                              % (expected_names, reader.fieldnames,
                                 expected_names.difference(reader.fieldnames)))
         data = list(reader)
 
+    return data
+
+
+
+def read_sights(file_name):
+    data = read_csv(file_name, ['utc', 'altitude'])
     return [parse_one_sight(sight) for sight in data]
+    
+
+def read_courses(file_name):
+    data = read_csv(file_name, ['cog', 'sog'])
+    return [parse_one_course(course) for course in data]
