@@ -2,6 +2,7 @@ import csv
 import numpy as np
 import pandas as pd
 
+from cStringIO import StringIO
 
 def degrees_minutes_to_decimal(deg_min_str):
     degrees, minutes = [np.float(x.strip("'"))
@@ -19,6 +20,10 @@ def decimal_to_degrees_minutes(angle):
 
 
 def maybe_convert_to_decimal(deg_min_str):
+    if deg_min_str is None:
+        return np.nan
+    if np.array(deg_min_str).dtype.kind == 'f':
+        return deg_min_str
     if not '_' in deg_min_str:
         return np.float(deg_min_str)
     else:
@@ -66,9 +71,10 @@ def parse_one_sight(sight):
     lon = maybe_convert_to_decimal(sight.get('longitude', np.nan))
     alt = maybe_convert_to_decimal(sight.get('altitude', np.nan))
     radius = maybe_convert_to_decimal(sight.get('radius', np.nan))
-    body = sight.get('body', 'sun')
+    body = sight.get('body', None)
     return {'time': time,
             'gha': gha,
+            'body': body,
             'declination': dec,
             'latitude': lat,
             'longitude': lon,
@@ -87,11 +93,13 @@ def parse_one_course(course):
     sog = maybe_convert_to_decimal(course.get('sog', np.nan))
     lat = maybe_convert_to_decimal(course.get('latitude', np.nan))
     lon = maybe_convert_to_decimal(course.get('longitude', np.nan))
+    sigma = float(course.get('sig', np.nan))
     return {'time': time,
             'cog': cog,
             'latitude': lat,
             'longitude': lon,
-            'sog': sog, }
+            'sog': sog,
+            'sigma': sigma}
 
 
 def read_csv(file_name, expected_fields = []):
@@ -100,13 +108,15 @@ def read_csv(file_name, expected_fields = []):
     """
 
     with open(file_name, 'r') as f:
-        reader = csv.DictReader(f)
-        expected_names = set(expected_fields)
-        if len(expected_names.difference(reader.fieldnames)):
-            raise ValueError("Expected fields with names %s, got %s, missing %s"
-                             % (expected_names, reader.fieldnames,
-                                expected_names.difference(reader.fieldnames)))
-        data = list(reader)
+        f_memory = StringIO(''.join([l for l in f.readlines() if not l.startswith('#')]))
+
+    reader = csv.DictReader(f_memory)
+    expected_names = set(expected_fields)
+    if len(expected_names.difference(reader.fieldnames)):
+        raise ValueError("Expected fields with names %s, got %s, missing %s"
+                         % (expected_names, reader.fieldnames,
+                            expected_names.difference(reader.fieldnames)))
+    data = list(reader)
 
     return data
 

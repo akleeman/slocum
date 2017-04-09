@@ -22,7 +22,7 @@ def noon_sight(file_name):
     The main routine which ties together all the processing steps.
     """
     # read in the sights
-    data = utils.read_csv(file_name)
+    data = utils.read_sights(file_name)
     # Get arrays of all the times sights were made, what was
     # observed for altitude and what the actual altitude was.
     times, observed, actual = map(np.array,
