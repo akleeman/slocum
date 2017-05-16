@@ -1,4 +1,5 @@
 import ephem
+import ephem.stars
 import pyproj
 import argparse
 import itertools
@@ -17,23 +18,22 @@ from xml.etree.ElementInclude import include
 SIG_SOG = 0.5
 SIG_COG = np.deg2rad(10.)
 SIG_INIT = 2.
-SIG_ALT = units.convert_scalar(5., 'nautical_mile', 'm') / 1000.
 
-_bodies = {'sun': ephem.Sun(),
-           'venus': ephem.Venus()}
+GEOD = pyproj.Geod(ellps="sphere")
 
 
 def build_state(positions_with_cov):
     mu = np.zeros(2 * len(positions_with_cov))
-    covs = [p['covariance'] for p in positions_with_cov]
 
     cov = np.zeros((mu.size, mu.size))
-    for i, cc in enumerate(covs):
+    for i, pos in enumerate(positions_with_cov):
         # This fills in the lower right portions with replications
         # of the current covariance.
+        if not pos['accumulate']:
+          cov[2 * i:, 2 * i:]
         cov[2 * i:, 2 * i:] += np.kron(np.ones((mu.size / 2 - i,
                                                 mu.size / 2 - i)),
-                                      cc)
+                                       pos['covariance'])
 
     references = np.concatenate([[p['longitude'], p['latitude']]
                                  for p in positions_with_cov])
@@ -86,54 +86,67 @@ def dead_reakon_covariance(distance, azimuth, sig_d, sig_a):
 
 
 def dead_reakon(courses, times):
+
+    # We start with some initial position
     prev_lon = courses[0]['longitude']
     prev_lat = courses[0]['latitude']
+    prev_time = times[0]
 
+    # And construct a circle around the initial position
+    # with the initial uncertainty
     sig_init = courses[0]['sigma']
     if np.isnan(sig_init):
         sig_init = SIG_INIT
 
+    # Then we'll iterate over each course and accumulate the estimates
+    # and uncertainty
     iter_courses = iter(courses)
     course = iter_courses.next()
     next_course = next_or_none(iter_courses)
 
-    geod = pyproj.Geod(ellps="sphere")
-
-    prev_time = times[0]
-
     for time in times:
+        # Find the closest course to the next time in the sequence
         while next_course is not None and time > next_course['time']:
             course = next_course
             next_course = next_or_none(iter_courses)
-        
-        dt_sec = (time - prev_time).astype('timedelta64[s]')
 
-        sog_ms = units.convert_scalar(course['sog'], 'knots', 'm/s')
-
-        distance = sog_ms * dt_sec.astype('int') / 1000.
-        lon, lat, _ = geod.fwd(prev_lon, prev_lat, course['cog'], distance * 1000)
-
-        sig_cog = course.get('sig_cog', SIG_COG)
-        sig_sog = course.get('sig_sog', SIG_SOG)
-
-        sig_d = sig_sog * sog_ms * dt_sec.astype('int') / 1000.
-
-        if time == times[0]:
-            cov = sig_init ** 2 * np.eye(2)
+        # Here we check if the course update is an actual speed/course or
+        # If it's a new position estimate.
+        if (next_course is not None and
+            np.isfinite(next_course.get('longitude', np.nan)) and
+            np.isfinite(next_course.get('latitude', np.nan))):
+          # If it's a position estimate we reset the position
+          lon = next_course['longitude']
+          lat = next_course['latitude']
+          cov = sig_init ** 2 * np.eye(2)
+          accumulate = False
         else:
-            cov = dead_reakon_covariance(distance, course['cog'], sig_d, sig_cog)
+          # otherwise we infer the new position from the previous and the course
+          dt_sec = (time - prev_time).astype('timedelta64[s]')
+
+          sog_ms = units.convert_scalar(course['sog'], 'knots', 'm/s')
+
+          distance = sog_ms * dt_sec.astype('int') / 1000.
+          lon, lat, _ = GEOD.fwd(prev_lon, prev_lat, course['cog'], distance * 1000)
+
+          sig_cog = course.get('sig_cog', SIG_COG)
+          sig_sog = course.get('sig_sog', SIG_SOG)
+
+          sig_d = sig_sog * sog_ms * dt_sec.astype('int') / 1000.
+
+          cov = dead_reakon_covariance(distance, course['cog'], sig_d, sig_cog)
+          accumulate = True
 
         yield {'longitude': lon,
                'latitude': lat,
-               'covariance': cov}
+               'covariance': cov,
+               'accumulate': accumulate}
         prev_lon = lon
         prev_lat = lat
         prev_time = time
 
 
 def get_positions(mu, cov, ref):
-    
-    geod = pyproj.Geod(ellps="sphere")
 
     for i in range(ref.size / 2):
         sl = slice(2 * i, 2 * i + 2)
@@ -141,12 +154,11 @@ def get_positions(mu, cov, ref):
         one_cov = cov[sl, sl]
         angle = np.rad2deg(np.arctan2(*mu[sl]))
         dist = np.linalg.norm(mu[sl])
-        new_lon, new_lat, _ = geod.fwd(lon, lat, angle, dist * 1000.)
+        new_lon, new_lat, _ = GEOD.fwd(lon, lat, angle, dist * 1000.)
         yield (new_lon, new_lat), one_cov
 
 
 def plot_estimate(bm, mu, cov, ref, fig, ax, color='red'):
-    geod = pyproj.Geod(ellps="sphere")
 
     for pos, one_cov in get_positions(mu, cov, ref):
 
@@ -158,7 +170,7 @@ def plot_estimate(bm, mu, cov, ref, fig, ax, color='red'):
 
         angle = np.rad2deg(np.arctan2(*np.dot(eig_vecs, [0., 1.])))
 
-        lons, lats, _ = geod.fwd([lon, lon], [lat, lat],
+        lons, lats, _ = GEOD.fwd([lon, lon], [lat, lat],
                                  [angle, angle + 90.],
                                  [w * 1000, h * 1000])
 
@@ -173,16 +185,20 @@ def plot_estimate(bm, mu, cov, ref, fig, ax, color='red'):
         plt.scatter(*bm(lon, lat), color=color)
 
 
-def one_sight(time, lon, lat, body_name=None):
+def one_sight(time, lon, lat, body_name=None, lobe=None):
     obs = ephem.Observer()
     obs.lon = str(lon)
     obs.lat = str(lat)
     dt = pd.to_datetime(time)
     obs.date = dt.strftime('%Y/%m/%d %H:%M:%S')
     body_name = body_name or 'sun'
-    body = _bodies[body_name]
+    body = utils.get_bodies()[body_name]
     body.compute(obs)
-    return np.rad2deg(body.alt), np.rad2deg(body.az), np.rad2deg(body.radius)
+    lobe_sign = {'upper':-1.,
+                 'lower': 1.,
+                 None: 1.}[lobe]
+    print "At %s the %s had declination %s" % (str(time), body_name, np.rad2deg(body.dec))
+    return np.rad2deg(body.alt), np.rad2deg(body.az), lobe_sign * np.rad2deg(body.radius)
 
 
 def build_observations(sights, times, ref):
@@ -192,7 +208,9 @@ def build_observations(sights, times, ref):
         lon = np.asscalar(ref[2 * i][0])
         lat = np.asscalar(ref[2 * i + 1])
 
-        alt, az, radius = one_sight(sight['time'], lon, lat, sight.get('body', None))
+        alt, az, radius = one_sight(sight['time'], lon, lat,
+                                    sight.get('body', None),
+                                    sight.get('lobe', None))
         obs_vect = np.zeros(ref.size)
         obs_vect[2 * i] = np.sin(np.deg2rad(az))
         obs_vect[2 * i + 1] = np.cos(np.deg2rad(az))
@@ -202,18 +220,18 @@ def build_observations(sights, times, ref):
                                                radius=radius)
         diff_nm = (obs_alt - alt) * 60.
         y = units.convert_scalar(diff_nm, 'nautical_mile', 'm') / 1000.
-        return y, obs_vect
-        
+        sigma = units.convert_scalar(sight['sigma'],
+                                     'nautical_mile', 'm') / 1000.
+        return y, obs_vect, sigma
     
     obs = [one_sight_constraint(sight) for sight in sights]
-    y, H = map(np.array, zip(*obs))
-    R = SIG_ALT ** 2 * np.eye(y.size)
+    y, H, sigmas = map(np.array, zip(*obs))
+    R = np.diag(np.square(sigmas))
     return y, H, R
 
 
 def plot_observations(y, H, R, ref, bm):
 
-    geod = pyproj.Geod(ellps="sphere")
     for b, h, r in zip(y, H, np.diag(R)):
 
         lon, lat = ref[np.nonzero(h)]
@@ -221,14 +239,15 @@ def plot_observations(y, H, R, ref, bm):
         hx, hy = h[np.nonzero(h)]
         azim = np.rad2deg(np.arctan2(hx, hy))
 
-        lop_lon, lop_lat, _ = geod.fwd(lon, lat, azim, b * 1000.)
+        lop_lon, lop_lat, _ = GEOD.fwd(lon, lat, azim, b * 1000.)
 
         dists = np.linspace(-50000, 50000, 3)
-        ret = np.array([geod.fwd(lop_lon, lop_lat, azim + 90, d)
+        ret = np.array([GEOD.fwd(lop_lon, lop_lat, azim + 90, d)
                         for d in dists])
 
         lon_line = ret[:, 0]
         lat_line = ret[:, 1]
+
         bm.plot(lon_line, lat_line, color='red')
 
 
@@ -355,25 +374,23 @@ def estimate(sights, courses, include_now=False):
 
 
 def main(args):
-    sights = utils.read_sights(args.sights)
-    courses = utils.read_courses(args.courses)
+  sights = utils.read_sights(args.sights)
+  courses = utils.read_courses(args.courses)
 
-#     sights, courses = toy_problem()
+  times, positions = list(estimate(sights, courses, include_now=args.now))
 
-    times, positions = list(estimate(sights, courses, include_now=args.now))
-
-    print "----------------------------------------------------------"
-    for t, (pos, cov) in zip(times, positions):
-        lon_str = utils.decimal_to_degrees_minutes(pos[1])
-        lat_str = utils.decimal_to_degrees_minutes(pos[0])
-        max_err = units.convert_scalar(1000 * np.max(np.sqrt(np.linalg.eigvals(cov))),
-                                       'm', 'nautical_mile')
-        
-        print "At %s you were here %s, %s +/- %.1f nm" % (t, lon_str, lat_str, max_err)
-    print "----------------------------------------------------------"
-    
-    plt.show()
-
+  print "----------------------------------------------------------"
+  for t, (pos, cov) in zip(times, positions):
+      lon_str = utils.decimal_to_degrees_minutes(pos[1])
+      lat_str = utils.decimal_to_degrees_minutes(pos[0])
+      max_err = units.convert_scalar(1000 * np.max(np.sqrt(np.linalg.eigvals(cov))),
+                                     'm', 'nautical_mile')
+      
+      print "At %s you were here %s, %s +/- %.1f nm" % (t, lon_str, lat_str, max_err)
+  print "----------------------------------------------------------"
+  
+  plt.show()
+  
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="""

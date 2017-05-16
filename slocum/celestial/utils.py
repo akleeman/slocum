@@ -1,8 +1,22 @@
 import csv
+import ephem
+import ephem.stars
 import numpy as np
 import pandas as pd
 
 from cStringIO import StringIO
+
+_bodies = {'sun': ephem.Sun(),
+           'venus': ephem.Venus(),
+           'moon': ephem.Moon(),
+           'mars': ephem.Mars(),
+           }
+# add all the stars
+_bodies.update({k.lower(): v
+                for k, v in ephem.stars.stars.iteritems()})
+
+def get_bodies():
+  return _bodies
 
 def degrees_minutes_to_decimal(deg_min_str):
     degrees, minutes = [np.float(x.strip("'"))
@@ -72,6 +86,8 @@ def parse_one_sight(sight):
     alt = maybe_convert_to_decimal(sight.get('altitude', np.nan))
     radius = maybe_convert_to_decimal(sight.get('radius', np.nan))
     body = sight.get('body', None)
+    lobe = sight.get('lobe', None) or 'lower'
+    sigma = float(sight.get('sigma', None) or 5.)
     return {'time': time,
             'gha': gha,
             'body': body,
@@ -79,7 +95,9 @@ def parse_one_sight(sight):
             'latitude': lat,
             'longitude': lon,
             'altitude': alt,
-            'radius': radius}
+            'lobe': lobe,
+            'radius': radius,
+            'sigma': sigma}
 
 
 def parse_one_course(course):
@@ -93,7 +111,8 @@ def parse_one_course(course):
     sog = maybe_convert_to_decimal(course.get('sog', np.nan))
     lat = maybe_convert_to_decimal(course.get('latitude', np.nan))
     lon = maybe_convert_to_decimal(course.get('longitude', np.nan))
-    sigma = float(course.get('sig', np.nan))
+    sigma = float(course.get('sig', np.nan) or np.nan)
+
     return {'time': time,
             'cog': cog,
             'latitude': lat,
