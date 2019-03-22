@@ -179,7 +179,7 @@ class GEFS(GrADS):
     The Global Ensemble Forecast System
     """
 
-    url_format = 'http://nomads.ncep.noaa.gov:9090/dods/gens_bc/gens%Y%m%d/gep_all_%Hz'
+    url_format = 'https://nomads.ncep.noaa.gov:9090/dods/gens_bc/gens%Y%m%d/gep_all_%Hz'
     freq = 6
 
     def variables(self):
@@ -192,7 +192,7 @@ class CMCENS(GrADS):
     """
     The Canadian Ensemble Forecasting system
     """
-    url_format = 'http://nomads.ncep.noaa.gov:9090/dods/cmcens/cmcens%Y%m%d/cmcens_all_%Hz'
+    url_format = 'https://nomads.ncep.noaa.gov:9090/dods/cmcens/cmcens%Y%m%d/cmcens_all_%Hz'
     freq = 12
 
     def variables(self):
@@ -205,7 +205,7 @@ class FENS(GrADS):
     """
     The FNMOC Ensemble Forecast System
     """
-    url_format = 'http://nomads.ncep.noaa.gov:9090/dods/fens/fens%Y%m%d/fens_all_%Hz'
+    url_format = 'https://nomads.ncep.noaa.gov:9090/dods/fens/fens%Y%m%d/fens_all_%Hz'
     freq = 6
 
     def variables(self):
@@ -218,7 +218,7 @@ class GFS(GrADS):
     """
     Fetches from the quarter degree Global Forecast System
     """
-    url_format = 'http://nomads.ncep.noaa.gov:9090/dods/gfs_0p25/gfs%Y%m%d/gfs_0p25_%Hz'
+    url_format = 'https://nomads.ncep.noaa.gov:9090/dods/gfs_0p25/gfs%Y%m%d/gfs_0p25_%Hz'
     freq = 6
 
     def variables(self):
@@ -231,7 +231,7 @@ class RTOFS(GrADS):
     """
     The Real Time Ocean Forecast System
     """
-    url_format = 'http://nomads.ncep.noaa.gov:9090/dods/rtofs/rtofs_global%Y%m%d/rtofs_glo_2ds_forecast_3hrly_prog'
+    url_format = 'https://nomads.ncep.noaa.gov:9090/dods/rtofs/rtofs_global%Y%m%d/rtofs_glo_2ds_forecast_3hrly_prog'
     freq = 24
 
     def normalize(self, ds):
@@ -245,7 +245,7 @@ class RTOFS(GrADS):
 
 class WW3(GrADS):
 
-    url_format = 'http://nomads.ncep.noaa.gov:9090/dods/wave/nww3/nww3%Y%m%d/nww3%Y%m%d_%Hz'
+    url_format = 'https://nomads.ncep.noaa.gov:9090/dods/wave/nww3/nww3%Y%m%d/nww3%Y%m%d_%Hz'
     freq = 6
 
     def variables(self):
