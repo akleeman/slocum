@@ -388,7 +388,7 @@ def small_time(time_var):
     using small_array().
     """
     if np.issubdtype(time_var.dtype, np.datetime64):
-        time_var = xray.conventions.encode_cf_variable(time_var)
+        time_var = xra.conventions.encode_cf_variable(time_var)
     else:
         # if the time_var does not have datetime values we want
         # to make sure it is an encoded datetime.
@@ -396,7 +396,7 @@ def small_time(time_var):
         assert 'since' in time_var.attrs.get('units', '')
 
     assert time_var.attrs['units'].lower().startswith('hour')
-    origin = xray.conventions.decode_cf_datetime([0],
+    origin = xra.conventions.decode_cf_datetime([0],
                                                  time_var.attrs['units'])[0]
     origin = pd.to_datetime(origin)
     # diffs should be integer valued

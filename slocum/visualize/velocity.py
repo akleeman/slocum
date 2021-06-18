@@ -116,7 +116,7 @@ class VelocityField(object):
         kwdargs['cmap'] = kwdargs.get('cmap', velocity_cmap)
 
         # convert the bins to knots
-        bins = xray.Variable('bins',
+        bins = xra.Variable('bins',
                              velocity_variable.speed_bins.copy(),
                              {'units': velocity_variable.units})
         _, self.bins, _ = units.convert_units(bins, speed_units)

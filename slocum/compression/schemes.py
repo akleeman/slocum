@@ -245,7 +245,7 @@ class TimeCoordinate(AbstractVariable):
         # this will issue a warning about overwriting data types
         # that we don't care about.
         with warnings.catch_warnings(record=True):
-            ds = xray.decode_cf(ds.copy(deep=True))
+            ds = xra.decode_cf(ds.copy(deep=True))
         return ds
 
     def compress(self, ds):
@@ -263,7 +263,7 @@ class TimeCoordinate(AbstractVariable):
         attrs = self.attrs.copy()
         attrs['units'] = units
         ds[self.variable_name] = (self.variable_name, data, attrs)
-        return xray.decode_cf(ds)
+        return xra.decode_cf(ds)
 
 
 class CombinedVariable(AbstractVariable):

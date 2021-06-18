@@ -140,7 +140,7 @@ class GrADS(object):
         """
         if url is None:
             url = most_recent_dataset(self.url_format, self.frequency)
-        ds = xray.open_dataset(url)
+        ds = xra.open_dataset(url)
         return self.normalize(ds)
 
     def normalize(self, ds):

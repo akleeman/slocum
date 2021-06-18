@@ -58,7 +58,7 @@ class TestRegression(unittest.TestCase):
         body, attach = email.get_payload()
         bytes = attach.get_payload()
 
-        # inflate it back into an xray Dataset
+        # inflate it back into an xra Dataset
         fcst = compress.decompress_dataset(base64.b64decode(bytes))
 
         # make sure we're actually compressing the file.
@@ -76,7 +76,7 @@ class TestRegression(unittest.TestCase):
                          "degrees east")
         # and the time
         expected_time = np.linspace(0, 12, 5)
-        expected_time = xray.conventions.decode_cf_datetime(expected_time,
+        expected_time = xra.conventions.decode_cf_datetime(expected_time,
                                                             fcst['time'].encoding['units'])
         np.testing.assert_array_equal(fcst['time'].values, expected_time)
         self.assertIn("hours", fcst['time'].encoding['units'])
@@ -107,7 +107,7 @@ class TestRegression(unittest.TestCase):
         body, attach = email.get_payload()
         bytes = attach.get_payload()
 
-        # inflate it back into an xray Dataset
+        # inflate it back into an xra Dataset
         fcst = compress.decompress_dataset(base64.b64decode(bytes))
 
         # make sure we're actually compressing the file.
@@ -125,7 +125,7 @@ class TestRegression(unittest.TestCase):
                          "degrees east")
         # and the time
         expected_time = np.linspace(0, 192, 33)
-        expected_time = xray.conventions.decode_cf_datetime(expected_time,
+        expected_time = xra.conventions.decode_cf_datetime(expected_time,
                                                             fcst['time'].encoding['units'])
         np.testing.assert_array_equal(fcst['time'].values, expected_time)
         self.assertIn("hours", fcst['time'].encoding['units'])

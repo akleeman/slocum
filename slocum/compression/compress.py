@@ -40,13 +40,13 @@ def _stringify(vname, packed):
 
 def compress_dataset(ds, vars=None):
     """
-    Takes an xray dataset (ds) and extracts and compresses the
+    Takes an xra dataset (ds) and extracts and compresses the
     variables from the dataset into a super small string.
 
     Parameters
     ----------
-    ds : xray.Dataset()
-        An xray dataset containing all the required information
+    ds : xra.Dataset()
+        An xra dataset containing all the required information
         to create each of the requested variables.
     vars : list of variables.Variable (optional)
         A list of variables to be extracted and compressed
@@ -121,10 +121,10 @@ def decompress_dataset(payload):
                                   "supported.  Your version of slocum is newer "
                                   "than the server, consider rolling back")
     # this iterates through the payload and yields individual variables
-    output = xray.Dataset()
+    output = xra.Dataset()
     while len(payload):
         var_name, packed, payload = _split_single_variable(payload)
         variable = utils.get_variable(var_name)
         output.update(variable.decompress(packed, output), inplace=True)
         logging.debug("Decoded %s" % var_name)
-    return xray.decode_cf(output)
+    return xra.decode_cf(output)

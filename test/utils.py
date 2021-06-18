@@ -7,7 +7,7 @@ from slocum.compression import schemes
 
 
 def create_data():
-    ds = xray.Dataset()
+    ds = xra.Dataset()
     ds['time'] = ('time', np.arange(10),
                   {'units': 'hours since 2013-12-12 12:00:00'})
     ds['longitude'] = (('longitude'),
@@ -40,7 +40,7 @@ def create_data():
 
     ds = add_tiny_variable(variables.pressure, ds)
 
-    return xray.decode_cf(ds)
+    return xra.decode_cf(ds)
 
 
 def add_tiny_variable(variable, ds):
@@ -57,12 +57,12 @@ def add_tiny_variable(variable, ds):
 
 
 def create_ensemble_data():
-    ds = xray.concat([create_data() for i in range(21)], dim='realization')
+    ds = xra.concat([create_data() for i in range(21)], dim='realization')
     return ds.transpose(*schemes._default_dim_order)
 
 
 def create_gfs_data():
-    ds = xray.Dataset()
+    ds = xra.Dataset()
     ds['time'] = ('time', np.arange(0, 120, 3),
                   {'units': 'hours since 2013-12-12 12:00:00'})
     ds['longitude'] = (('longitude'),
@@ -94,4 +94,4 @@ def create_gfs_data():
     ds['vgrd10m'] = (('time', 'longitude', 'latitude'),
                      vwnd, {'units': 'm/s'})
 
-    return xray.decode_cf(ds)
+    return xra.decode_cf(ds)

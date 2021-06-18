@@ -39,9 +39,9 @@ def bin_probs(variable, bins):
                                          bins=(np.arange(n_other + 1),
                                                bins))
     probs = counts.T / np.sum(counts, axis=1)
-    out = xray.DataArray(probs.T,
+    out = xra.DataArray(probs.T,
                          coords=[variable[other_dim],
-                                 xray.Coordinate('bin',
+                                 xra.Coordinate('bin',
                                                  np.arange(bins.size - 1))],
                          name='probability')
     return out
@@ -54,7 +54,7 @@ def binned_probability_plot(variable, bin_divs, ax=None, **kwdargs):
     """
     ax, _ = utils.axis_figure(axis=ax)
     if variable.dims == ('time', ):
-        variable = (xray.concat([variable], 'realization')
+        variable = (xra.concat([variable], 'realization')
                     .transpose('time', 'realization'))
     assert variable.dims == ('time', 'realization')
     n_times, n_real = variable.shape
@@ -162,7 +162,7 @@ class SpotVelocityPlot(object):
         self.ax.set_ylabel("Speed (%s)" % speed_units)
 
         # convert the bins to knots
-        bins = xray.Variable('bins',
+        bins = xra.Variable('bins',
                              velocity_variable.speed_bins.copy(),
                              {'units': velocity_variable.units})
         _, self.bins, _ = units.convert_units(bins, speed_units)
@@ -186,7 +186,7 @@ class SpotVelocityPlot(object):
         # forecasts with the same code.
         if not 'realization' in fcsts:
             def add_ensemble(vn):
-                fcsts[vn] = (xray.concat([fcsts[vn]], 'realization')
+                fcsts[vn] = (xra.concat([fcsts[vn]], 'realization')
                              .transpose('time', 'realization'))
             add_ensemble(self.variable.speed_name)
             add_ensemble(self.variable.direction_name)
@@ -280,7 +280,7 @@ def spot_velocity(fcst, variable, speed_units='knot',
 def example_spot_single_velocity():
     import slocum.query.utils as query_utils
     n = 8
-    fcst = xray.Dataset()
+    fcst = xra.Dataset()
     times = pd.date_range('2015-01-03 06:00:00Z', periods=n, freq='6h').values
     fcst['time'] = ('time', times)
     fcst['latitude'] = ('latitude', [-8])
@@ -300,7 +300,7 @@ def example_spot_ensemble_velocity():
     import slocum.query.utils as query_utils
     n = 17
     k = 3
-    fcst = xray.Dataset()
+    fcst = xra.Dataset()
     times = pd.date_range('2015-01-03 06:00:00Z', periods=n, freq='6h').values
     fcst['time'] = ('time', times)
     fcst['latitude'] = ('latitude', [-8])

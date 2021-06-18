@@ -146,9 +146,9 @@ class TinylibTest(unittest.TestCase):
 
         sm_time = tinylib.small_time(ds['time'])
         num_times, units = tinylib.expand_small_time(sm_time['packed_array'])
-        actual = xray.Dataset({'time': ('time', num_times,
+        actual = xra.Dataset({'time': ('time', num_times,
                                         {'units': units})})
-        actual = xray.decode_cf(actual)
+        actual = xra.decode_cf(actual)
         self.assertTrue(np.all(actual['time'].values == ds['time'].values))
         self.assertTrue(units == ds['time'].encoding['units'])
 
