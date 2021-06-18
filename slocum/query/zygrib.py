@@ -31,7 +31,7 @@ import re
 import warnings
 import numpy as np
 
-import utils
+from . import utils
 
 _regex_divider = re.compile('\s*[:=;]\s*')
 
@@ -50,7 +50,7 @@ parsers = {'domain': utils.parse_domain,
 def parse_query(query_str):
     lines = re.split('[\r\n]', query_str)
     # remove empty lines
-    lines = filter(len, lines)
+    lines = list(filter(len, lines))
     lines = [_regex_divider.split(x, 1) for x in lines]
     keyvals = [kv for kv in lines if len(kv) == 2]
 
@@ -61,7 +61,7 @@ def parse_query(query_str):
             return None
         k, parser = parser_pair
         return k, parser(v)
-    query = dict(filter(None, (parse_pair(k, v) for k, v in keyvals)))
+    query = dict([_f for _f in (parse_pair(k, v) for k, v in keyvals) if _f])
 
     # assemble all the lines without :=; in them into a single
     # string of variables

@@ -6,8 +6,8 @@ from collections import OrderedDict
 
 from slocum.lib import angles
 
-import grads
-import variables
+from . import grads
+from . import variables
 
 warnings.simplefilter("always")
 
@@ -17,7 +17,7 @@ _models = {'gefs': grads.GEFS(),
            'fens': grads.FENS(),
            'ww3': grads.WW3(),
            'rtofs': grads.RTOFS()}
-_model_names = _models.keys()
+_model_names = list(_models.keys())
 
 # Variable names should not have white space, it gets removed
 # when doing lookups.
@@ -32,7 +32,7 @@ _variables = OrderedDict([('time', variables.time),
                           ('waveheight', variables.wave_height,),
                           ('wavedirection', variables.wave_direction),
                          ])
-_variable_names = _variables.keys()
+_variable_names = list(_variables.keys())
 
 _aliases = {'gfsens': 'gefs',
             'fnens': 'fens',
@@ -60,7 +60,7 @@ def available_variables(fcst):
     """
     Returns a list of all the variables in a forecast.
     """
-    return [k for k, v in _variables.iteritems()
+    return [k for k, v in _variables.items()
             if contains_variable(fcst, v)]
 
 
@@ -124,7 +124,7 @@ def get_variable_names(variable_names):
         try:
             get_variable(x)
             return True
-        except BadQuery, e:
+        except BadQuery as e:
             warnings.warn("Unsupported variable %s" % x)
             return False
     return [v for v in variable_names if is_valid_variable(v)]
@@ -214,12 +214,12 @@ def parse_domain(domain_str):
                        "defining the corners of the domain.")
 
     is_lat = lambda x: x[-1].lower() in ['n', 's']
-    lats = filter(is_lat, corners)
+    lats = list(filter(is_lat, corners))
     if not len(lats) == 2:
         raise BadQuery("Expected two latitudes (determined by " +
                        "values ending in 'N' or 'S'")
     is_lon = lambda x: x[-1].lower() in ['e', 'w']
-    lons = filter(is_lon, corners)
+    lons = list(filter(is_lon, corners))
     if not len(lons) == 2:
         raise BadQuery("Expected two longitudes (determined by " +
                        "values ending in 'E' or 'W'")
@@ -266,12 +266,12 @@ def parse_location(location_str):
                        "defining a single point.")
 
     is_lat = lambda x: x[-1].lower() in ['n', 's']
-    lat = filter(is_lat, points)
+    lat = list(filter(is_lat, points))
     if not len(lat) == 1:
         raise BadQuery("Expected two latitudes (determined by " +
                        "values ending in 'N' or 'S'")
     is_lon = lambda x: x[-1].lower() in ['e', 'w']
-    lon = filter(is_lon, points)
+    lon = list(filter(is_lon, points))
     if not len(lon) == 1:
         raise BadQuery("Expected two longitudes (determined by " +
                        "values ending in 'E' or 'W'")
@@ -333,7 +333,7 @@ def parse_hours(hours_str):
         for hr in hours_str.split(','):
             if '..' in hr:
                 # split on any set of at least two '.'s
-                low, high = map(float, re.split('\.{2,}', hr))
+                low, high = list(map(float, re.split('\.{2,}', hr)))
                 diff = low - prev
                 if np.mod((high - low), diff):
                     raise BadQuery("Unsure how to parse the sequence %s" % hr)
@@ -342,7 +342,7 @@ def parse_hours(hours_str):
                                         num=((high - low) / diff) + 1,
                                         endpoint=True)
             else:
-                hours = map(float, [hr])
+                hours = list(map(float, [hr]))
             for x in hours:
                 prev = x
                 yield x
@@ -408,7 +408,7 @@ def parse_resolution(resol_str):
         # longitude, but that's kind of silly.  We only support a
         # single resolution, but let users use the old format but
         # default to the coarsest resolution and issue a warning.
-        lat_delta, lon_delta = map(floatify, resol_str.split(','))
+        lat_delta, lon_delta = list(map(floatify, resol_str.split(',')))
         # if they are different issue a warning.
         if lat_delta == lon_delta:
             resol = lat_delta

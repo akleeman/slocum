@@ -10,7 +10,7 @@ import warnings
 import itertools
 import numpy as np
 
-import tinylib
+from . import tinylib
 
 from slocum.lib import units, angles
 
@@ -294,7 +294,7 @@ class CombinedVariable(AbstractVariable):
         n = len(compressed) / float(len(self.variables))
         assert int(n) == n
         n = int(n)
-        parts = map(''.join, zip(*[iter(compressed)] * n))
+        parts = list(map(''.join, list(zip(*[iter(compressed)] * n))))
         for x, p in zip(self.variables, parts):
             out.update(x.decompress(p, coords))
         return self.normalize(out)

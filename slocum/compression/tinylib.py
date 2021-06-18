@@ -6,6 +6,7 @@ import datetime
 import warnings
 import numpy as np
 import pandas as pd
+from functools import reduce
 
 logger = logging.getLogger(os.path.basename(__file__))
 
@@ -58,7 +59,7 @@ def pack_ints(arr, req_bits=None):
     # will it ever make sense to use more than 8?
     out_bits = 8
     if np.mod(out_bits, req_bits):
-        print "output: %d    required: %d" % (out_bits, req_bits)
+        print("output: %d    required: %d" % (out_bits, req_bits))
         raise ValueError("bit size in the output type must be a " +
                          "multiple of the num bits")
     vals_per_int = out_bits / req_bits

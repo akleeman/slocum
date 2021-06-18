@@ -43,7 +43,7 @@ def create_email(to, fr, body, subject=None, attachments=None):
     body = MIMEText(body, 'plain')
     msg.attach(body)
     if attachments is not None:
-        for attach_name, attach in attachments.iteritems():
+        for attach_name, attach in attachments.items():
             part = mime.base.MIMEBase('application', "octet-stream")
             part.set_payload(attach.read())
             encoders.encode_base64(part)
@@ -84,7 +84,7 @@ def get_body(email):
         elif x.get_content_type() == 'text/plain':
             yield x.get_payload().strip()
 
-    return filter(len, get_body(msg))
+    return list(filter(len, get_body(msg)))
 
 
 def send_error(to, body, exception=None, fr=None):

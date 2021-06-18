@@ -1,5 +1,5 @@
 import logging
-import interactive
+from . import interactive
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -25,7 +25,7 @@ def infer_variable(fcst):
     It assumes there is a single variable.
     """
     variable = utils.available_variables(fcst)
-    variable = set(variable).symmetric_difference(fcst.coords.keys())
+    variable = set(variable).symmetric_difference(list(fcst.coords.keys()))
     if len(variable) > 1:
         raise ValueError("More than one possible variable (%s) "
                          "please specify which you'd like to plot"

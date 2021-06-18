@@ -23,17 +23,17 @@ console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
 logger.setLevel("DEBUG")
 
-from query import request
-from compression import compress
+from .query import request
+from .compression import compress
 
 
 def handle_gui():
-    from Tkinter import Tk
-    from tkFileDialog import askopenfilename
+    from tkinter import Tk
+    from tkinter.filedialog import askopenfilename
     # we save these imports so the script can be run as a server
     # without requiring matplotlib.
     import matplotlib.pyplot as plt
-    import visualize
+    from . import visualize
 
     Tk().withdraw()# we don't want a full GUI, so keep the root window from appearing
     filename = askopenfilename()# show an "Open" dialog box and return the path to the selected file
@@ -52,7 +52,7 @@ def handle_plot(args):
     # we save these imports so the script can be run as a server
     # without requiring matplotlib.
     import matplotlib.pyplot as plt
-    import visualize
+    from . import visualize
 
     # read in the input
     if args.input is None:
@@ -96,7 +96,7 @@ def handle_email(args):
                               url=args.forecast,
                               fail_hard=args.fail_hard,
                               log_input=True)
-    except Exception, e:
+    except Exception as e:
         logging.exception(e)
         raise
 
@@ -219,7 +219,7 @@ def main():
 
     # add subparser for each task
     subparsers = parser.add_subparsers()
-    for k in _task_handler.keys():
+    for k in list(_task_handler.keys()):
         func, p_setup = _task_handler[k]
         p = subparsers.add_parser(k, help=func.__doc__)
         p.set_defaults(func=func)

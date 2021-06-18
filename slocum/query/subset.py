@@ -6,6 +6,7 @@ import numpy as np
 
 from slocum.lib import angles
 from slocum.query import utils
+from functools import reduce
 
 
 def angle_slicer(x, low, high, delta=None, tolerance=4):
@@ -281,7 +282,7 @@ def gridded_to_point_forecast(fcst, lon, lat):
 
     spot = fcst.isel(**{'latitude': [0]})
     spot = spot.isel(**{'longitude': [0]})
-    spatial_variables = [k for k, v in spot.iteritems()
+    spatial_variables = [k for k, v in spot.items()
                             if ('latitude' in v.dims and
                                 'longitude' in v.dims)]
     for k in spatial_variables:

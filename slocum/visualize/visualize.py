@@ -3,10 +3,10 @@ import matplotlib.pyplot as plt
 import slocum.query.utils as query_utils
 from slocum.compression import schemes
 
-import spot
-import utils
-import velocity
-import interactive
+from . import spot
+from . import utils
+from . import velocity
+from . import interactive
 
 
 

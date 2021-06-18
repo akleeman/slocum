@@ -11,10 +11,10 @@ from slocum.lib import emaillib
 from slocum.compression import compress
 from slocum.visualize import visualize
 
-import utils
-import subset
-import zygrib
-import saildocs
+from . import utils
+from . import subset
+from . import zygrib
+from . import saildocs
 
 warnings.simplefilter("always")
 
@@ -228,7 +228,7 @@ def process_email(mime_text, url=None,
         try:
             email = process_single_query(query_string, reply_to, url=url)
             emaillib.send_email(email)
-        except utils.BadQuery, e:
+        except utils.BadQuery as e:
             # These exceptions were the user's fault.
             logging.error(e)
             # It would be nice to be able to try processing all queries
@@ -242,7 +242,7 @@ def process_email(mime_text, url=None,
                                  % (email_body[0], e)))
             if fail_hard:
                 raise
-        except exceptions, e:
+        except exceptions as e:
             # These exceptions are unexpected errors on our end.
             logging.error(e)
             emaillib.send_error(reply_to,

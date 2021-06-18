@@ -5,7 +5,7 @@ import numpy as np
 import warnings
 import itertools
 
-import utils
+from . import utils
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -59,8 +59,8 @@ variables
 
     The list of variables to be included in the forecast.  Each
     variable should be separated by a comma.
-""" % {'models': ', '.join(['``%s``' % x for x in utils._models.keys()]),
-       'variables': ', '.join(['``%s``' % x for x in utils._variables.keys()])}
+""" % {'models': ', '.join(['``%s``' % x for x in list(utils._models.keys())]),
+       'variables': ', '.join(['``%s``' % x for x in list(utils._variables.keys())])}
 
 
 _gridded_usage = """
@@ -122,8 +122,8 @@ variables
 
     The list of variables to be included in the forecast.  Each
     variable should be separated by a comma.
-""" % {'models': ', '.join(['``%s``' % x for x in utils._models.keys()]),
-       'variables': ', '.join(['``%s``' % x for x in utils._variables.keys()])}
+""" % {'models': ', '.join(['``%s``' % x for x in list(utils._models.keys())]),
+       'variables': ', '.join(['``%s``' % x for x in list(utils._variables.keys())])}
 
 
 def iterate_query_strings(query_text):
@@ -144,15 +144,15 @@ def iterate_query_strings(query_text):
     lines = query_text.lower().split('\n')
     for command in _supported_commands:
         matches = [re.match('\s*(%s\s.+)\s*' % command, x) for x in lines]
-        for query in filter(None, matches):
+        for query in [_f for _f in matches if _f]:
             yield query.groups()[0]
 
 
 def split_fields(request, k):
     """
-    Saildoc fields can be separated by '|', '/' or '\u015a'
+    Saildoc fields can be separated by '|', '/' or '\\u015a'
     """
-    fields = re.split(u'\s*[\|\/\u015a]\s*', unicode(request.strip()))
+    fields = re.split('\s*[\|\/\u015a]\s*', str(request.strip()))
     return list(itertools.chain(fields, [None] * k))[:k]
 
 
@@ -202,7 +202,7 @@ def parse_spot_request(request):
     # First try parsing the format `days,period`
     try:
       hours = utils.parse_times(time_str)
-    except ValueError, e:
+    except ValueError as e:
       # if that fails try the gridded format `hour0,hour1,...,hourn`
       hours = utils.parse_hours(time_str)
 
@@ -262,7 +262,7 @@ def parse_saildocs_query(query_str):
     command, body = command_split
     # saildocs subscription requests can have additional options
     # such as time= and days=.  These are parsed here.
-    opts_args = filter(len, body.split(' '))
+    opts_args = list(filter(len, body.split(' ')))
     options_start = np.nonzero(['=' in x for x in opts_args])[0]
     if len(options_start):
         args = opts_args[:options_start[0]]

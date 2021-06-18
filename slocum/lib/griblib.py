@@ -150,7 +150,7 @@ codes = {
 126: ("Wind mixing energy", "J"),
 }
 
-reverse_codes = dict((v[0], k) for k, v in codes.iteritems())
+reverse_codes = dict((v[0], k) for k, v in codes.items())
 
 #http://www.nco.ncep.noaa.gov/pmb/docs/on388/table3.html
 indicator_of_level = {"u-component of wind": 105,
@@ -188,7 +188,7 @@ def set_time(source, grib):
              'year': 4,
              'second': 254}
     grib_time_code = None
-    for k, v in unit_codes.iteritems():
+    for k, v in unit_codes.items():
         if unit.lower().startswith(k):
             grib_time_code = v
     if grib_time_code is None:
@@ -216,7 +216,7 @@ def set_grid(source, grib):
 
     gribapi.grib_set_long(grib, "shapeOfTheEarth", 6)
 
-    dim_shape = dict(zip(source.dimensions, source.shape))
+    dim_shape = dict(list(zip(source.dimensions, source.shape)))
     gribapi.grib_set_long(grib, "Ni", dim_shape['longitude'])
     gribapi.grib_set_long(grib, "Nj", dim_shape['latitude'])
 
@@ -328,7 +328,7 @@ def save(source, target, append=False, sample_file=_sample_file):
     if not _has_gribapi:
         raise ImportError("gripapi is required to write grib files.")
 
-    if isinstance(target, basestring):
+    if isinstance(target, str):
         grib_file = open(target, "ab" if append else "wb")
     elif hasattr(target, "write"):
         if hasattr(target, "mode") and "b" not in target.mode:
@@ -362,7 +362,7 @@ def save(source, target, append=False, sample_file=_sample_file):
     # auxiliary variables (ie, variables used by slocum
     # but not in grib files).
     auxilary_variables = ['wind_speed', 'wind_from_direction']
-    for single_var in (v for k, v in source.noncoordinates.iteritems()
+    for single_var in (v for k, v in source.noncoordinates.items()
                        if not k in auxilary_variables):
         # then iterate over time slices
         iter_time = (single_var.indexed(**{'time': [i]})
@@ -385,5 +385,5 @@ def save(source, target, append=False, sample_file=_sample_file):
             gribapi.grib_release(grib_message)
     # if target was a string then we have to close the file we
     # created, otherwise leave that up to the user.
-    if isinstance(target, basestring):
+    if isinstance(target, str):
         grib_file.close()

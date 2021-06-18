@@ -23,7 +23,7 @@ if not ISRELEASED:
     VERSION = '%sa0' % VERSION
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
-requires = ['xray >= 0.3.1',
+requires = ['xarray >= 0.18.0',
             'pyproj >= 1.9.3',
             'pandas >= 0.13.1',
             'matplotlib >= 1.2.0',

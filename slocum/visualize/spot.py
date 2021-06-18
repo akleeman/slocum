@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import utils
-import velocity
+from . import utils
+from . import velocity
 
 from slocum.lib import units
 

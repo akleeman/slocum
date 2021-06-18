@@ -9,7 +9,7 @@ from matplotlib import patches
 
 from slocum.lib import units, angles
 
-import utils
+from . import utils
 
 
 velocity_colors = [

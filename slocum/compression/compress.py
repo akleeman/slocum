@@ -13,7 +13,7 @@ _VERSION = np.array(1, dtype=np.uint8)
 
 # this creates an ordered list of all the variables available
 # for compression
-_variable_order = utils._variables.keys()
+_variable_order = list(utils._variables.keys())
 
 
 def _stringify(vname, packed):
@@ -60,13 +60,13 @@ def compress_dataset(ds, vars=None):
     encoded_variables = OrderedDict()
 
     vars = vars or utils._variables
-    for k, v in vars.iteritems():
+    for k, v in vars.items():
         # only encode if have the required input.
         if all(y in ds for y in v.required_variables()):
             logging.debug("Encoding %s" % k)
             encoded_variables[k] = v.compress(ds)
     payload = ''.join(_stringify(k, v)
-                      for k, v in encoded_variables.iteritems())
+                      for k, v in encoded_variables.items())
     payload = ''.join([_VERSION.tostring(), payload])
     return zlib.compress(payload, 9)
 

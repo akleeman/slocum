@@ -7,8 +7,8 @@ from mpl_toolkits.basemap import Basemap
 
 from slocum.lib import units, angles
 
-import spot
-import velocity
+from . import spot
+from . import velocity
 
 
 class InteractiveMap(object):
@@ -41,7 +41,7 @@ class InteractiveVelocity(InteractiveMap):
         # remove any times where all forecasts are nans
         all_nan = np.apply_over_axes(np.all,
                                      np.isnan(speed.values),
-                                     range(speed.ndim)[1:]).reshape(-1)
+                                     list(range(speed.ndim))[1:]).reshape(-1)
         fcsts = fcsts.isel(time=np.logical_not(all_nan))
 
         self.fcsts = fcsts
