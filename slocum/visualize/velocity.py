@@ -1,4 +1,4 @@
-import xray
+import xarray as xra
 import logging
 import numpy as np
 import pandas as pd

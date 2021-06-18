@@ -1,4 +1,4 @@
-import xray
+import xarray as xra
 import joblib
 import urllib.request, urllib.error, urllib.parse
 import logging

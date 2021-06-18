@@ -14,7 +14,7 @@ for more details.
 .. plot::
     :align: center
 
-    import xray
+    import xarray as xra
     import matplotlib.pyplot as plt
     from slocum import visualize
     fcsts = xray.open_dataset('./sf_example_forecast.nc')

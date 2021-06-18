@@ -20,7 +20,7 @@ Take this forecast for a location off the coast of San Francisco as an example. 
     :width: 600
     :align: center
 
-    import xray
+    import xarray as xra
     import matplotlib.pyplot as plt
     from slocum import visualize
     fcsts = xray.open_dataset('./sf_example_forecast.nc')
@@ -110,7 +110,7 @@ for 120 hours into the forecast period.
 .. plot::
     :align: center
 
-    import xray
+    import xarray as xra
     import matplotlib.pyplot as plt
     from slocum import visualize
     fcsts = xray.open_dataset('./sf_example_forecast.nc')

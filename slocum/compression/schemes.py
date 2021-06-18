@@ -4,7 +4,7 @@ schemes.py
 This module handles the various variable definitions that are used
 to compress and expand variables.
 """
-import xray
+import xarray as xra
 import logging
 import warnings
 import itertools

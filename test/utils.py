@@ -1,5 +1,5 @@
 
-import xray
+import xarray as xra
 import numpy as np
 
 from slocum.query import variables

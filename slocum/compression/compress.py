@@ -1,4 +1,4 @@
-import xray
+import xarray as xra
 import zlib
 import logging
 import itertools

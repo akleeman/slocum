@@ -1,5 +1,5 @@
 import os
-import xray
+import xarray as xra
 import zlib
 import logging
 import datetime

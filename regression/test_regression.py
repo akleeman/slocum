@@ -1,5 +1,5 @@
 import os
-import xray
+import xarray as xra
 import zlib
 import numpy as np
 import base64

@@ -11,7 +11,7 @@ file will be about 1 kB and once plotted will look like this:
     :width: 600
     :align: center
 
-    import xray
+    import xarray as xra
     import matplotlib.pyplot as plt
     from slocum import visualize
     fcsts = xray.open_dataset('./sf_example_forecast.nc')
@@ -30,7 +30,7 @@ forecast.
     :width: 600
     :align: center
 
-    import xray
+    import xarray as xra
     import matplotlib.pyplot as plt
     from slocum import visualize
     fcsts = xray.open_dataset('./sf_example_forecast.nc')
