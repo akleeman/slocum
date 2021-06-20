@@ -2,8 +2,8 @@ import os
 import logging
 import smtplib
 
-from email import Parser, mime, encoders
-from email.mime import Multipart
+from email.parser import Parser
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 logger = logging.getLogger(os.path.basename(__file__))

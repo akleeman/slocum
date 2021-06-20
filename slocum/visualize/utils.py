@@ -3,8 +3,6 @@ from . import interactive
 import numpy as np
 import matplotlib.pyplot as plt
 
-from mpl_toolkits import basemap
-
 from slocum.lib import angles
 from slocum.query import utils
 from slocum.compression import schemes

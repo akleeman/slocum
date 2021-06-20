@@ -30,7 +30,7 @@ requires = ['xarray >= 0.18.0',
             'coards',
             'joblib',
             'retrying',
-            'basemap',
+            'cartopy',
             'requests']
 
 setup(name='slocum',

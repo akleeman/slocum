@@ -23,8 +23,8 @@ console_handler = logging.StreamHandler(sys.stderr)
 logger.addHandler(console_handler)
 logger.setLevel("DEBUG")
 
-from .query import request
-from .compression import compress
+from slocum.query import request
+from slocum.compression import compress
 
 
 def handle_gui():
@@ -33,13 +33,13 @@ def handle_gui():
     # we save these imports so the script can be run as a server
     # without requiring matplotlib.
     import matplotlib.pyplot as plt
-    from . import visualize
+    from slocum import visualize
 
     Tk().withdraw()# we don't want a full GUI, so keep the root window from appearing
     filename = askopenfilename()# show an "Open" dialog box and return the path to the selected file
 
     with open(filename, 'rb') as f:
-      payload = f.read()
+        payload = f.read()
     # decompress
     fcst = compress.decompress_dataset(payload)
     # plot

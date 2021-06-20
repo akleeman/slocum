@@ -12,6 +12,7 @@ _length = {'m': 3.2808399,
 
 _speed = {'m/s': 1.94384449,
           'm s-1': 1.94384449,
+          'm s**-1': 1.94384449,
           'knot': 1.0,
           'knots': 1.0,
           'mph': 0.868976242}
@@ -83,6 +84,7 @@ def convert_units(v, new_units):
         for (possible_units, _, _) in _all_units:
             if cur_units in possible_units:
                 return _convert(v, possible_units, cur_units, new_units)
+        raise ValueError("Unrecognized units")
     else:
         raise ValueError("No units found so convertion doesn't make sense")
 
