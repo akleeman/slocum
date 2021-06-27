@@ -1,0 +1,57 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Ensemble Weather</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="slocum.js"></script>  
+</head>
+<body>
+
+<script>
+    // create svg element:
+    
+    var rect_width = 40;
+    var height = velocity_colors.length * rect_width + 2
+    var svg = d3.select("body").append("svg").attr("width", 800).attr("height", height)
+
+    svg.append('rect')
+      .attr('x', 0)
+      .attr('y', 0)
+      .attr('width', 800)
+      .attr('height', 800)
+      .attr('stroke', 'black')
+      .attr('fill', 'none');
+
+    function ParseSpot(bytes) {
+      console.log("parsed")
+      var parsed = DecodePackedSpot(bytes);
+
+      for (let bin = 0; bin < velocity_colors.length; bin++) {
+        for (let i = 0; i < parsed['hours'].length; i++) {
+          var n = parsed['speeds'][i].length;
+          var count = 0;
+          for (let j = 0; j < n; j++) {        
+            if (parsed['speeds'][i][j] == bin) {
+              count += 1;
+            }
+          }
+          svg.append('rect')
+            .attr('x', 40 * i)
+            .attr('y', 40 * bin)
+            .attr('width', rect_width)
+            .attr('height', rect_width)
+            .attr('stroke', 'black')
+            .attr('fill', '#69a3b2')
+            .attr('fill-opacity', count / n);
+        }
+      }
+      
+      console.log(parsed)
+    }
+
+    LoadSpot("./184.250000_18.500000.bin", ParseSpot);
+</script>
+
+</body>
+</html> 
