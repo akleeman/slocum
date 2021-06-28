@@ -10,6 +10,7 @@ import xarray as xra
 from itertools import chain
 from datetime import datetime, timedelta
 from slocum.lib.units import convert_units
+from slocum.compression import tinylib
 
 # Can download the grib files from here:
 # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl
@@ -37,7 +38,7 @@ velocity_colors = [
     '#000000',  # black
 ]
 
-FCST_RELEASE_TIMES = [0, 6, 12, 18]
+FCST_RELEASE_TIMES = [0, 6, 12, 18, 24, 30, 36, 42, 48]
 
 
 def radial_point(center, radius, angle):
@@ -152,10 +153,13 @@ def download_one_file(member, ref_time, fcst_hour, directory):
 
     output_path = os.path.join(directory, file_name)
     if not os.path.exists(output_path):
-        with urllib.request.urlopen(url) as response, open(output_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
-            print("Downloaded: ", output_path)
-
+        try:
+            with urllib.request.urlopen(url) as response, open(output_path, 'wb') as out_file:
+                shutil.copyfileobj(response, out_file)
+                print("Downloaded: ", output_path)
+        except:
+            print("Failure Downloading: ", url)
+            raise
     return output_path
 
 
@@ -207,6 +211,12 @@ def from_integer_direction(direction):
     return (direction.dims, averages, attrs)
 
 
+def to_integer_direction(direction):
+    ints = np.digitize(direction.values.reshape(-1), dir_bins) % len(dir_bins)
+    ints = ints.reshape(direction.shape)
+    return (direction.dims, ints, direction.attrs)
+
+
 def normalize(x):
     speed, direction = vector_to_radial(x['u10'], x['v10'], orientation='from')
     speed.attrs['units'] = 'm s**-1'
@@ -249,7 +259,7 @@ def download(ref_time, directory=None):
     combined_path = os.path.join(directory, ref_time.strftime('%Y%d%m_%H.nc'))
     if not os.path.exists(combined_path):
         nc_paths = [download_members(ref_time, fcst_hour, directory)
-                    for fcst_hour in [0, 6, 12, 18]]
+                    for fcst_hour in FCST_RELEASE_TIMES]
         ds = xra.concat([xra.open_dataset(p) for p in nc_paths], dim='step')
         ds.to_netcdf(combined_path, encoding={'speed': {'zlib': True},
                                               'direction': {'zlib': True}})
@@ -267,7 +277,6 @@ def nearest_fcst_release(time):
 def iter_wind_circles(ds, radius=0.05):
     for lat in ds['latitude']:
         for lon in ds['longitude']:
-            print(lat.item(), lon.item())
             point = ds.sel(latitude=lat, longitude=lon)
 
             x = lon.values.item()
@@ -276,7 +285,6 @@ def iter_wind_circles(ds, radius=0.05):
             directions = point['direction'].values
 
             yield leaflet_wind_circle(x, y, speeds, directions, radius)
-            # yield geojson_wind_cirlce(x, y, speeds, directions, radius)
 
 
 def make_leaflet(ds, path):
@@ -289,7 +297,7 @@ L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_toke
       id: 'mapbox/streets-v11',
       tileSize: 512,
       zoomOffset: -1,
-      accessToken: 'token'
+      accessToken: 'pk.eyJ1IjoiYWtsZWVtYW4iLCJhIjoiY2txNGVkaHhwMGc2eDJwb3plNTh0aWJnZyJ9.l78GPBIaV7WwxqKtgEG76A'
   }).addTo(map);
 
 """
@@ -300,23 +308,77 @@ L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_toke
         f.write(script)
 
 
+def make_compressed(ds, path):
+
+    ds['speed'] = to_beaufort(ds['speed'])    
+    ds['direction'] = to_integer_direction(ds['direction'])
+
+    first = True
+    with open(path, 'wb') as f:
+        for lat in ds['latitude']:
+            for lon in ds['longitude']:
+                point = ds.sel(latitude=lat, longitude=lon)
+
+                x = lon.values.item()
+                y = lat.values.item()
+                speeds = point['speed'].values
+                directions = point['direction'].values
+
+                packed = np.array([x, y]).astype('float32').tobytes()
+                packed += speeds.astype('uint8').tobytes()
+                packed += directions.astype('uint8').tobytes()
+
+                if first:
+                  f.write(np.array(len(packed), dtype='uint32').tobytes())
+                  first = False
+                
+                f.write(packed)
+
+
+
+def make_spot(ds, path):
+
+    ds['speed'] = to_beaufort(ds['speed'])    
+    ds['direction'] = to_integer_direction(ds['direction'])
+
+    first = True
+    with open(path, 'wb') as f:
+        hours = ds['step'].values.astype('timedelta64[h]')
+        speeds = ds['speed'].values
+        directions = ds['direction'].values
+        encoded_time = np.concatenate([[hours.size], np.diff(hours)])
+        packed = encoded_time.astype('uint8').tobytes()
+        packed += speeds.astype('uint8').tobytes()
+        packed += directions.astype('uint8').tobytes()        
+        f.write(packed)
+        
+
 def main():
 
-    ref_time = nearest_fcst_release(datetime.utcnow())
+    # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
+    #ref_time = nearest_fcst_release(datetime.utcnow())
 
-    ref_time = datetime(2021, 6, 19, 18)
+    ref_time = datetime(2021, 6, 25, 6)
 
     path = download(ref_time)
     ds = xra.open_dataset(path)
 
-    ds = ds.sel(latitude=slice(23, 17), longitude=slice(195, 210))
+    ds = ds.sel(latitude=slice(25, 15), longitude=slice(180, 210))
 
-    #ds['speed'] = from_beaufort(ds['speed'])
-    #ds['direction'] = from_integer_direction(ds['direction'])
+    if not os.path.exists('./data'):
+        os.mkdir('./data')
+
+    for lat in ds['latitude']:
+        for lon in ds['longitude']:
+            point = ds.sel(latitude=lat, longitude=lon)
+            x = lon.values.item()
+            y = lat.values.item()
+            make_spot(point, './data/%.3f_%.3f.bin' % (x, y))
 
     for step in ds['step'].values:
         fcst_hour = step.astype('timedelta64[h]').astype('int')
-        make_leaflet(ds.sel(step=step), '%.3d.js' % fcst_hour)
+        make_compressed(ds.sel(step=step), './data/%.3d.bin' % fcst_hour)
+        # make_leaflet(ds.sel(step=step), '%.3d.js' % fcst_hour)
 
 
 if __name__ == "__main__":

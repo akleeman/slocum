@@ -113,7 +113,6 @@ function DecodePackedSpot(x) {
   diffs = x.subarray(1, n_times);
   hours = [0];
   for (let i = 0; i < n_times - 1; i++) {
-    console.log(i, hours[i] + diffs[i])
     hours.push(hours[i] + diffs[i])
   };
 
@@ -130,7 +129,10 @@ function DecodePackedSpot(x) {
 }
 
 function SpotPath(lat, lon) {
-  return `${lat}_${lon}.bin`;
+  lat = lat.toFixed(3);
+  lon = lon.toFixed(3);
+  console.log(`${lat}_${lon}.bin`)
+  return `data/${lon}_${lat}.bin`;
 }
 
 function CountMatrix(bytes) {
@@ -148,42 +150,20 @@ function CountMatrix(bytes) {
             count += 1;
           }
         }
-        counts.push({'bin': bin, 'hour': hour, 'count': count});
-        svg.append('rect')
-          .attr('x', 40 * i)
-          .attr('y', 40 * bin)
-          .attr('width', rect_width)
-          .attr('height', rect_width)
-          .attr('stroke', 'black')
-          .attr('fill', '#69a3b2')
-          .attr('fill-opacity', count / n);
+        counts.push({'bin': bin, 'hour': i, 'count': count});
       }
     }
-
+    return counts;
 }
 
-function PopulateHeatMap(bytes) {
-
-  svg.selectAll()
-      .data(data, function(d) {return d.group+':'+d.variable;})
-      .enter()
-      .append("rect")
-      .attr("x", function(d) { return x(d.group) })
-      .attr("y", function(d) { return y(d.variable) })
-      .attr("width", x.bandwidth() )
-      .attr("height", y.bandwidth() )
-      .style("fill", function(d) { return myColor(d.value)} )
-}
-
-
-function SpotPlot(x) {
-
+function PopulateHeatMap(bytes, div) {
+  var data = CountMatrix(bytes)
+  
   // set the dimensions and margins of the graph
-  var margin = {top: 30, right: 30, bottom: 30, left: 30},
-    width = 450 - margin.left - margin.right,
-    height = 450 - margin.top - margin.bottom;
+  var margin = {top: 30, right: 30, bottom: 30, left: 30}
+  width = 450 - margin.left - margin.right,
+  height = 450 - margin.top - margin.bottom;
 
-  var div = d3.create("div");
   // append the svg object to the body of the page
   var svg = div
   .append("svg")
@@ -193,15 +173,26 @@ function SpotPlot(x) {
     .attr("transform",
           "translate(" + margin.left + "," + margin.top + ")");
 
-  // Labels of row and columns
-  var myGroups = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
-  var myVars = ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10"]
+  var bin_min = d3.min(data, function(d) { return d.bin;});
+  var bin_max = d3.max(data, function(d) {
+      if (d.count > 0) {
+        return d.bin;
+      } else {
+        return 0;
+      }});
+  
+  bins =  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  hours = [0, 1, 2, 3, 4, 5];
+  
+  var hour_min = 0;
+  var hour_max = d3.max(data, function(d) { return d.hour;});
 
   // Build X scales and axis:
   var x = d3.scaleBand()
     .range([ 0, width ])
-    .domain(myGroups)
+    .domain(hours)
     .padding(0.01);
+
   svg.append("g")
     .attr("transform", "translate(0," + height + ")")
     .call(d3.axisBottom(x))
@@ -209,17 +200,38 @@ function SpotPlot(x) {
   // Build X scales and axis:
   var y = d3.scaleBand()
     .range([ height, 0 ])
-    .domain(myVars)
+    .domain(bins)
     .padding(0.01);
+
   svg.append("g")
     .call(d3.axisLeft(y));
 
   // Build color scale
   var myColor = d3.scaleLinear()
     .range(["white", "#69b3a2"])
-    .domain([1,100])
+    .domain([1,31])
+
+  svg.selectAll()
+      .data(data, function(d) {return d.hour+':'+d.bin;})
+      .enter()
+      .append("rect")
+      .attr("x", function(d) { return x(d.hour) })
+      .attr("y", function(d) { return y(d.bin) })
+      .attr("width", x.bandwidth() )
+      .attr("height", y.bandwidth() )
+      .style("fill", function(d) {
+        return myColor(d.count)
+      } )
+}
 
 
+function SpotPlot(x) {
+
+  var div = d3.create("div");
+
+  LoadSpot(SpotPath(x._latlng.lat, x._latlng.lng), function (x) {
+    PopulateHeatMap(x, div);
+  })
 
   return div.node();
 }
@@ -305,5 +317,5 @@ function Draw(m, data) {
       }
     }
   }
-  return L.layerGroup(circles).addTo(m);
+  return circles
 }

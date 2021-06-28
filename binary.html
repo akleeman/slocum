@@ -62,7 +62,8 @@ var wind_circle_layer = L.layerGroup().addTo(map);
 
 map.on('moveend', function() {
   map.removeLayer(wind_circle_layer);
-  Draw(map, preloaded_data)  
+  circles = Draw(map, preloaded_data)
+  wind_circle_layer = L.layerGroup(circles).addTo(map);
 });
 
 map.on('zoomend', function() {
@@ -75,12 +76,14 @@ map.on('zoomend', function() {
   }
   console.log("Current Zoom Level =" + zoomlevel)
   map.removeLayer(wind_circle_layer);
-  Draw(map, preloaded_data)
+  circles = Draw(map, preloaded_data)
+  wind_circle_layer = L.layerGroup(circles).addTo(map);
 });
 
 function ParseAndDraw(bytes) {
   preloaded_data = ParseSlocum(bytes);
-  wind_circle_layer = Draw(map, preloaded_data);
+  circles = Draw(map, preloaded_data)
+  wind_circle_layer = L.layerGroup(circles).addTo(map);
 }
 
 function changeValidTime() {
