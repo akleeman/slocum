@@ -1,5 +1,8 @@
 slice_width = 0.19634954084936207 // pi/16
 
+wind_bins = [0., 1., 3., 6., 10., 16., 21., 27.,
+             33., 40., 47., 55., 63., 75.]
+
 velocity_colors = [
     '#d7d7d7',  // light grey
     '#a1eeff',  // lightest blue
@@ -138,10 +141,8 @@ function SpotPath(lat, lon) {
 function CountMatrix(bytes) {
 
     var parsed = DecodePackedSpot(bytes);
-    
     var counts = []
-        
-    for (let bin = 0; bin < velocity_colors.length; bin++) {
+    for (let bin = 0; bin < wind_bins.length; bin++) {
       for (let i = 0; i < parsed['hours'].length; i++) {
         var n = parsed['speeds'][i].length;
         var count = 0;
@@ -150,7 +151,7 @@ function CountMatrix(bytes) {
             count += 1;
           }
         }
-        counts.push({'bin': bin, 'hour': i, 'count': count});
+        counts.push({'speed': wind_bins[bin], 'hour': parsed['hours'][i], 'count': count});
       }
     }
     return counts;
@@ -173,19 +174,23 @@ function PopulateHeatMap(bytes, div) {
     .attr("transform",
           "translate(" + margin.left + "," + margin.top + ")");
 
-  var bin_min = d3.min(data, function(d) { return d.bin;});
-  var bin_max = d3.max(data, function(d) {
+  var speed_min = d3.min(data, function(d) { return d.speed;});
+  var speed_max = d3.max(data, function(d) {
       if (d.count > 0) {
-        return d.bin;
+        return d.speed;
       } else {
         return 0;
       }});
   
-  bins =  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-  hours = [0, 1, 2, 3, 4, 5];
+  var speeds = new Set()  
+  var hours = new Set()
+  for (i in data) {
+    speeds.add(data[i].speed)
+    hours.add(data[i].hour)
+  }
   
-  var hour_min = 0;
-  var hour_max = d3.max(data, function(d) { return d.hour;});
+  speeds = Array.from(speeds);
+  hours = Array.from(hours);
 
   // Build X scales and axis:
   var x = d3.scaleBand()
@@ -197,31 +202,49 @@ function PopulateHeatMap(bytes, div) {
     .attr("transform", "translate(0," + height + ")")
     .call(d3.axisBottom(x))
 
-  // Build X scales and axis:
   var y = d3.scaleBand()
     .range([ height, 0 ])
-    .domain(bins)
+    .domain(speeds)
     .padding(0.01);
 
   svg.append("g")
     .call(d3.axisLeft(y));
 
   // Build color scale
-  var myColor = d3.scaleLinear()
-    .range(["white", "#69b3a2"])
+  var colors = d3.scaleLinear()
+    .range(["white", "#4277e5"])
     .domain([1,31])
 
   svg.selectAll()
-      .data(data, function(d) {return d.hour+':'+d.bin;})
+      .data(data, function(d) {return d.hour+':'+d.speed;})
       .enter()
       .append("rect")
-      .attr("x", function(d) { return x(d.hour) })
-      .attr("y", function(d) { return y(d.bin) })
+      .attr("x", function(d) {
+        return x(d.hour) + 0.5 * x.bandwidth()
+      })
+      .attr("y", function(d) {
+        return y(d.speed) - 0.5 * y.bandwidth()
+      })
       .attr("width", x.bandwidth() )
       .attr("height", y.bandwidth() )
       .style("fill", function(d) {
-        return myColor(d.count)
+        return colors(d.count)
       } )
+      
+  svg.append("text")
+      .attr("class", "y label")
+      .attr("text-anchor", "end")
+      .attr("y", 6)
+      .attr("dy", ".75em")
+      .attr("transform", "rotate(-90)")
+      .text("wind speed (knots)");
+
+  svg.append("text")
+      .attr("class", "x label")
+      .attr("text-anchor", "end")
+      .attr("x", width)
+      .attr("y", height - 6)
+      .text("Forecast Time (hours)");
 }
 
 
@@ -301,7 +324,7 @@ function Draw(m, data) {
   } else if (zoom < 8) {
     grid_size = 0.5;
   }
-  var radius = grid_size / 5;
+  var radius = grid_size / 4;
 
   circles = [];
   for (i in data) {

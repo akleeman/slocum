@@ -38,15 +38,15 @@ var map = L.map('map', {
     maxZoom: 12
   }).setView([21, 203.0], 9);
 
-var files = ["000.bin",
-             "006.bin",
-             "012.bin",
-             "018.bin",
-             "024.bin",
-             "030.bin",
-             "036.bin",
-             "042.bin",
-             "048.bin"];
+var files = ["data/000.bin",
+             "data/006.bin",
+             "data/012.bin",
+             "data/018.bin",
+             "data/024.bin",
+             "data/030.bin",
+             "data/036.bin",
+             "data/042.bin",
+             "data/048.bin"];
 var index = 0
 
 L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}', {
