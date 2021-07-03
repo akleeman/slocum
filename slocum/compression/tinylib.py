@@ -191,7 +191,7 @@ def tiny_unmasked(arr, bits=None, divs=None, wrap=False):
     if int(np.log2(bits)) != np.log2(bits):
         raise ValueError("bits must be a power of two")
     # it doesn't make sense to store anything larger than this using tinylib
-    assert bits <= 4
+    # assert bits <= 4
     # make sure that bin dividers are monotonically increasing and that
     # bins are not of size zero.
     assert np.all(np.diff(divs) > 0.)
