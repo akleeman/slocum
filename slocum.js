@@ -215,6 +215,30 @@ function PopulateHeatMap(bytes, div) {
     .range(["white", "#4277e5"])
     .domain([1,31])
 
+  // create a tooltip
+  var tooltip =d3.create('div', 'foo')
+    .style("opacity", 0)
+    .attr("class", "tooltip")
+    .style("background-color", "white")
+    .style("border", "solid")
+    .style("border-width", "2px")
+    .style("border-radius", "5px")
+    .style("padding", "5px")
+
+  // Three function that change the tooltip when user hover / move / leave a cell
+  var mouseover = function(d) {
+    tooltip.style("opacity", 1)
+  }
+  var mousemove = function(d) {
+    tooltip
+      .html("The exact value of<br>this cell is: " + d.value)
+      .style("left", (d3.mouse(this)[0]+70) + "px")
+      .style("top", (d3.mouse(this)[1]) + "px")
+  }
+  var mouseleave = function(d) {
+    tooltip.style("opacity", 0)
+  }
+
   svg.selectAll()
       .data(data, function(d) {return d.hour+':'+d.speed;})
       .enter()
@@ -230,6 +254,9 @@ function PopulateHeatMap(bytes, div) {
       .style("fill", function(d) {
         return colors(d.count)
       } )
+    .on("mouseover", mouseover)
+    .on("mousemove", mousemove)
+    .on("mouseleave", mouseleave)
       
   svg.append("text")
       .attr("class", "y label")
@@ -249,6 +276,8 @@ function PopulateHeatMap(bytes, div) {
 
 
 function SpotPlot(x) {
+  
+  x.options.color = "#CC5500"
 
   var div = d3.create("div");
 
