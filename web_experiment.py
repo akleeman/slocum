@@ -38,7 +38,8 @@ velocity_colors = [
     '#000000',  # black
 ]
 
-FCST_RELEASE_TIMES = [0, 6, 12, 18, 24, 30, 36, 42, 48]
+FCST_RELEASE_TIMES = [0, 6, 12, 18, 24, 30, 36, 42, 48,
+                      54, 60, 66, 72, 78, 84, 90, 96]
 
 
 def radial_point(center, radius, angle):
@@ -264,11 +265,19 @@ def download(ref_time, directory=None):
         ds.to_netcdf(combined_path, encoding={'speed': {'zlib': True},
                                               'direction': {'zlib': True}})
     return combined_path
+    
 
+def nomads_url_exists(time):
+    date = ref_time.strftime('%Y%m%d_%H')
+    url = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=gefs.{date}".format(
+      date
+    )
+    
 
 def nearest_fcst_release(time):
-    ref_time = datetime(time.year, time.month, time.day)
     six_hours = timedelta(minutes=6*60)
+    time = time + six_hours
+    ref_time = datetime(time.year, time.month, time.day, time.hour)
     while ref_time + six_hours < time:
         ref_time = ref_time + six_hours
     return ref_time
@@ -287,44 +296,15 @@ def iter_wind_circles(ds, radius=0.05):
             yield leaflet_wind_circle(x, y, speeds, directions, radius)
 
 
-def make_leaflet(ds, path):
-
-    script = """var map = L.map('map').setView([20, 202.0], 8);
-
-L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}', {
-      attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
-      maxZoom: 18,
-      id: 'mapbox/streets-v11',
-      tileSize: 512,
-      zoomOffset: -1,
-      accessToken: 'pk.eyJ1IjoiYWtsZWVtYW4iLCJhIjoiY2txNGVkaHhwMGc2eDJwb3plNTh0aWJnZyJ9.l78GPBIaV7WwxqKtgEG76A'
-  }).addTo(map);
-
-"""
-
-    script = script + '\n\n\n'.join(iter_wind_circles(ds))
-    print(path)
-    with open(path, 'w') as f:
-        f.write(script)
-
-
 def make_compressed(ds, path):
-
-    ds['speed'] = to_beaufort(ds['speed'])    
-    ds['direction'] = to_integer_direction(ds['direction'])
-
     first = True
     with open(path, 'wb') as f:
-        for lat in ds['latitude']:
-            for lon in ds['longitude']:
-                point = ds.sel(latitude=lat, longitude=lon)
-
-                x = lon.values.item()
-                y = lat.values.item()
+        for lat, lat_slice in ds.groupby('latitude'):
+            for lon, point in lat_slice.groupby('longitude'):
+                point = point.squeeze('latitude')
                 speeds = point['speed'].values
                 directions = point['direction'].values
-
-                packed = np.array([x, y]).astype('float32').tobytes()
+                packed = np.array([lon, lat]).astype('float32').tobytes()
                 packed += speeds.astype('uint8').tobytes()
                 packed += directions.astype('uint8').tobytes()
 
@@ -337,11 +317,6 @@ def make_compressed(ds, path):
 
 
 def make_spot(ds, path):
-
-    ds['speed'] = to_beaufort(ds['speed'])    
-    ds['direction'] = to_integer_direction(ds['direction'])
-
-    first = True
     with open(path, 'wb') as f:
         hours = ds['step'].values.astype('timedelta64[h]')
         speeds = ds['speed'].values
@@ -356,24 +331,23 @@ def make_spot(ds, path):
 def main():
 
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
-    #ref_time = nearest_fcst_release(datetime.utcnow())
+    ref_time = nearest_fcst_release(datetime.utcnow())
 
-    ref_time = datetime(2021, 6, 25, 6)
+    ref_time = datetime(2021, 6, 27, 18)
 
     path = download(ref_time)
     ds = xra.open_dataset(path)
 
-    ds = ds.sel(latitude=slice(25, 15), longitude=slice(180, 210))
+    ds = ds.sel(latitude=slice(45, 15), longitude=slice(180, 300))
+    ds['speed'] = to_beaufort(ds['speed'])    
+    ds['direction'] = to_integer_direction(ds['direction'])
 
     if not os.path.exists('./data'):
         os.mkdir('./data')
 
-    for lat in ds['latitude']:
-        for lon in ds['longitude']:
-            point = ds.sel(latitude=lat, longitude=lon)
-            x = lon.values.item()
-            y = lat.values.item()
-            make_spot(point, './data/%.3f_%.3f.bin' % (x, y))
+    for lat, lat_slice in ds.groupby('latitude'):
+        for lon, point in lat_slice.groupby('longitude'):
+            make_spot(point.squeeze('latitude'), './data/%.3f_%.3f.bin' % (lon, lat))
 
     for step in ds['step'].values:
         fcst_hour = step.astype('timedelta64[h]').astype('int')
