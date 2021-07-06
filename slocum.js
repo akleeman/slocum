@@ -42,7 +42,7 @@ function DecodeUint32(x) {
 function LoadFile(path, parser) {
   var result = null;
   var request = new XMLHttpRequest();
-  request.open("GET", files[index], true);
+  request.open("GET", path, true);
   request.responseType = "arraybuffer";
 
   request.onload = function () {
@@ -290,19 +290,19 @@ function SpotPlot(x) {
 
 function BuildWindCircle(lat, lon, speeds, directions, radius) {
   var radiusMeters = L.latLng(lat, lon).distanceTo(L.latLng(lat, lon + radius))
-  
+
   // White Background Circle
   var circle = L.circle([lat, lon], radiusMeters, {
         stroke: false,
         fillColor: '#FFFFFF',
         fillOpacity: 0.9
     })
-    
+
   var components = [circle];
 
   var slices = DrawSlices(lat, lon, speeds, directions, radius)
   components = components.concat(slices)
-  
+
   // Black Outline
   var outline = L.circle([lat, lon], radiusMeters, {
         stroke: true,
@@ -337,6 +337,44 @@ function ParseSlocum(data) {
   return decoded_data;
 }
 
+function InView(bounds, pt) {
+  return (pt['lat'] <= bounds.getNorth() &&
+          pt['lat'] >= bounds.getSouth() &&
+          pt['lon'] <= bounds.getEast() &&
+          pt['lon'] >= bounds.getWest())
+}
+
+
+function DrawAll(data, radius) {
+  circles = [];
+  for (i in data) {
+    var pt = data[i];
+    next_circle = BuildWindCircle(pt['lat'], pt['lon'], pt['speeds'], pt['directions'], radius)
+    circles = circles.concat(next_circle);
+  }
+  return circles
+}
+
+
+
+function GetRadius(zoom) {
+  if (zoom <= 3) {
+    radius = 2.56;
+  } else if (zoom <= 4) {
+    radius = 1.28;
+  } else if (zoom <= 5) {
+    radius = 0.64;
+  } else if (zoom <= 6) {
+    radius = 0.32;
+  } else if (zoom <= 7) {
+    radius = 0.16;
+  } else {
+    radius = 0.08
+  }
+  return radius
+}
+
+
 function Draw(m, data) {
   var bounds = m.getBounds();
   var zoom = m.getZoom();
@@ -353,21 +391,17 @@ function Draw(m, data) {
   } else if (zoom < 8) {
     grid_size = 0.5;
   }
+  
+  var radius = GetRadius(zoom);
   var radius = grid_size / 4;
 
-  circles = [];
+  var only_visible = [];
   for (i in data) {
     var pt = data[i];
-    var use_it = zoom >= 8 || (pt['lat'] % grid_size == 0 && pt['lon'] % grid_size == 0);
-    if (use_it) {
-      if (pt['lat'] <= bounds.getNorth() &&
-          pt['lat'] >= bounds.getSouth() &&
-          pt['lon'] <= bounds.getEast() &&
-          pt['lon'] >= bounds.getWest()) {
-        next_circle = BuildWindCircle(pt['lat'], pt['lon'], pt['speeds'], pt['directions'], radius)
-        circles = circles.concat(next_circle);
-      }
+    var on_grid = (pt['lat'] % grid_size == 0 && pt['lon'] % grid_size == 0);
+    if (on_grid && InView(bounds, pt)) {
+      only_visible.append(pt);
     }
   }
-  return circles
+  return DrawAll(only_visible, radius);
 }

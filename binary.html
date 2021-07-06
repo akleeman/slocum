@@ -12,6 +12,10 @@
      .leaflet-popup-content {
        width: auto !important;
      }
+     .leaflet-popup-tip {
+      width: 0px;
+      height: 0px;
+     }
 	 </style>
 </head>
 <body>
@@ -36,17 +40,8 @@ var preloaded_data = []
 var map = L.map('map', {
     minZoom: 2,
     maxZoom: 12
-  }).setView([21, 203.0], 9);
+  }).setView([38, 235], 7);
 
-var files = ["data/000.bin",
-             "data/006.bin",
-             "data/012.bin",
-             "data/018.bin",
-             "data/024.bin",
-             "data/030.bin",
-             "data/036.bin",
-             "data/042.bin",
-             "data/048.bin"];
 var index = 0
 
 L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}', {
@@ -60,30 +55,64 @@ L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_toke
 
 var wind_circle_layer = L.layerGroup().addTo(map);
 
-map.on('moveend', function() {
-  map.removeLayer(wind_circle_layer);
-  circles = Draw(map, preloaded_data)
-  wind_circle_layer = L.layerGroup(circles).addTo(map);
+L.GridLayer.DebugCoords = L.GridLayer.extend({
+
+   	initialize: function (options) {
+   	  L.GridLayer.prototype.initialize.call(this, options);
+  		this.m_tileLayers = {};
+  	},
+
+    tileId : function(coords) {
+      return `${coords.x}_${coords.y}_${coords.z}`
+    },
+
+    createTile: function (coords, done) {
+        var error;
+        var tile = document.createElement('div');
+
+        const id = this.tileId(coords);
+        tile.id = id
+        
+        const layer = L.layerGroup().addTo(map);
+        this.m_tileLayers[id] = layer;
+    
+        var hour = index * 6;
+        path = `./data/${coords.z}/${hour}/${coords.x}_${coords.y}.bin`;
+ 
+        LoadFile(path,  function (bytes) {
+          circles = DrawAll(ParseSlocum(bytes), GetRadius(coords.z));
+          L.layerGroup(circles).addTo(layer);
+          done(error, tile);   
+        });
+        return tile;
+    }
+    
 });
 
-map.on('zoomend', function() {
-  var zoomlevel = map.getZoom();
-  if (zoomlevel < 10){
-    console.log("no point layer active");
-  }
-  if (zoomlevel >= 10){
-    console.log("layer already added");
-  }
-  console.log("Current Zoom Level =" + zoomlevel)
-  map.removeLayer(wind_circle_layer);
-  circles = Draw(map, preloaded_data)
-  wind_circle_layer = L.layerGroup(circles).addTo(map);
-});
+L.gridLayer.debugCoords = function(opts) {
+    var output = new L.GridLayer.DebugCoords({tileSize: 512,
+                                              maxNativeZoom: 8,
+                                              minNativeZoom: 4});
+    output.on('loading', function(e) {
+      if (e.target == undefined) {
+        return;
+      }
+      for (var key in e.target._tiles) {
+        tile = e.target._tiles[key]
+        if (!tile.current && tile.el.id in this.m_tileLayers) {
+          map.removeLayer(this.m_tileLayers[tile.el.id]);
+          delete this.m_tileLayers[tile.el.id];
+        }
+      }
+    });
+    return output;
+};
+
+map.addLayer( L.gridLayer.debugCoords() );
 
 function ParseAndDraw(bytes) {
-  preloaded_data = ParseSlocum(bytes);
-  circles = Draw(map, preloaded_data)
-  wind_circle_layer = L.layerGroup(circles).addTo(map);
+  var circles = DrawAll(ParseSlocum(bytes), GetRadius(map.getZoom()));
+  L.layerGroup(circles).addTo(wind_circle_layer);
 }
 
 function changeValidTime() {
@@ -96,11 +125,10 @@ function changeValidTime() {
   var hours = 6 * index
   document.getElementById("fcst-info").innerHTML = "Forecast for " + hours.toString() + " from now"
   
-  LoadFile(files[index], ParseAndDraw)
+  //LoadFile(files[index], ParseAndDraw)
 }
 
 console.log("loading")
-LoadFile(files[0], ParseAndDraw)
 console.log("loaded")
 
 </script>

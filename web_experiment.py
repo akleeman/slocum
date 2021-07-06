@@ -11,6 +11,7 @@ from itertools import chain
 from datetime import datetime, timedelta
 from slocum.lib.units import convert_units
 from slocum.compression import tinylib
+from pathlib import Path
 
 # Can download the grib files from here:
 # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl
@@ -38,8 +39,10 @@ velocity_colors = [
     '#000000',  # black
 ]
 
-FCST_RELEASE_TIMES = [0, 6, 12, 18, 24, 30, 36, 42, 48,
-                      54, 60, 66, 72, 78, 84, 90, 96]
+FCST_RELEASE_TIMES = [0, 6]
+
+#FCST_RELEASE_TIMES = [0, 6, 12, 18, 24, 30, 36, 42, 48,
+#                      54, 60, 66, 72, 78, 84, 90, 96]
 
 
 def radial_point(center, radius, angle):
@@ -301,7 +304,8 @@ def make_compressed(ds, path):
     with open(path, 'wb') as f:
         for lat, lat_slice in ds.groupby('latitude'):
             for lon, point in lat_slice.groupby('longitude'):
-                point = point.squeeze('latitude')
+                if 'latitude' in point.dims:
+                    point = point.squeeze('latitude')
                 speeds = point['speed'].values
                 directions = point['direction'].values
                 packed = np.array([lon, lat]).astype('float32').tobytes()
@@ -326,33 +330,79 @@ def make_spot(ds, path):
         packed += speeds.astype('uint8').tobytes()
         packed += directions.astype('uint8').tobytes()        
         f.write(packed)
-        
+
+
+def make_zoom_level(ds, directory, zoom, spacing):
+    number_of_tiles = 2 ** (zoom - 1)
+
+    ds = ds.isel(latitude=slice(0, ds.dims['latitude'], spacing),
+                 longitude=slice(0, ds.dims['longitude'], spacing))
+
+    max_latitude = 85
+    
+    
+    mercator_max_y = np.log(np.tan(np.pi / 4. + np.deg2rad(max_latitude) / 2))    
+    mercator_y_bins = np.linspace(mercator_max_y, -mercator_max_y, number_of_tiles + 1)    
+    lat_bins = np.rad2deg(2 * np.arctan(np.exp(mercator_y_bins)) - np.pi / 2)
+    lon_bins = np.linspace(-180, 180, number_of_tiles + 1)
+    
+    shifted_lons = np.mod(ds['longitude'].values + 180., 360.) - 180.
+    
+    ds['lat_bin'] = ('latitude', np.digitize(ds['latitude'].values, lat_bins, right=True) - 1)
+    ds['lon_bin'] = ('longitude', np.digitize(shifted_lons, lon_bins) - 1)
+
+    assert(ds['lon_bin'].values.min() >= 0)
+    assert(ds['lon_bin'].values.max() < number_of_tiles)
+    assert(ds['lat_bin'].values.min() >= 0)
+    assert(ds['lat_bin'].values.max() < number_of_tiles)
+
+    for step, step_ds in ds.groupby('step'):
+        fcst_hour = step.astype('timedelta64[h]').astype('int')
+        sub_dir = os.path.join(directory, str(zoom), str(fcst_hour))
+        Path(sub_dir).mkdir(parents=True, exist_ok=True)
+        for lon_bin, lon_df in step_ds.groupby('lon_bin'):
+            for lat_bin, tile_df in lon_df.groupby('lat_bin'):
+                filename = '%d_%d.bin' % (lon_bin, lat_bin)
+                path = os.path.join(sub_dir, filename)
+                print(path)
+                make_compressed(tile_df, path)
+
+
+def make_zoom_levels(ds, directory):
+    zoom_levels = {
+      4: 16,
+      5: 8,
+      6: 4,
+      7: 2,
+      8: 1,
+    }
+
+    [make_zoom_level(ds, directory, zoom, spacing)
+     for zoom, spacing in zoom_levels.items()]
+
 
 def main():
 
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
     ref_time = nearest_fcst_release(datetime.utcnow())
 
-    ref_time = datetime(2021, 6, 27, 18)
+    ref_time = datetime(2021, 7, 3, 00)
 
     path = download(ref_time)
     ds = xra.open_dataset(path)
 
-    ds = ds.sel(latitude=slice(45, 15), longitude=slice(180, 300))
+    ds = ds.sel(latitude=slice(65, -65))
     ds['speed'] = to_beaufort(ds['speed'])    
     ds['direction'] = to_integer_direction(ds['direction'])
 
-    if not os.path.exists('./data'):
-        os.mkdir('./data')
+    directory = './data'
+
+    for step in ds['step'].values:
+        make_zoom_levels(ds, directory)
 
     for lat, lat_slice in ds.groupby('latitude'):
         for lon, point in lat_slice.groupby('longitude'):
             make_spot(point.squeeze('latitude'), './data/%.3f_%.3f.bin' % (lon, lat))
-
-    for step in ds['step'].values:
-        fcst_hour = step.astype('timedelta64[h]').astype('int')
-        make_compressed(ds.sel(step=step), './data/%.3d.bin' % fcst_hour)
-        # make_leaflet(ds.sel(step=step), '%.3d.js' % fcst_hour)
 
 
 if __name__ == "__main__":
