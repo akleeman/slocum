@@ -1,9 +1,9 @@
-slice_width = 0.19634954084936207 // pi/16
+SLICE_WIDTH = 0.19634954084936207 // pi/16
 
-wind_bins = [0., 1., 3., 6., 10., 16., 21., 27.,
+WIND_BINS = [0., 1., 3., 6., 10., 16., 21., 27.,
              33., 40., 47., 55., 63., 75.]
 
-velocity_colors = [
+VELOCITY_COLORS = [
     '#d7d7d7',  // light grey
     '#a1eeff',  // lightest blue
     '#42b1e5',  // light blue
@@ -76,6 +76,7 @@ function RadialPoint(x, y, angle, radius) {
           y + radius * Math.sin(angle)]
 }
 
+
 function DrawSlices(lat, lon, speeds, directions, radius) {
   slices = [];
   for (let dir = 0; dir < 16; dir++) {
@@ -86,13 +87,13 @@ function DrawSlices(lat, lon, speeds, directions, radius) {
       }
     }
     if (max_speed != null) {  
-      var color = velocity_colors[max_speed];
+      var color = VELOCITY_COLORS[max_speed];
       var theta = -3.14159 + 0.39269908 * dir;
       var polygon = L.polygon([
           [lat, lon],
-          RadialPoint(lat, lon, theta - slice_width, radius),
+          RadialPoint(lat, lon, theta - SLICE_WIDTH, radius),
           RadialPoint(lat, lon, theta, radius),
-          RadialPoint(lat, lon, theta + slice_width, radius)
+          RadialPoint(lat, lon, theta + SLICE_WIDTH, radius)
       ], {color: color, fillOpacity:1., stroke:false});
       slices.push(polygon);
     }
@@ -138,27 +139,76 @@ function SpotPath(lat, lon) {
   return `data/${lon}_${lat}.bin`;
 }
 
-function CountMatrix(bytes) {
+function binnedData(bytes) {
 
     var parsed = DecodePackedSpot(bytes);
-    var counts = []
-    for (let bin = 0; bin < wind_bins.length; bin++) {
+    var data = []
+    for (let bin = 0; bin < WIND_BINS.length; bin++) {
       for (let i = 0; i < parsed['hours'].length; i++) {
         var n = parsed['speeds'][i].length;
-        var count = 0;
+        var directions = []
         for (let j = 0; j < n; j++) {        
           if (parsed['speeds'][i][j] == bin) {
-            count += 1;
+            directions.push(parsed['directions'][i][j])
           }
         }
-        counts.push({'speed': wind_bins[bin], 'hour': parsed['hours'][i], 'count': count});
+        data.push({'speed': WIND_BINS[bin], 'hour': parsed['hours'][i], 'directions': directions});
       }
     }
-    return counts;
+    return data;
+}
+
+function polygonSlice(x, y, angle, radius) {
+
+  point = function(angle) {
+    return [x + radius * Math.sin(angle),
+            y - radius * Math.cos(angle)];
+  }
+
+  var points = [ [x, y],
+          point(angle - SLICE_WIDTH),
+          point(angle),
+          point(angle + SLICE_WIDTH),
+      ];
+
+  point_strings = []
+  for (value of points) {
+    point_strings.push(value.join(','))
+  }
+  return point_strings.join(' ');
+}
+
+function windCircleData(x, y, directions, radius) {
+
+  slices = [];
+  var n = directions.length;
+  for (let dir = 0; dir < 16; dir++) {
+    var count = 0;
+    for (let i = 0; i < directions.length; i++) {  
+      if (directions[i] == dir) {
+        count += 1;
+      }
+    }
+    if (count > 0) {
+      var color = '#4277e5';
+      var theta = -3.14159 + 0.39269908 * dir;
+
+      var slice = {
+        'x': x,
+        'y': y,
+        'theta': theta,
+        'points': polygonSlice(x, y, theta, radius),
+        'opacity': count / n
+      };
+        
+      slices.push(slice);
+    }
+  }
+  return slices;
 }
 
 function PopulateHeatMap(bytes, div) {
-  var data = CountMatrix(bytes)
+  var data = binnedData(bytes)
   
   // set the dimensions and margins of the graph
   var margin = {top: 30, right: 30, bottom: 30, left: 30}
@@ -176,7 +226,7 @@ function PopulateHeatMap(bytes, div) {
 
   var speed_min = d3.min(data, function(d) { return d.speed;});
   var speed_max = d3.max(data, function(d) {
-      if (d.count > 0) {
+      if (d.directions.length > 0) {
         return d.speed;
       } else {
         return 0;
@@ -209,15 +259,15 @@ function PopulateHeatMap(bytes, div) {
 
   svg.append("g")
     .call(d3.axisLeft(y));
-
+    
   // Build color scale
   var colors = d3.scaleLinear()
     .range(["white", "#4277e5"])
     .domain([1,31])
 
   // create a tooltip
-  var tooltip =d3.create('div', 'foo')
-    .style("opacity", 0)
+  var tooltip = div.append("div")
+    .style("opacity", 1.)
     .attr("class", "tooltip")
     .style("background-color", "white")
     .style("border", "solid")
@@ -225,21 +275,7 @@ function PopulateHeatMap(bytes, div) {
     .style("border-radius", "5px")
     .style("padding", "5px")
 
-  // Three function that change the tooltip when user hover / move / leave a cell
-  var mouseover = function(d) {
-    tooltip.style("opacity", 1)
-  }
-  var mousemove = function(d) {
-    tooltip
-      .html("The exact value of<br>this cell is: " + d.value)
-      .style("left", (d3.mouse(this)[0]+70) + "px")
-      .style("top", (d3.mouse(this)[1]) + "px")
-  }
-  var mouseleave = function(d) {
-    tooltip.style("opacity", 0)
-  }
-
-  svg.selectAll()
+  rectangles = svg.selectAll('rect')
       .data(data, function(d) {return d.hour+':'+d.speed;})
       .enter()
       .append("rect")
@@ -252,8 +288,63 @@ function PopulateHeatMap(bytes, div) {
       .attr("width", x.bandwidth() )
       .attr("height", y.bandwidth() )
       .style("fill", function(d) {
-        return colors(d.count)
+        return colors(d.directions.length)
       } )
+      
+  var hover = svg.append("g")
+                 .attr("id", "hover");
+
+  // Three function that change the tooltip when user hover / move / leave a cell
+  var mouseover = function(d) {
+    tooltip.style("opacity", 1)
+  }
+  var mousemove = function(d) {
+
+    if (d.directions.length > 0) {
+    
+      radius = 30
+      width = 2.5 * radius
+      height = width
+      x = d3.mouse(this)[0] + 2 * radius
+      y = d3.mouse(this)[1] - 2 * radius
+    
+      var dir_data = windCircleData(x, y, d.directions, radius);
+
+      d3.select('#hover').selectAll('circle').remove()
+      d3.select('#hover').append('circle')
+        .attr("cx", x)
+        .attr("cy", y)
+        .attr("r", radius)
+        .attr("stroke", "black")
+        .attr('fill', 'white')
+
+      d3.select('#hover').selectAll('polygon').remove()
+      d3.select('#hover').selectAll('polygon')
+        .data(dir_data)
+        .enter()
+        .append('polygon')
+        .attr("points", function(d) {
+          return d.points;
+        })
+        .attr("stroke", null)
+        .style("fill", 'steelblue')
+        .style("fill-opacity", function (d) {
+          return d.opacity;
+        })
+
+      tooltip
+        .html("Number of Fcsts: " + d.count)
+        .style("left", (d3.mouse(this)[0]+70) + "px")
+        .style("top", (d3.mouse(this)[1]) + "px")
+    }
+  }
+  var mouseleave = function(d) {
+    d3.select('#hover').selectAll('circle').remove()
+    d3.select('#hover').selectAll('polygon').remove()
+    tooltip.style("opacity", 0)
+  }
+
+  rectangles
     .on("mouseover", mouseover)
     .on("mousemove", mousemove)
     .on("mouseleave", mouseleave)
