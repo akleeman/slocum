@@ -1,8 +1,11 @@
 import os
 import json
 import shutil
+import struct
+import urllib
+import requests
 import warnings
-import urllib.request
+
 
 import numpy as np
 import xarray as xra
@@ -39,7 +42,7 @@ velocity_colors = [
     '#000000',  # black
 ]
 
-FCST_RELEASE_TIMES = [0, 6]
+FCST_RELEASE_TIMES = list(range(0, 240, 3))
 
 #FCST_RELEASE_TIMES = [0, 6, 12, 18, 24, 30, 36, 42, 48,
 #                      54, 60, 66, 72, 78, 84, 90, 96]
@@ -270,20 +273,23 @@ def download(ref_time, directory=None):
     return combined_path
     
 
-def nomads_url_exists(time):
-    date = ref_time.strftime('%Y%m%d_%H')
-    url = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=gefs.{date}".format(
-      date
-    )
+def nomads_has_complete_forecast(time):
+    _, url = build_url(1, time, max(FCST_RELEASE_TIMES))
+    return requests.get(url).status_code == 200
     
 
 def nearest_fcst_release(time):
+    print("Current Time ", time)
     six_hours = timedelta(minutes=6*60)
-    time = time + six_hours
-    ref_time = datetime(time.year, time.month, time.day, time.hour)
-    while ref_time + six_hours < time:
-        ref_time = ref_time + six_hours
-    return ref_time
+    one_day = 4 * six_hours
+    ref_time = time + six_hours
+    ref_time = datetime(time.year, time.month, time.day, time.hour - time.hour % 6)
+    while ref_time + one_day > time:
+        print("Trying Time  ", ref_time)
+        if nomads_has_complete_forecast(ref_time):
+            return ref_time
+        ref_time = ref_time - six_hours
+    return None
 
 
 def iter_wind_circles(ds, radius=0.05):
@@ -299,18 +305,21 @@ def iter_wind_circles(ds, radius=0.05):
             yield leaflet_wind_circle(x, y, speeds, directions, radius)
 
 
-def make_compressed(ds, path):
+def make_compressed(speeds, directions, path):
     first = True
+    assert(speeds.shape == directions.shape)
     with open(path, 'wb') as f:
-        for lat, lat_slice in ds.groupby('latitude'):
-            for lon, point in lat_slice.groupby('longitude'):
-                if 'latitude' in point.dims:
-                    point = point.squeeze('latitude')
-                speeds = point['speed'].values
-                directions = point['direction'].values
-                packed = np.array([lon, lat]).astype('float32').tobytes()
-                packed += speeds.astype('uint8').tobytes()
-                packed += directions.astype('uint8').tobytes()
+        lats = speeds.coords['latitude'].values
+        lons = speeds.coords['longitude'].values
+        for i, lat in enumerate(lats):
+            for j, lon in enumerate(lons):
+                assert(speeds.dims == ('member', 'latitude', 'longitude'))
+                speed_vals = speeds.values[:, i, j]
+                direction_vals = directions.values[:, i, j]
+                packed = struct.pack("f", lon)
+                packed += struct.pack("f", lat)
+                packed += speed_vals.astype('uint8').tobytes()
+                packed += direction_vals.astype('uint8').tobytes()
 
                 if first:
                   f.write(np.array(len(packed), dtype='uint32').tobytes())
@@ -339,8 +348,7 @@ def make_zoom_level(ds, directory, zoom, spacing):
                  longitude=slice(0, ds.dims['longitude'], spacing))
 
     max_latitude = 85
-    
-    
+
     mercator_max_y = np.log(np.tan(np.pi / 4. + np.deg2rad(max_latitude) / 2))    
     mercator_y_bins = np.linspace(mercator_max_y, -mercator_max_y, number_of_tiles + 1)    
     lat_bins = np.rad2deg(2 * np.arctan(np.exp(mercator_y_bins)) - np.pi / 2)
@@ -365,7 +373,7 @@ def make_zoom_level(ds, directory, zoom, spacing):
                 filename = '%d_%d.bin' % (lon_bin, lat_bin)
                 path = os.path.join(sub_dir, filename)
                 print(path)
-                make_compressed(tile_df, path)
+                make_compressed(tile_df["speed"], tile_df["direction"], path)
 
 
 def make_zoom_levels(ds, directory):
@@ -402,7 +410,7 @@ def main():
 
     for lat, lat_slice in ds.groupby('latitude'):
         for lon, point in lat_slice.groupby('longitude'):
-            make_spot(point.squeeze('latitude'), './data/%.3f_%.3f.bin' % (lon, lat))
+            make_spot(point.squeeze('latitude'), './data/spot/%.3f_%.3f.bin' % (lon, lat))
 
 
 if __name__ == "__main__":

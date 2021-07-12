@@ -1,3 +1,5 @@
+var HOUR = 0;
+
 SLICE_WIDTH = 0.19634954084936207 // pi/16
 
 WIND_BINS = [0., 1., 3., 6., 10., 16., 21., 27.,
@@ -136,7 +138,7 @@ function SpotPath(lat, lon) {
   lat = lat.toFixed(3);
   lon = lon.toFixed(3);
   console.log(`${lat}_${lon}.bin`)
-  return `data/${lon}_${lat}.bin`;
+  return `data/spot/${lon}_${lat}.bin`;
 }
 
 function binnedData(bytes) {
@@ -265,16 +267,6 @@ function PopulateHeatMap(bytes, div) {
     .range(["white", "#4277e5"])
     .domain([1,31])
 
-  // create a tooltip
-  var tooltip = div.append("div")
-    .style("opacity", 1.)
-    .attr("class", "tooltip")
-    .style("background-color", "white")
-    .style("border", "solid")
-    .style("border-width", "2px")
-    .style("border-radius", "5px")
-    .style("padding", "5px")
-
   rectangles = svg.selectAll('rect')
       .data(data, function(d) {return d.hour+':'+d.speed;})
       .enter()
@@ -294,10 +286,6 @@ function PopulateHeatMap(bytes, div) {
   var hover = svg.append("g")
                  .attr("id", "hover");
 
-  // Three function that change the tooltip when user hover / move / leave a cell
-  var mouseover = function(d) {
-    tooltip.style("opacity", 1)
-  }
   var mousemove = function(d) {
 
     if (d.directions.length > 0) {
@@ -331,23 +319,22 @@ function PopulateHeatMap(bytes, div) {
         .style("fill-opacity", function (d) {
           return d.opacity;
         })
-
-      tooltip
-        .html("Number of Fcsts: " + d.count)
-        .style("left", (d3.mouse(this)[0]+70) + "px")
-        .style("top", (d3.mouse(this)[1]) + "px")
     }
   }
   var mouseleave = function(d) {
     d3.select('#hover').selectAll('circle').remove()
     d3.select('#hover').selectAll('polygon').remove()
-    tooltip.style("opacity", 0)
+  }
+
+  var click = function(d) {
+    HOUR = d.hour;
+    changeValidTime(d.hour)
   }
 
   rectangles
-    .on("mouseover", mouseover)
     .on("mousemove", mousemove)
     .on("mouseleave", mouseleave)
+    .on("click", click)
       
   svg.append("text")
       .attr("class", "y label")
@@ -411,10 +398,7 @@ function BuildWindCircle(lat, lon, speeds, directions, radius) {
 
 function ParseSlocum(data) {
   var packet_size = DecodeUint32(data.subarray(0, 4));
-  data = data.subarray(4);
-  console.log("packed size: ", packet_size)
-  console.log("num points: ", data.length / packet_size)
-  
+  data = data.subarray(4);  
   decoded_data = []
   
   var count = 0;
@@ -495,4 +479,63 @@ function Draw(m, data) {
     }
   }
   return DrawAll(only_visible, radius);
+}
+
+
+L.GridLayer.WindCircles = L.GridLayer.extend({
+
+   	initialize: function (options) {
+   	  L.GridLayer.prototype.initialize.call(this, options);
+  		this.m_tileLayers = {};
+  	},
+
+    tileId : function(coords) {
+      return `${coords.x}_${coords.y}_${coords.z}`
+    },
+
+    createTile: function (coords, done) {
+        var error;
+        var tile = document.createElement('div');
+
+        const id = this.tileId(coords);
+        tile.id = id
+        
+        const layer = L.layerGroup().addTo(map);
+        this.m_tileLayers[id] = layer;
+    
+        path = `./data/${coords.z}/${HOUR}/${coords.x}_${coords.y}.bin`;
+ 
+        LoadFile(path,  function (bytes) {
+          circles = DrawAll(ParseSlocum(bytes), GetRadius(coords.z));
+          L.layerGroup(circles).addTo(layer);
+          done(error, tile);   
+        });
+        return tile;
+    }
+    
+});
+
+windCircleLayer = function(opts) {
+    var output = new L.GridLayer.WindCircles({tileSize: 512,
+                                              maxNativeZoom: 8,
+                                              minNativeZoom: 4});
+    output.on('loading', function(e) {
+      if (e.target == undefined) {
+        return;
+      }
+      for (var key in e.target._tiles) {
+        tile = e.target._tiles[key]
+        if (!tile.current && tile.el.id in this.m_tileLayers) {
+          map.removeLayer(this.m_tileLayers[tile.el.id]);
+          delete this.m_tileLayers[tile.el.id];
+        }
+      }
+    });
+    return output;
+};
+
+function changeValidTime() {
+  map.removeLayer(L.GridLayer.WindCircles);
+  map.addLayer(windCircleLayer());
+  document.getElementById("fcst-info").innerHTML = "Forecast for " + HOUR.toString() + " from now"
 }
