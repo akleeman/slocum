@@ -15,6 +15,7 @@ dependencies:
 - requests
 - pytest
 - netCDF4
+- dask
 - geopandas
 - cfgrib
 - pip:

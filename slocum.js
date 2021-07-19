@@ -21,6 +21,9 @@ VELOCITY_COLORS = [
     '#000000',  // black
 ]
 
+var REF_TIME = undefined;
+var FCST_HOURS = undefined;
+
 function DecodeFloat32(x) {
   var buf = new ArrayBuffer(4);
   var view = new DataView(buf);
@@ -46,6 +49,7 @@ function LoadFile(path, parser) {
   var request = new XMLHttpRequest();
   request.open("GET", path, true);
   request.responseType = "arraybuffer";
+  //request.setRequestHeader("Content-type","application/zip");
 
   request.onload = function () {
     if (request.response) {
@@ -211,11 +215,11 @@ function windCircleData(x, y, directions, radius) {
 
 function PopulateHeatMap(bytes, div) {
   var data = binnedData(bytes)
-  
+
   // set the dimensions and margins of the graph
   var margin = {top: 30, right: 30, bottom: 30, left: 30}
-  width = 450 - margin.left - margin.right,
-  height = 450 - margin.top - margin.bottom;
+  width = 600 - margin.left - margin.right,
+  height = 250 - margin.top - margin.bottom;
 
   // append the svg object to the body of the page
   var svg = div
@@ -235,24 +239,33 @@ function PopulateHeatMap(bytes, div) {
       }});
   
   var speeds = new Set()  
-  var hours = new Set()
+  var days = new Set()
+  var tickValues = new Set()
   for (i in data) {
     speeds.add(data[i].speed)
-    hours.add(data[i].hour)
+    days.add(data[i].hour)
+    tickValues.add(data[i].hour - data[i].hour % 24.)
   }
   
   speeds = Array.from(speeds);
-  hours = Array.from(hours);
+  days = Array.from(days);
+  tickValues = Array.from(tickValues);
+
+  tickFormat = function(x) {
+    return x / 24.;
+  };
 
   // Build X scales and axis:
   var x = d3.scaleBand()
     .range([ 0, width ])
-    .domain(hours)
+    .domain(days)
     .padding(0.01);
 
   svg.append("g")
     .attr("transform", "translate(0," + height + ")")
-    .call(d3.axisBottom(x))
+    .call(d3.axisBottom(x)
+          .tickValues(tickValues)
+          .tickFormat(tickFormat))
 
   var y = d3.scaleBand()
     .range([ height, 0 ])
@@ -328,7 +341,7 @@ function PopulateHeatMap(bytes, div) {
 
   var click = function(d) {
     HOUR = d.hour;
-    changeValidTime(d.hour)
+    updateValidTime()
   }
 
   rectangles
@@ -349,7 +362,7 @@ function PopulateHeatMap(bytes, div) {
       .attr("text-anchor", "end")
       .attr("x", width)
       .attr("y", height - 6)
-      .text("Forecast Time (hours)");
+      .text("Forecast Time (days)");
 }
 
 
@@ -534,8 +547,63 @@ windCircleLayer = function(opts) {
     return output;
 };
 
-function changeValidTime() {
+
+function parseForecastTimes(bytes) {
+  var timestamp = DecodeUint32(bytes.subarray(0, 4))
+  bytes = bytes.subarray(4);
+  // Create a new JavaScript Date object based on the timestamp
+  // multiplied by 1000 so that the argument is in milliseconds, not seconds.
+  REF_TIME = new Date(timestamp * 1000);
+  ms_per_minute = 60*1000
+  offset = REF_TIME.getTimezoneOffset() * ms_per_minute;
+  REF_TIME = new Date(REF_TIME - offset);
+  
+  var n_times = DecodeUint32(bytes.subarray(0, 4));
+  var bytes = bytes.subarray(4);
+  var diffs = bytes.subarray(0, n_times);
+  FCST_HOURS = [0];
+  for (let i = 0; i < n_times - 1; i++) {
+    FCST_HOURS.push(FCST_HOURS[i] + diffs[i])
+  };
+}
+
+function LoadForecastTimes(map) {
+    path = `./data/time.bin`;
+    
+    parseAndLoad = function(bytes) {
+      parseForecastTimes(bytes);
+      
+      sliderControl = L.control.timeSlider({
+        position: "topright",
+        refTime: REF_TIME,
+        hours: FCST_HOURS
+      });
+
+      //Make sure to add the slider to the map ;-)
+      map.addControl(sliderControl);
+      //And initialize the slider
+      sliderControl.startSlider();
+    }
+    
+    LoadFile(path, parseAndLoad)
+}
+
+
+function initializeSlocum(map) {
+
+  LoadForecastTimes(map)
+
+  var layer = windCircleLayer();
+  map.addLayer( layer );
+  
+}
+
+function updateValidTime() {
   map.removeLayer(L.GridLayer.WindCircles);
   map.addLayer(windCircleLayer());
-  document.getElementById("fcst-info").innerHTML = "Forecast for " + HOUR.toString() + " from now"
+}
+
+function incrementValidTime() {
+  HOUR += 6;
+  updateValidTime()
 }

@@ -1,14 +1,17 @@
 import os
+import re
 import json
+import zlib
 import shutil
 import struct
 import urllib
+import cProfile
 import requests
 import warnings
 
-
 import numpy as np
 import xarray as xra
+import multiprocessing as mp
 
 from itertools import chain
 from datetime import datetime, timedelta
@@ -42,70 +45,34 @@ velocity_colors = [
     '#000000',  # black
 ]
 
+GEFS_MEMBERS = 31
 FCST_RELEASE_TIMES = list(range(0, 240, 3))
-
-#FCST_RELEASE_TIMES = [0, 6, 12, 18, 24, 30, 36, 42, 48,
-#                      54, 60, 66, 72, 78, 84, 90, 96]
+#FCST_RELEASE_TIMES = list(range(0, 9, 3))
 
 
-def radial_point(center, radius, angle):
-    return center + radius * np.array([np.sin(angle), np.cos(angle)])
+def list_of_tuples(xs):
+    if isinstance(xs[0], tuple):
+        return xs
+    return [(x,) for x in xs]
 
 
-def shapely_wind_slice(center, radius, speed, theta, width=np.pi / 16):
-    color = 'blue'  # get_color(speed)
-    poly = Polygon([center,
-                    radial_point(center, radius, theta - width),
-                    radial_point(center, radius, theta),
-                    radial_point(center, radius, theta + width)])
-    return poly
+def serial_apply(f, arguments):
+    return [f(*x) for x in list_of_tuples(arguments)]
 
 
-def wind_slice(lat, lon, radius, speed, theta, width=np.pi / 16):
-    x_0, y_0 = lon, lat
-    y_1, x_1 = radial_point([lat, lon], radius, theta - width)
-    y_2, x_2 = radial_point([lat, lon], radius, theta)
-    y_3, x_3 = radial_point([lat, lon], radius, theta + width)
+def parallel_apply(f, arguments):
+    pool = mp.Pool(4)
 
-    color = velocity_colors[np.digitize(speed, wind_bins)]
+    results = []
+    def collect_result(result):
+        if result:
+            results.append(result)
 
-    return """var polygon = L.polygon([
-        [{x_0}, {y_0}],
-        [{x_1}, {y_1}],
-        [{x_2}, {y_2}],
-        [{x_3}, {y_3}]
-    ], {{color: '{color}', fillOpacity:0.3, stroke:false}}).addTo(map); """.format(x_0=x_0, y_0=y_0,
-                                                                                   x_1=x_1, y_1=y_1,
-                                                                                   x_2=x_2, y_2=y_2,
-                                                                                   x_3=x_3, y_3=y_3,
-                                                                                   color=color)
-
-
-def circle(lat, lon, radius):
-
-    radius = radius * 60 * 1852
-
-    return """var circle = L.circle([{x}, {y}], {radius}, {{
-        stroke: false,
-        fillColor: '#FFFFFF',
-        fillOpacity: 0.9
-    }}).addTo(map);""".format(x=lon, y=lat, radius=radius)
-
-
-def leaflet_wind_circle(x, y, speeds, directions, radius):
-    center = np.array([x, y]).flatten()
-    radius = radius
-    speeds = speeds.reshape(-1)
-    inds = np.argsort(speeds)
-    speeds = speeds[inds]
-    directions = directions.reshape(-1)[inds]
-
-    wind_slices = [wind_slice(*center, radius, ws, wd)
-                   for ws, wd in zip(speeds, directions)]
-
-    background_circle = circle(*center, radius)
-
-    return '\n\n'.join(chain([background_circle], wind_slices))
+    [pool.apply_async(f, args=x, callback=collect_result)
+     for x in list_of_tuples(arguments)]
+    pool.close()
+    pool.join()
+    return sorted(results)
 
 
 def vector_to_radial(u, v, orientation='to'):
@@ -167,6 +134,8 @@ def download_one_file(member, ref_time, fcst_hour, directory):
         except:
             print("Failure Downloading: ", url)
             raise
+    else:
+        print("Cached: ", output_path)
     return output_path
 
 
@@ -240,38 +209,46 @@ def normalize(x):
     return x
 
 
-def download_members(ref_time, fcst_hour, directory='./'):
-
-    combined_path = '%s_%.3d.nc' % (ref_time.strftime('%Y%d%m_%H'), fcst_hour)
-    combined_path = os.path.join(directory, combined_path)
-    if not os.path.exists(combined_path):
-        paths = [download_one_file(member, ref_time, fcst_hour, directory)
-                 for member in range(31)]
-        ds = xra.concat([normalize(xra.open_dataset(p, engine='cfgrib'))
-                         for p in paths],
-                        dim='member')
-        ds.to_netcdf(combined_path, encoding={'speed': {'zlib': True},
-                                              'direction': {'zlib': True}})
-
-    return combined_path
+def shrink(ds):
+    ds = ds.sel(latitude=slice(65, -65))
+    ds['speed'] = to_beaufort(ds['speed'])    
+    ds['direction'] = to_integer_direction(ds['direction'])
+    return ds.expand_dims('step')
 
 
-def download(ref_time, directory=None):
+def download_members(ref_time, fcst_hour, directory=None):
 
     if directory is None:
         directory = ref_time.strftime('./%Y%d%m_%H')
         if not os.path.exists(directory):
             os.mkdir(directory)
 
-    combined_path = os.path.join(directory, ref_time.strftime('%Y%d%m_%H.nc'))
+    combined_path = '%s_%.3d.nc' % (ref_time.strftime('%Y%d%m_%H'), fcst_hour)
+    combined_path = os.path.join(directory, combined_path)
     if not os.path.exists(combined_path):
-        nc_paths = [download_members(ref_time, fcst_hour, directory)
-                    for fcst_hour in FCST_RELEASE_TIMES]
-        ds = xra.concat([xra.open_dataset(p) for p in nc_paths], dim='step')
+        paths = [download_one_file(member, ref_time, fcst_hour, directory)
+                 for member in range(GEFS_MEMBERS)]
+        ds = xra.concat([normalize(xra.open_dataset(p, engine='cfgrib'))
+                         for p in paths],
+                        dim='member')
+        ds = shrink(ds)
         ds.to_netcdf(combined_path, encoding={'speed': {'zlib': True},
                                               'direction': {'zlib': True}})
+        
     return combined_path
-    
+
+
+def download(ref_time, directory=None):
+
+    return [download_members(ref_time, fcst_hour, directory)
+            for fcst_hour in FCST_RELEASE_TIMES]
+
+
+def open_files(nc_paths):
+    return xra.open_mfdataset(nc_paths,
+                              chunks={'latitude': 10, 'longitude': 10},
+                              concat_dim='step', combine='nested')
+
 
 def nomads_has_complete_forecast(time):
     _, url = build_url(1, time, max(FCST_RELEASE_TIMES))
@@ -292,48 +269,39 @@ def nearest_fcst_release(time):
     return None
 
 
-def iter_wind_circles(ds, radius=0.05):
-    for lat in ds['latitude']:
-        for lon in ds['longitude']:
-            point = ds.sel(latitude=lat, longitude=lon)
-
-            x = lon.values.item()
-            y = lat.values.item()
-            speeds = point['speed'].values
-            directions = point['direction'].values
-
-            yield leaflet_wind_circle(x, y, speeds, directions, radius)
-
 
 def make_compressed(speeds, directions, path):
     first = True
     assert(speeds.shape == directions.shape)
+    
+    bytes = b''
+    lats = speeds.coords['latitude'].values
+    lons = speeds.coords['longitude'].values
+    assert(speeds.dims == ('member', 'latitude', 'longitude'))
+    speeds = speeds.values
+    directions = directions.values
+    for i, lat in enumerate(lats):
+        for j, lon in enumerate(lons):
+            speed_vals = speeds[:, i, j]
+            direction_vals = directions[:, i, j]
+            packed = struct.pack("f", lon)
+            packed += struct.pack("f", lat)
+            packed += speed_vals.astype('uint8').tobytes()
+            packed += direction_vals.astype('uint8').tobytes()
+
+            if first:
+              bytes += struct.pack("I", len(packed))
+              first = False
+            
+            bytes += packed
+
     with open(path, 'wb') as f:
-        lats = speeds.coords['latitude'].values
-        lons = speeds.coords['longitude'].values
-        for i, lat in enumerate(lats):
-            for j, lon in enumerate(lons):
-                assert(speeds.dims == ('member', 'latitude', 'longitude'))
-                speed_vals = speeds.values[:, i, j]
-                direction_vals = directions.values[:, i, j]
-                packed = struct.pack("f", lon)
-                packed += struct.pack("f", lat)
-                packed += speed_vals.astype('uint8').tobytes()
-                packed += direction_vals.astype('uint8').tobytes()
-
-                if first:
-                  f.write(np.array(len(packed), dtype='uint32').tobytes())
-                  first = False
-                
-                f.write(packed)
+        f.write(bytes)
 
 
 
-def make_spot(ds, path):
+def make_spot(speeds, directions, hours, path):
     with open(path, 'wb') as f:
-        hours = ds['step'].values.astype('timedelta64[h]')
-        speeds = ds['speed'].values
-        directions = ds['direction'].values
         encoded_time = np.concatenate([[hours.size], np.diff(hours)])
         packed = encoded_time.astype('uint8').tobytes()
         packed += speeds.astype('uint8').tobytes()
@@ -341,7 +309,88 @@ def make_spot(ds, path):
         f.write(packed)
 
 
-def make_zoom_level(ds, directory, zoom, spacing):
+
+def make_spots(ds):
+    speeds = ds['speed']
+    directions = ds['direction']
+    hours = ds['step'].values.astype('timedelta64[h]')
+        
+    lats = speeds.coords['latitude'].values
+    lons = speeds.coords['longitude'].values
+    assert(speeds.dims == ('step', 'member', 'latitude', 'longitude'))
+    assert(directions.dims == speeds.dims)    
+    speeds = speeds.values
+    directions = directions.values
+    for i, lat in enumerate(lats):
+        for j, lon in enumerate(lons):
+            make_spot(speeds[:, :, i, j],
+                      directions[:, :, i, j],
+                      hours, './data/spot/%.3f_%.3f.bin' % (lon, lat))
+
+
+def make_slices(x, k):
+
+    chunks = np.array_split(x, k)
+    
+    i = 0
+    for chunk in chunks:
+        yield slice(i, i + chunk.size)
+        i += chunk.size
+
+
+def get_chunk_dir(i, j):
+    return './chunks/{}_{}'.format(i, j)
+
+
+def split_one_dataset(path, lat_slices, lon_slices):
+    print("Splitting : ", path)
+    ds = xra.load_dataset(path)
+    for i, lat_slice in enumerate(lat_slices):
+        for j, lon_slice in enumerate(lon_slices):
+            fcst_hour = ds['step'].values.item()
+            output_path = os.path.join(get_chunk_dir(i, j), '{}.nc'.format(fcst_hour))
+            ds.isel(latitude=lat_slice, longitude=lon_slice).to_netcdf(output_path)
+
+
+def split_into_chunks(paths):
+    
+    peek = xra.open_dataset(paths[0])
+    lat_slices = list(make_slices(peek['latitude'].values, 10))
+    lon_slices = list(make_slices(peek['longitude'].values, 10))    
+
+    def make_chunk_directories():
+        for i in range(len(lat_slices)):
+            for j in range(len(lon_slices)):
+                directory = get_chunk_dir(i, j)
+                if os.path.exists(directory):
+                    shutil.rmtree(directory)
+                Path(directory).mkdir(parents=True, exist_ok=False)
+                yield directory
+
+    output = list(make_chunk_directories())
+
+    arguments = [(p, lat_slices, lon_slices) for p in paths]
+
+    parallel_apply(split_one_dataset, arguments)
+
+    return output
+
+
+def make_spots_one_chunk(chunk_dir):
+    print("Making spots : ", chunk_dir)
+    ds = xra.open_mfdataset(os.path.join(chunk_dir, '*.nc'),
+                            concat_dim='step')
+    ds.load()
+    make_spots(ds)
+
+
+def make_all_spots(paths):
+    chunk_directories = split_into_chunks(paths)
+    arguments = [(x,) for x in chunk_directories]
+    parallel_apply(make_spots_one_chunk, arguments)
+    
+
+def make_zoom_level_one_step(ds, directory, zoom, spacing):
     number_of_tiles = 2 ** (zoom - 1)
 
     ds = ds.isel(latitude=slice(0, ds.dims['latitude'], spacing),
@@ -364,19 +413,20 @@ def make_zoom_level(ds, directory, zoom, spacing):
     assert(ds['lat_bin'].values.min() >= 0)
     assert(ds['lat_bin'].values.max() < number_of_tiles)
 
-    for step, step_ds in ds.groupby('step'):
-        fcst_hour = step.astype('timedelta64[h]').astype('int')
-        sub_dir = os.path.join(directory, str(zoom), str(fcst_hour))
-        Path(sub_dir).mkdir(parents=True, exist_ok=True)
-        for lon_bin, lon_df in step_ds.groupby('lon_bin'):
-            for lat_bin, tile_df in lon_df.groupby('lat_bin'):
-                filename = '%d_%d.bin' % (lon_bin, lat_bin)
-                path = os.path.join(sub_dir, filename)
-                print(path)
-                make_compressed(tile_df["speed"], tile_df["direction"], path)
+    fcst_hour = ds['step'].values.astype('timedelta64[h]').astype('int')
+    sub_dir = os.path.join(directory, str(zoom), str(fcst_hour))
+    Path(sub_dir).mkdir(parents=True, exist_ok=True)    
+
+    for lon_bin, lon_df in ds.groupby('lon_bin'):
+        for lat_bin, tile_df in lon_df.groupby('lat_bin'):
+            filename = '%d_%d.bin' % (lon_bin, lat_bin)
+            path = os.path.join(sub_dir, filename)
+            make_compressed(tile_df["speed"], tile_df["direction"], path)
 
 
-def make_zoom_levels(ds, directory):
+def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory, download_directory):
+    path = download_members(ref_time, fcst_hour, download_directory)
+
     zoom_levels = {
       4: 16,
       5: 8,
@@ -385,32 +435,42 @@ def make_zoom_levels(ds, directory):
       8: 1,
     }
 
-    [make_zoom_level(ds, directory, zoom, spacing)
-     for zoom, spacing in zoom_levels.items()]
+    print("Forecast hour: ", fcst_hour)
+    #[make_zoom_level_one_step(ds, output_directory, zoom, spacing)
+    # for zoom, spacing in zoom_levels.items()]
+
+    return path
+
+
+def make_zoom_levels(ref_time, output_directory, download_directory=None, parallel=True):
+
+    arguments = [(ref_time, fcst_hour, output_directory, download_directory)
+                 for fcst_hour in FCST_RELEASE_TIMES]
+
+    apply_func = parallel_apply if parallel else serial_apply
+    return apply_func(download_and_make_zoom_levels_one_step, arguments)
+
+
+def write_forecast_hours(ref_time, directory):
+    with open(os.path.join(directory, 'time.bin'), 'wb') as f:
+        f.write(struct.pack('I', int(ref_time.timestamp())))
+        f.write(struct.pack('I', len(FCST_RELEASE_TIMES)))
+        for dh in np.diff(FCST_RELEASE_TIMES):
+            f.write(struct.pack('B', dh))
 
 
 def main():
 
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
-    ref_time = nearest_fcst_release(datetime.utcnow())
-
-    ref_time = datetime(2021, 7, 3, 00)
-
-    path = download(ref_time)
-    ds = xra.open_dataset(path)
-
-    ds = ds.sel(latitude=slice(65, -65))
-    ds['speed'] = to_beaufort(ds['speed'])    
-    ds['direction'] = to_integer_direction(ds['direction'])
+    # ref_time = nearest_fcst_release(datetime.utcnow())
+    ref_time = datetime(2021, 7, 18, 6)
 
     directory = './data'
+    write_forecast_hours(ref_time, directory)    
 
-    for step in ds['step'].values:
-        make_zoom_levels(ds, directory)
+    step_paths = make_zoom_levels(ref_time, directory)    
 
-    for lat, lat_slice in ds.groupby('latitude'):
-        for lon, point in lat_slice.groupby('longitude'):
-            make_spot(point.squeeze('latitude'), './data/spot/%.3f_%.3f.bin' % (lon, lat))
+    make_all_spots(step_paths)
 
 
 if __name__ == "__main__":
