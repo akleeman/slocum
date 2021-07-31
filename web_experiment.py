@@ -61,7 +61,7 @@ def serial_apply(f, arguments):
 
 
 def parallel_apply(f, arguments):
-    pool = mp.Pool(4)
+    pool = mp.Pool(8)
 
     results = []
     def collect_result(result):
@@ -442,7 +442,7 @@ def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory
     return path
 
 
-def make_zoom_levels(ref_time, output_directory, download_directory=None, parallel=True):
+def make_zoom_levels(ref_time, output_directory, download_directory=None, parallel=False):
 
     arguments = [(ref_time, fcst_hour, output_directory, download_directory)
                  for fcst_hour in FCST_RELEASE_TIMES]
@@ -462,7 +462,7 @@ def write_forecast_hours(ref_time, directory):
 def main():
 
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
-    # ref_time = nearest_fcst_release(datetime.utcnow())
+    #ref_time = nearest_fcst_release(datetime.utcnow())
     ref_time = datetime(2021, 7, 18, 6)
 
     directory = './data'

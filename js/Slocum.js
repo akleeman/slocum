@@ -574,7 +574,6 @@ function LoadForecastTimes(map) {
       parseForecastTimes(bytes);
       
       sliderControl = L.control.timeSlider({
-        position: "topright",
         refTime: REF_TIME,
         hours: FCST_HOURS
       });
