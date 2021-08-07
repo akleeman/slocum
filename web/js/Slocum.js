@@ -405,6 +405,16 @@ function BuildWindCircle(lat, lon, speeds, directions, radius) {
 
   outline.bindPopup(SpotPlot);    
 
+  outline.on("click", function (x) {
+    console.log(x)
+    
+    var div = d3.select("#id")
+    LoadSpot(SpotPath(x.latlng.lat, x.latlng.lng), function (x) {
+    PopulateHeatMap(x, div);
+  })
+    
+  });
+
   components.push(outline)
   return components;
 }

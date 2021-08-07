@@ -462,8 +462,8 @@ def write_forecast_hours(ref_time, directory):
 def main():
 
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
-    #ref_time = nearest_fcst_release(datetime.utcnow())
-    ref_time = datetime(2021, 7, 18, 6)
+    ref_time = nearest_fcst_release(datetime.utcnow())
+    #ref_time = datetime(2021, 7, 18, 6)
 
     directory = './data'
     write_forecast_hours(ref_time, directory)    
