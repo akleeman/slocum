@@ -49,12 +49,16 @@ function LoadFile(path, parser) {
   var request = new XMLHttpRequest();
   request.open("GET", path, true);
   request.responseType = "arraybuffer";
-  //request.setRequestHeader("Content-type","application/zip");
-
+  console.log(path)
   request.onload = function () {
-    if (request.response) {
+    if (request.readyState==4 &&
+        request.status==200 &&
+        request.response) {
       var byteArray = new Uint8Array(request.response);
       parser(byteArray);
+    } else {
+      console.log("failure loading:", path)
+      console.log(request)
     }
   };
 
@@ -114,7 +118,7 @@ function DecodePackedPoint(x) {
   var n_members = (x.length - 8) / 2
   speeds = x.subarray(8, 8 + n_members);
   directions = x.subarray(8 + n_members, 8 + 2 * n_members);
-  return {'lat': lat, 'lon': lon, 'speeds': speeds, 'directions': directions}
+  return {'lat': lat, 'lon': lon - 360, 'speeds': speeds, 'directions': directions}
 }
 
 

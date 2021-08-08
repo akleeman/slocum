@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import zlib
 import shutil
@@ -46,8 +47,8 @@ velocity_colors = [
 ]
 
 GEFS_MEMBERS = 31
-FCST_RELEASE_TIMES = list(range(0, 240, 3))
-#FCST_RELEASE_TIMES = list(range(0, 9, 3))
+#FCST_RELEASE_TIMES = list(range(0, 241, 3))
+FCST_RELEASE_TIMES = list(range(0, 9, 3))
 
 
 def list_of_tuples(xs):
@@ -130,7 +131,6 @@ def download_one_file(member, ref_time, fcst_hour, directory):
         try:
             with urllib.request.urlopen(url) as response, open(output_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
-                print("Downloaded: ", output_path)
         except:
             print("Failure Downloading: ", url)
             raise
@@ -219,13 +219,14 @@ def shrink(ds):
 def download_members(ref_time, fcst_hour, directory=None):
 
     if directory is None:
-        directory = ref_time.strftime('./%Y%d%m_%H')
+        directory = ref_time.strftime('./%Y%m%d_%H')
         if not os.path.exists(directory):
             os.mkdir(directory)
 
     combined_path = '%s_%.3d.nc' % (ref_time.strftime('%Y%d%m_%H'), fcst_hour)
     combined_path = os.path.join(directory, combined_path)
     if not os.path.exists(combined_path):
+        import ipdb; ipdb.set_trace()
         paths = [download_one_file(member, ref_time, fcst_hour, directory)
                  for member in range(GEFS_MEMBERS)]
         ds = xra.concat([normalize(xra.open_dataset(p, engine='cfgrib'))
@@ -298,6 +299,7 @@ def make_compressed(speeds, directions, path):
     with open(path, 'wb') as f:
         f.write(bytes)
 
+    return
 
 
 def make_spot(speeds, directions, hours, path):
@@ -310,10 +312,11 @@ def make_spot(speeds, directions, hours, path):
 
 
 
-def make_spots(ds):
+def make_spots(ds, directory):
     speeds = ds['speed']
     directions = ds['direction']
     hours = ds['step'].values.astype('timedelta64[h]')
+    Path(directory).mkdir(parents=True, exist_ok=True)
         
     lats = speeds.coords['latitude'].values
     lons = speeds.coords['longitude'].values
@@ -323,9 +326,10 @@ def make_spots(ds):
     directions = directions.values
     for i, lat in enumerate(lats):
         for j, lon in enumerate(lons):
+            path = os.path.join(directory, '%.3f_%.3f.bin' % (lon, lat))
             make_spot(speeds[:, :, i, j],
                       directions[:, :, i, j],
-                      hours, './data/spot/%.3f_%.3f.bin' % (lon, lat))
+                      hours, path)
 
 
 def make_slices(x, k):
@@ -376,21 +380,25 @@ def split_into_chunks(paths):
     return output
 
 
-def make_spots_one_chunk(chunk_dir):
-    print("Making spots : ", chunk_dir)
+def make_spots_one_chunk(chunk_dir, data_dir):
+    spot_dir = os.path.join(data_dir, 'spot')
+    print("Making spots : ", chunk_dir, spot_dir)
     ds = xra.open_mfdataset(os.path.join(chunk_dir, '*.nc'),
                             concat_dim='step')
     ds.load()
-    make_spots(ds)
+    make_spots(ds, spot_dir)
 
 
-def make_all_spots(paths):
+def make_all_spots(paths, spot_directory):
     chunk_directories = split_into_chunks(paths)
-    arguments = [(x,) for x in chunk_directories]
-    parallel_apply(make_spots_one_chunk, arguments)
+    arguments = [(x, spot_directory) for x in chunk_directories]
+    serial_apply(make_spots_one_chunk, arguments)
     
 
 def make_zoom_level_one_step(ds, directory, zoom, spacing):
+    if 'step' in ds['speed'].dims:
+        ds = ds.squeeze('step')
+        
     number_of_tiles = 2 ** (zoom - 1)
 
     ds = ds.isel(latitude=slice(0, ds.dims['latitude'], spacing),
@@ -414,8 +422,11 @@ def make_zoom_level_one_step(ds, directory, zoom, spacing):
     assert(ds['lat_bin'].values.max() < number_of_tiles)
 
     fcst_hour = ds['step'].values.astype('timedelta64[h]').astype('int')
+    assert(fcst_hour.size == 1)
+    fcst_hour = fcst_hour.item()
+
     sub_dir = os.path.join(directory, str(zoom), str(fcst_hour))
-    Path(sub_dir).mkdir(parents=True, exist_ok=True)    
+    Path(sub_dir).mkdir(parents=True, exist_ok=True)
 
     for lon_bin, lon_df in ds.groupby('lon_bin'):
         for lat_bin, tile_df in lon_df.groupby('lat_bin'):
@@ -425,6 +436,7 @@ def make_zoom_level_one_step(ds, directory, zoom, spacing):
 
 
 def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory, download_directory):
+    print("Downloading: ", fcst_hour)
     path = download_members(ref_time, fcst_hour, download_directory)
 
     zoom_levels = {
@@ -434,15 +446,17 @@ def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory
       7: 2,
       8: 1,
     }
-
-    print("Forecast hour: ", fcst_hour)
+    
+    ds = xra.load_dataset(path)
+  
+    print("Compressing: ", fcst_hour)
     #[make_zoom_level_one_step(ds, output_directory, zoom, spacing)
     # for zoom, spacing in zoom_levels.items()]
 
     return path
 
 
-def make_zoom_levels(ref_time, output_directory, download_directory=None, parallel=False):
+def make_zoom_levels(ref_time, output_directory, download_directory=None, parallel=True):
 
     arguments = [(ref_time, fcst_hour, output_directory, download_directory)
                  for fcst_hour in FCST_RELEASE_TIMES]
@@ -452,6 +466,7 @@ def make_zoom_levels(ref_time, output_directory, download_directory=None, parall
 
 
 def write_forecast_hours(ref_time, directory):
+    Path(directory).mkdir(parents=True, exist_ok=True)    
     with open(os.path.join(directory, 'time.bin'), 'wb') as f:
         f.write(struct.pack('I', int(ref_time.timestamp())))
         f.write(struct.pack('I', len(FCST_RELEASE_TIMES)))
@@ -462,15 +477,15 @@ def write_forecast_hours(ref_time, directory):
 def main():
 
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
-    ref_time = nearest_fcst_release(datetime.utcnow())
-    #ref_time = datetime(2021, 7, 18, 6)
+    #ref_time = nearest_fcst_release(datetime.utcnow())
+    ref_time = datetime(2021, 8, 7, 12)
 
-    directory = './data'
-    write_forecast_hours(ref_time, directory)    
+    data_directory = './data'
+    write_forecast_hours(ref_time, data_directory)    
 
-    step_paths = make_zoom_levels(ref_time, directory)    
+    step_paths = make_zoom_levels(ref_time, data_directory)    
 
-    make_all_spots(step_paths)
+    make_all_spots(step_paths, data_directory)
 
 
 if __name__ == "__main__":
