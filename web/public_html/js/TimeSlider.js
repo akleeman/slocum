@@ -79,13 +79,7 @@ L.Control.TimeSlider = L.Control.extend({
     },
 
     onRemove: function (map) {
-        //Delete all markers which where added via the slider and remove the slider div
-        for (i = this.options.minValue; i <= this.options.maxValue; i++) {
-            //map.removeLayer(this.options.markers[i]);
-        }
         $('#leaflet-slider').remove();
-
-        // unbind listeners to prevent memory leaks
         $(document).off("mouseup");
         $(".slider").off("mousedown");
     },
@@ -121,9 +115,9 @@ L.Control.TimeSlider = L.Control.extend({
                 }
             }
         });
-        //if (!_options.range && _options.alwaysShowDate) {
-        //    $('#slider-timestamp').html(_extractTimeStamp(ui.value, _options));
-        //}
+        if (!_options.range && _options.alwaysShowDate) {
+            $('#slider-timestamp').html(_extractTimestamp(0, _options));
+        }
     }
 });
 

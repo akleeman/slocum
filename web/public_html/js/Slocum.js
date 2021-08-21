@@ -24,6 +24,11 @@ VELOCITY_COLORS = [
 var REF_TIME = undefined;
 var FCST_HOURS = undefined;
 
+Date.prototype.addHours = function(h) {
+  this.setTime(this.getTime() + (h*60*60*1000));
+  return this;
+}
+
 function DecodeFloat32(x) {
   var buf = new ArrayBuffer(4);
   var view = new DataView(buf);
@@ -251,33 +256,37 @@ function PopulateHeatMap(bytes, div) {
       }});
   
   var speeds = new Set()  
-  var days = new Set()
+  var hours = new Set()
   var tickValues = new Set()
   for (i in data) {
     speeds.add(data[i].speed)
-    days.add(data[i].hour)
+    hours.add(data[i].hour)
     tickValues.add(data[i].hour - data[i].hour % 24.)
   }
   
   speeds = Array.from(speeds);
-  days = Array.from(days);
+  hours = Array.from(hours);
   tickValues = Array.from(tickValues);
 
   tickFormat = function(x) {
     return x / 24.;
   };
 
-  // Build X scales and axis:
-  var x = d3.scaleBand()
-    .range([ 0, width ])
-    .domain(days)
-    .padding(0.01);
-
+  var hour_max = d3.max(data, function(d) {
+        return d.hour;
+      });
+  var date_max = new Date(REF_TIME);
+  date_max.addHours(hour_max)
+      
+  var x = d3.scaleTime()
+    .domain([REF_TIME, date_max])
+    .range([0, width])
+    
   svg.append("g")
     .attr("transform", "translate(0," + height + ")")
     .call(d3.axisBottom(x)
-          .tickValues(tickValues)
-          .tickFormat(tickFormat))
+          .ticks(d3.timeDay, 1)
+          .tickFormat(d3.timeFormat("%a %d")))
 
   var y = d3.scaleBand()
     .range([ height, 0 ])
@@ -297,12 +306,15 @@ function PopulateHeatMap(bytes, div) {
       .enter()
       .append("rect")
       .attr("x", function(d) {
-        return x(d.hour) + 0.5 * x.bandwidth()
+        var date = new Date(REF_TIME);
+        date.addHours(d.hour);
+        var val = x(date);
+        return val;
       })
       .attr("y", function(d) {
         return y(d.speed) - 0.5 * y.bandwidth()
       })
-      .attr("width", x.bandwidth() )
+      .attr("width", width / hours.length)
       .attr("height", y.bandwidth() )
       .style("fill", function(d) {
         return colors(d.directions.length)
@@ -360,7 +372,18 @@ function PopulateHeatMap(bytes, div) {
     .on("mousemove", mousemove)
     .on("mouseleave", mouseleave)
     .on("click", click)
-      
+
+  var now = new Date();
+  var x_now = x(now);
+
+  svg.append("line")
+    .style("stroke", "red")
+    .attr('x1', x_now)
+    .attr('x2', x_now)
+    .attr('y1', 0)
+    .attr('y2', height)
+    .style('stroke-width', 2)
+
   svg.append("text")
       .attr("class", "y label")
       .attr("text-anchor", "end")
@@ -380,7 +403,18 @@ function PopulateHeatMap(bytes, div) {
 
 function SpotPlot(x) {
   
-  x.options.color = "#CC5500"
+  var half_edge = GetGridSize(this._map.getZoom()) / 2.;
+  
+  var square = L.polygon([
+          [x._latlng.lat - half_edge, x._latlng.lng - half_edge],
+          [x._latlng.lat + half_edge, x._latlng.lng - half_edge],
+          [x._latlng.lat + half_edge, x._latlng.lng + half_edge],
+          [x._latlng.lat - half_edge, x._latlng.lng + half_edge]
+      ], {color: "#cc2900", fillOpacity:0.2, stroke:true});
+
+  square.layerID = "highlight"
+  
+  L.layerGroup([square]).addTo(map);
 
   var div = d3.create("div");
 
@@ -416,6 +450,16 @@ function BuildWindCircle(lat, lon, speeds, directions, radius) {
     })
 
   outline.bindPopup(SpotPlot);    
+
+  var remove_highlight = function(e) {
+    map.eachLayer(function(l) {
+      if (l.layerID == "highlight") {
+        map.removeLayer(l)
+      }
+    });
+  }
+  
+  outline.on("popupclose", remove_highlight)
 
   components.push(outline)
   return components;
@@ -457,28 +501,7 @@ function DrawAll(data, radius) {
 
 
 
-function GetRadius(zoom) {
-  if (zoom <= 3) {
-    radius = 2.56;
-  } else if (zoom <= 4) {
-    radius = 1.28;
-  } else if (zoom <= 5) {
-    radius = 0.64;
-  } else if (zoom <= 6) {
-    radius = 0.32;
-  } else if (zoom <= 7) {
-    radius = 0.16;
-  } else {
-    radius = 0.08
-  }
-  return radius
-}
-
-
-function Draw(m, data) {
-  var bounds = m.getBounds();
-  var zoom = m.getZoom();
-
+function GetGridSize(zoom) {
   var grid_size = 0.25;
   if (zoom <= 3) {
     grid_size = 8;
@@ -491,9 +514,21 @@ function Draw(m, data) {
   } else if (zoom < 8) {
     grid_size = 0.5;
   }
+  return grid_size
+}
+
+function GetRadius(zoom) {
+  return GetGridSize(zoom) / 3.;
+}
+
+
+function Draw(m, data) {
+  var bounds = m.getBounds();
+  var zoom = m.getZoom();
+
+  var grid_size = GetGridSize(zoom);
   
   var radius = GetRadius(zoom);
-  var radius = grid_size / 4;
 
   var only_visible = [];
   for (i in data) {
@@ -626,6 +661,7 @@ function LoadForecastTimes(map) {
       parseForecastTimes(bytes);
       
       sliderControl = L.control.timeSlider({
+        position: "bottomleft",
         refTime: REF_TIME,
         hours: FCST_HOURS
       });
@@ -637,7 +673,6 @@ function LoadForecastTimes(map) {
     
     LoadFile(path, parseAndLoad)
 }
-
 
 function initializeSlocum(map) {
 
