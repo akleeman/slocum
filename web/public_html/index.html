@@ -50,7 +50,7 @@ var preloaded_data = []
 var map = L.map('map', {
     minZoom: 2,
     maxZoom: 12,
-  }).setView([38, 0], 7);
+  }).setView([38, -122], 7);
 
 var index = 0
 
@@ -70,11 +70,10 @@ initializeSlocum(map);
 if (window.navigator.geolocation) {
   set_view = function(e) {
       var lat_lon = [e.coords.latitude, e.coords.longitude];
-      console.log(lat_lon);
-      map.setView([38, 235], 7);
+      map.setView(lat_lon, 7);
   }
   window.navigator.geolocation
-    .getCurrentPosition(console.log, console.log);
+    .getCurrentPosition(set_view, console.log);
 }
 
 </script>

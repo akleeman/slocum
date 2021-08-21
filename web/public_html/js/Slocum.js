@@ -49,7 +49,6 @@ function LoadFile(path, parser) {
   var request = new XMLHttpRequest();
   request.open("GET", path, true);
   request.responseType = "arraybuffer";
-  console.log(path)
   request.onload = function () {
     if (request.readyState==4 &&
         request.status==200 &&
@@ -118,7 +117,7 @@ function DecodePackedPoint(x) {
   var n_members = (x.length - 8) / 2
   speeds = x.subarray(8, 8 + n_members);
   directions = x.subarray(8 + n_members, 8 + 2 * n_members);
-  return {'lat': lat, 'lon': lon - 360, 'speeds': speeds, 'directions': directions}
+  return {'lat': lat, 'lon': lon, 'speeds': speeds, 'directions': directions}
 }
 
 
@@ -142,11 +141,20 @@ function DecodePackedSpot(x) {
   return {'hours': hours, 'speeds': speeds, 'directions': directions}
 }
 
+function validLongitude(lon) {
+  lon = lon % 360.
+  if (lon < 0) {
+    lon += 360.
+  }
+  return lon
+}
+
 function SpotPath(lat, lon) {
   lat = lat.toFixed(3);
-  lon = lon.toFixed(3);
-  console.log(`${lat}_${lon}.bin`)
-  return `data/spot/${lon}_${lat}.bin`;
+  lon = validLongitude(lon % 360.).toFixed(3);
+  path = `data/spot/${lon}_${lat}.bin`;
+  console.log(path)
+  return path
 }
 
 function binnedData(bytes) {
@@ -409,16 +417,6 @@ function BuildWindCircle(lat, lon, speeds, directions, radius) {
 
   outline.bindPopup(SpotPlot);    
 
-  outline.on("click", function (x) {
-    console.log(x)
-    
-    var div = d3.select("#id")
-    LoadSpot(SpotPath(x.latlng.lat, x.latlng.lng), function (x) {
-    PopulateHeatMap(x, div);
-  })
-    
-  });
-
   components.push(outline)
   return components;
 }
@@ -509,6 +507,16 @@ function Draw(m, data) {
 }
 
 
+function fitToBounds(data, bounds) {
+  var mid = 0.5 * (bounds.getWest() + bounds.getEast())
+  for (i in data) {
+    var offset = Math.round((data[i]['lon'] - mid) / 360.)
+    data[i]['lon'] -= offset * 360;
+  }
+  return data;
+}
+
+
 L.GridLayer.WindCircles = L.GridLayer.extend({
 
    	initialize: function (options) {
@@ -568,10 +576,12 @@ L.GridLayer.WindCircles = L.GridLayer.extend({
         this.m_tileLayers[id] = layer;
     
         path = `./data/${coords.z}/${HOUR}/${coords.x}_${coords.y}.bin`;
- 
+        
+        var bounds = this._map.getBounds();
         LoadFile(path,  function (bytes) {
           var data = ParseSlocum(bytes);
-          circles = DrawAll(ParseSlocum(bytes), GetRadius(coords.z));
+          data = fitToBounds(data, bounds);
+          circles = DrawAll(data, GetRadius(coords.z));
           L.layerGroup(circles).addTo(layer);
           done(error, tile);
         });
@@ -620,7 +630,6 @@ function LoadForecastTimes(map) {
         hours: FCST_HOURS
       });
 
-      //Make sure to add the slider to the map ;-)
       map.addControl(sliderControl);
       //And initialize the slider
       sliderControl.startSlider();
