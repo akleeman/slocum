@@ -47,8 +47,8 @@ velocity_colors = [
 ]
 
 GEFS_MEMBERS = 31
-#FCST_RELEASE_TIMES = list(range(0, 241, 3))
-FCST_RELEASE_TIMES = list(range(0, 9, 3))
+FCST_RELEASE_TIMES = list(range(0, 170, 3))
+#FCST_RELEASE_TIMES = list(range(0, 9, 3))
 
 
 def list_of_tuples(xs):
@@ -62,7 +62,7 @@ def serial_apply(f, arguments):
 
 
 def parallel_apply(f, arguments):
-    pool = mp.Pool(8)
+    pool = mp.Pool(2)
 
     results = []
     def collect_result(result):
@@ -131,6 +131,7 @@ def download_one_file(member, ref_time, fcst_hour, directory):
         try:
             with urllib.request.urlopen(url) as response, open(output_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
+            print("Downloaded: ", output_path)
         except:
             print("Failure Downloading: ", url)
             raise
@@ -200,49 +201,33 @@ def normalize(x):
     x = x.drop_vars(['u10', 'v10'])
 
     x['speed'] = convert_units(speed, 'knots')
-    #x['speed'] = to_beaufort(x['speed'])
-
     x['direction'] = direction
-    #integer_direction = np.digitize(direction.values.reshape(-1), dir_bins).reshape(direction.shape)
-    #x['direction'] = (direction.dims, integer_direction.astype('u8'), {'units': 'direction'})
 
     return x
 
 
 def shrink(ds):
-    ds = ds.sel(latitude=slice(65, -65))
+    ds = ds.sel(latitude=slice(80, -80))
     ds['speed'] = to_beaufort(ds['speed'])    
     ds['direction'] = to_integer_direction(ds['direction'])
     return ds.expand_dims('step')
 
 
-def download_members(ref_time, fcst_hour, directory=None):
+def download_members(ref_time, fcst_hour, output_path):
 
-    if directory is None:
-        directory = ref_time.strftime('./%Y%m%d_%H')
-        if not os.path.exists(directory):
-            os.mkdir(directory)
-
-    combined_path = '%s_%.3d.nc' % (ref_time.strftime('%Y%d%m_%H'), fcst_hour)
-    combined_path = os.path.join(directory, combined_path)
-    if not os.path.exists(combined_path):
-        import ipdb; ipdb.set_trace()
-        paths = [download_one_file(member, ref_time, fcst_hour, directory)
+    if not os.path.exists(output_path):
+        download_directory = os.path.dirname(output_path)
+        paths = [download_one_file(member, ref_time, fcst_hour,
+                                   download_directory)
                  for member in range(GEFS_MEMBERS)]
         ds = xra.concat([normalize(xra.open_dataset(p, engine='cfgrib'))
                          for p in paths],
                         dim='member')
         ds = shrink(ds)
-        ds.to_netcdf(combined_path, encoding={'speed': {'zlib': True},
+        ds.to_netcdf(output_path, encoding={'speed': {'zlib': True},
                                               'direction': {'zlib': True}})
         
-    return combined_path
-
-
-def download(ref_time, directory=None):
-
-    return [download_members(ref_time, fcst_hour, directory)
-            for fcst_hour in FCST_RELEASE_TIMES]
+    return output_path
 
 
 def open_files(nc_paths):
@@ -435,9 +420,10 @@ def make_zoom_level_one_step(ds, directory, zoom, spacing):
             make_compressed(tile_df["speed"], tile_df["direction"], path)
 
 
-def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory, download_directory):
+def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory, combined_path):
     print("Downloading: ", fcst_hour)
-    path = download_members(ref_time, fcst_hour, download_directory)
+    
+    download_members(ref_time, fcst_hour, combined_path)
 
     zoom_levels = {
       4: 16,
@@ -447,22 +433,30 @@ def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory
       8: 1,
     }
     
-    ds = xra.load_dataset(path)
+    ds = xra.load_dataset(combined_path)
   
     print("Compressing: ", fcst_hour)
-    #[make_zoom_level_one_step(ds, output_directory, zoom, spacing)
-    # for zoom, spacing in zoom_levels.items()]
-
-    return path
+    [make_zoom_level_one_step(ds, output_directory, zoom, spacing)
+     for zoom, spacing in zoom_levels.items()]
 
 
 def make_zoom_levels(ref_time, output_directory, download_directory=None, parallel=True):
 
-    arguments = [(ref_time, fcst_hour, output_directory, download_directory)
+    if download_directory is None:
+        download_directory = ref_time.strftime('./%Y%m%d_%H')
+        Path(download_directory).mkdir(parents=True, exist_ok=True)
+
+    def get_output_path(hour):
+        path = '%s_%.3d.nc' % (ref_time.strftime('%Y%d%m_%H'), hour)
+        return os.path.join(download_directory, path)
+
+    arguments = [(ref_time, fcst_hour, output_directory, get_output_path(fcst_hour))
                  for fcst_hour in FCST_RELEASE_TIMES]
 
     apply_func = parallel_apply if parallel else serial_apply
-    return apply_func(download_and_make_zoom_levels_one_step, arguments)
+    apply_func(download_and_make_zoom_levels_one_step, arguments)
+    
+    return [path for _, _, _, path in arguments]
 
 
 def write_forecast_hours(ref_time, directory):
@@ -477,8 +471,8 @@ def write_forecast_hours(ref_time, directory):
 def main():
 
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
-    #ref_time = nearest_fcst_release(datetime.utcnow())
-    ref_time = datetime(2021, 8, 7, 12)
+    ref_time = nearest_fcst_release(datetime.utcnow())
+    #ref_time = datetime(2021, 8, 7, 12)
 
     data_directory = './data'
     write_forecast_hours(ref_time, data_directory)    
