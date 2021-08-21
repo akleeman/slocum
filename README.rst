@@ -10,6 +10,8 @@ specific compression algorithm which results in forecasts attachments
 that are the fraction of the size of `saildoc <http://www.saildocs.com/>`_
 forecasts.
 
+Beta Web Version: http://www.ensembleweather.com/
+
 Why the name **slocum**?
 ------------------------
 
