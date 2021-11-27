@@ -384,7 +384,7 @@ def split_into_chunks(paths, download_dir):
     def make_chunk_directories():
         for i in range(len(lat_slices)):
             for j in range(len(lon_slices)):
-                directory = get_chunk_dir(i, j)
+                directory = get_chunk_dir(i, j, download_dir)
                 if os.path.exists(directory):
                     shutil.rmtree(directory)
                 Path(directory).mkdir(parents=True, exist_ok=False)
@@ -494,7 +494,7 @@ def make_zoom_levels(ref_time, output_directory, download_directory=None, n_cpu=
 
     serial_apply(download_and_make_zoom_levels_one_step, arguments)
     
-    return [path for _, _, _, path, _ in arguments]
+    return [path for _, _, _, path, _, _ in arguments]
 
 
 def write_forecast_hours(ref_time, directory):
