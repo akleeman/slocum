@@ -361,21 +361,21 @@ def make_slices(x, k):
         i += chunk.size
 
 
-def get_chunk_dir(i, j):
-    return './chunks/{}_{}'.format(i, j)
+def get_chunk_dir(i, j, root_dir="./"):
+    return os.path.join(root_dir, 'chunks/{}_{}'.format(i, j))
 
 
-def split_one_dataset(path, lat_slices, lon_slices):
+def split_one_dataset(path, lat_slices, lon_slices, root_dir):
     print("Splitting : ", path)
     ds = xra.load_dataset(path)
     for i, lat_slice in enumerate(lat_slices):
         for j, lon_slice in enumerate(lon_slices):
             fcst_hour = ds['step'].values.item()
-            output_path = os.path.join(get_chunk_dir(i, j), '{}.nc'.format(fcst_hour))
+            output_path = os.path.join(get_chunk_dir(i, j, root_dir), '{}.nc'.format(fcst_hour))
             ds.isel(latitude=lat_slice, longitude=lon_slice).to_netcdf(output_path)
 
 
-def split_into_chunks(paths):
+def split_into_chunks(paths, download_dir):
     
     peek = xra.open_dataset(paths[0])
     lat_slices = list(make_slices(peek['latitude'].values, 10))
@@ -392,7 +392,7 @@ def split_into_chunks(paths):
 
     output = list(make_chunk_directories())
 
-    arguments = [(p, lat_slices, lon_slices) for p in paths]
+    arguments = [(p, lat_slices, lon_slices, download_dir) for p in paths]
 
     maybe_parallel_apply(split_one_dataset, arguments)
 
@@ -407,8 +407,8 @@ def make_spots_one_chunk(chunk_dir, data_dir):
     make_spots(ds, spot_dir)
 
 
-def make_all_spots(paths, data_dir, keep_cache, n_cpu):
-    chunk_directories = split_into_chunks(paths)
+def make_all_spots(paths, data_dir, keep_cache, n_cpu, download_dir):
+    chunk_directories = split_into_chunks(paths, download_dir)
     arguments = [(x, data_dir) for x in chunk_directories]
 
     serial_apply(make_spots_one_chunk, arguments)
@@ -479,14 +479,15 @@ def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory
 
 
 def make_zoom_levels(ref_time, output_directory, download_directory=None, n_cpu=1, keep_cache=False):
-
     if download_directory is None:
-        download_directory = ref_time.strftime('./%Y%m%d_%H')
-        Path(download_directory).mkdir(parents=True, exist_ok=True)
+        download_directory = "./"
+
+    date_dir = os.path.join(download_directory, ref_time.strftime('%Y%m%d_%H'))
+    Path(date_dir).mkdir(parents=True, exist_ok=True)
 
     def get_output_path(hour):
         path = '%s_%.3d.nc' % (ref_time.strftime('%Y%d%m_%H'), hour)
-        return os.path.join(download_directory, path)
+        return os.path.join(date_dir, path)
 
     arguments = [(ref_time, fcst_hour, output_directory, get_output_path(fcst_hour), n_cpu, keep_cache)
                  for fcst_hour in FCST_RELEASE_TIMES]
@@ -514,11 +515,13 @@ def main(args):
     write_forecast_hours(ref_time, data_directory)    
 
     step_paths = make_zoom_levels(ref_time, data_directory,
+                                  download_directory=args.download_dir,
                                   n_cpu=args.p,
                                   keep_cache=args.cache)    
 
     make_all_spots(step_paths, data_directory,
-                   keep_cache=args.cache, n_cpu=args.p)
+                   keep_cache=args.cache, n_cpu=args.p,
+                   download_dir=args.download_dir)
 
     if not args.cache:
         [os.remove(p) for p in step_paths if os.path.exists(p)]
@@ -528,4 +531,5 @@ if __name__ == "__main__":
     p.add_argument('--p', default=1, type=int)
     p.add_argument('--cache', default=False, action="store_true")
     p.add_argument('--output', default="./data")
+    p.add_argument('--download-dir', default="./")
     main(p.parse_args())
