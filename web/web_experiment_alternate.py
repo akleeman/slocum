@@ -49,9 +49,7 @@ velocity_colors = [
 ]
 
 GEFS_MEMBERS = 31
-#FCST_RELEASE_TIMES = list(range(0, 170, 3))
-FCST_RELEASE_TIMES = list(range(0, 9, 3))
-
+FCST_RELEASE_TIMES = list(range(0, 170, 3))
 
 def list_of_tuples(xs):
     if isinstance(xs[0], tuple):
