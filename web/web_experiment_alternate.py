@@ -245,7 +245,7 @@ def download_members(ref_time, fcst_hour, output_path, n_cpu, keep_cache):
     else:
         download_directory = os.path.dirname(output_path)
         
-        ags = [(member, ref_time, fcst_hour, download_directory)
+        args = [(member, ref_time, fcst_hour, download_directory)
                for member in range(GEFS_MEMBERS)]
         paths = maybe_parallel_apply(download_one_file, args)
         
