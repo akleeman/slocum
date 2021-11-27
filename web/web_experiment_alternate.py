@@ -532,4 +532,10 @@ if __name__ == "__main__":
     p.add_argument('--cache', default=False, action="store_true")
     p.add_argument('--output', default="./data")
     p.add_argument('--download-dir', default="./")
+    p.add_argument('--hours', default=None, type=int)
+
+    ARGS = p.parse_args()
+    if ARGS.hours:
+        FCST_RELEASE_TIMES = list(range(0, ARGS.hours, 3))
+
     main(p.parse_args())
