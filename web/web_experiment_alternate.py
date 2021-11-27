@@ -510,7 +510,7 @@ def main(args):
     # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
     ref_time = nearest_fcst_release(datetime.utcnow())
 
-    data_directory = './data'
+    data_directory = args.output
     write_forecast_hours(ref_time, data_directory)    
 
     step_paths = make_zoom_levels(ref_time, data_directory,
@@ -527,4 +527,5 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument('--p', default=1, type=int)
     p.add_argument('--cache', default=False, action="store_true")
+    p.add_argument('--output', default="./data")
     main(p.parse_args())
