@@ -80,15 +80,82 @@ def parallel_apply(f, arguments):
     return sorted(results)
 
 
+def convert_units_lazy(da, target_units):
+    """
+    Dask-compatible unit conversion that maintains laziness.
+    
+    Parameters:
+    -----------
+    da : xarray.DataArray
+        DataArray with units to convert
+    target_units : str
+        Target units to convert to
+        
+    Returns:
+    --------
+    xarray.DataArray
+        New DataArray with converted units (dask-backed if input was dask-backed)
+    """
+    if 'units' not in da.attrs:
+        raise ValueError("No units found in DataArray attributes")
+    
+    current_units = da.attrs['units']
+    
+    # Find conversion factor from slocum units
+    from slocum.lib.units import _all_units
+    conversion_factor = None
+    
+    for (possible_units, _, _) in _all_units:
+        if current_units in possible_units and target_units in possible_units:
+            conversion_factor = possible_units[current_units] / possible_units[target_units]
+            break
+    
+    if conversion_factor is None:
+        raise ValueError(f"Cannot convert from {current_units} to {target_units}")
+    
+    # If conversion factor is 1, just update attributes
+    if conversion_factor == 1.0:
+        new_da = da.copy()
+        new_da.attrs = da.attrs.copy()
+        new_da.attrs['units'] = target_units
+        return new_da
+    
+    # For dask arrays, use map_blocks to maintain laziness
+    if hasattr(da.data, 'map_blocks'):
+        def convert_block(block):
+            return block * conversion_factor
+        
+        converted_data = da.data.map_blocks(
+            convert_block,
+            dtype=da.dtype,
+            drop_axis=None
+        )
+    else:
+        # For non-dask arrays, direct multiplication
+        converted_data = da.data * conversion_factor
+    
+    # Create new DataArray with converted data
+    new_attrs = da.attrs.copy()
+    new_attrs['units'] = target_units
+    
+    return xra.DataArray(
+        converted_data,
+        dims=da.dims,
+        coords=da.coords,
+        attrs=new_attrs,
+        name=da.name
+    )
+
+
 def vector_to_radial(u, v, orientation='to'):
     """
     Converts from a vector variable with zonal (u) and
     meridianal (v) components to magnitude and direction
-    from north.
+    from north. Dask-compatible.
     """
     assert orientation in ['from', 'to']
-    # convert to magnitudes
-    magnitude = np.sqrt(np.power(u, 2) + np.power(v, 2))
+    # convert to magnitudes - works with dask arrays
+    magnitude = np.sqrt(u**2 + v**2)
     direction = np.arctan2(u, v)
     if orientation == 'from':
         # note this is like: direction + pi but with modulo between
@@ -108,7 +175,7 @@ def find_latest_zarr_source(source_name=DEFAULT_SOURCE):
     return source_url
 
 
-def save_wind_locally(source_name=DEFAULT_SOURCE, output_path=None, variables=None):
+def fetch_wind_data(source_name=DEFAULT_SOURCE, variables=None):
     """
     Fetch wind data from zarr source and convert to speed/direction.
     
@@ -148,10 +215,6 @@ def save_wind_locally(source_name=DEFAULT_SOURCE, output_path=None, variables=No
 
     for var in in_ds.data_vars:
         in_ds[var] = in_ds[var].astype('float16')
-
-    print(f"Saving to zarr: {output_path}")
-    with ProgressBar():
-        in_ds.to_zarr(output_path, mode='w', consolidated=True)
 
     return in_ds
 
@@ -258,9 +321,6 @@ def compress_wind_data(ds):
     
     ds_compressed = ds.copy()
     
-    # Reduce latitude domain to exclude poles using standard coordinate name
-    ds_compressed = ds_compressed.sel(**{conventions.LATITUDE: slice(80, -80)})
-    
     # Get wind component names from the dataset
     u_name, v_name = conventions.get_wind_component_names(ds_compressed)
     
@@ -274,8 +334,8 @@ def compress_wind_data(ds):
         # Convert from m/s to knots if needed
         if u_wind.attrs.get('units', '') == 'm/s':
             print("Converting wind from m/s to knots")
-            u_wind = convert_units(u_wind, 'm/s', 'knots')
-            v_wind = convert_units(v_wind, 'm/s', 'knots')
+            u_wind = convert_units_lazy(u_wind, 'knots')
+            v_wind = convert_units_lazy(v_wind, 'knots')
         
         # Convert to speed and direction
         print("Converting to speed and direction...")
@@ -289,6 +349,7 @@ def compress_wind_data(ds):
             attrs={'units': 'knots', 'long_name': 'Wind speed'},
             name=conventions.WIND_SPEED
         )
+        
         
         direction_da = xra.DataArray(
             direction,
@@ -305,7 +366,7 @@ def compress_wind_data(ds):
         print("Applying integer direction compression...")
         direction_compressed = to_integer_direction(direction_da)
         
-        # Create compressed data arrays
+        # Create compressed data arrays with preserved chunking
         ds_compressed[conventions.WIND_SPEED] = xra.DataArray(
             speed_compressed[1],  # data
             dims=speed_compressed[0],  # dims
@@ -313,6 +374,8 @@ def compress_wind_data(ds):
             attrs=speed_compressed[2],  # attrs
             name=conventions.WIND_SPEED
         )
+        # Preserve chunking from original u_wind
+        ds_compressed[conventions.WIND_SPEED] = ds_compressed[conventions.WIND_SPEED].chunk(u_wind.chunks)
         
         ds_compressed[conventions.WIND_DIRECTION] = xra.DataArray(
             direction_compressed[1],  # data
@@ -321,6 +384,8 @@ def compress_wind_data(ds):
             attrs=direction_compressed[2],  # attrs
             name=conventions.WIND_DIRECTION
         )
+        # Preserve chunking from original u_wind
+        ds_compressed[conventions.WIND_DIRECTION] = ds_compressed[conventions.WIND_DIRECTION].chunk(u_wind.chunks)
         
         # Remove original wind components
         ds_compressed = ds_compressed.drop_vars([u_name, v_name])
@@ -376,44 +441,21 @@ def process_and_store_wind_data(source_name=DEFAULT_SOURCE, output_path=None, va
 
     if os.path.isdir(intermediate_path):
         print(f"Intermediate path {intermediate_path} already exists. Skipping step 1.")
+        wind_ds = xra.open_zarr(intermediate_path)
     else:
-        save_wind_locally(source_name, intermediate_path, variables)
+        wind_ds = fetch_wind_data(source_name, variables)
+
+        with ProgressBar():
+            wind_ds.to_zarr(intermediate_path, mode='w')
 
     print("Step 2: Compressing wind data...")
-    ds_components = xra.open_zarr(intermediate_path)
-    ds_compressed = compress_wind_data(ds_components)
+    ds_compressed = compress_wind_data(wind_ds)
 
+    print(f"Step 3: Storing as zarr {output_path}")
     with ProgressBar():
-        ds_compressed.to_zarr(output_path, mode='w', safe_chunks=False)
-    
-    print("Step 3: Storing as zarr v3 archive...")
-    
-    # Remove existing zarr store if it exists
-    if os.path.exists(output_path):
-        shutil.rmtree(output_path)
-    
-    # Use zarr v3 with float16 data (should work without issues)
-    print("Preparing float16 data for zarr v3...")
-    chunk_sizes = {
-        'ensemble_member': 1,  # Individual ensemble access
-        'lead_time': 10,       # Moderate time chunks  
-        'latitude': 100,       # Spatial chunks for random access
-        'longitude': 100       # Spatial chunks for random access
-    }
-    ds_rechunked = ds_compressed.chunk(chunk_sizes)
-    
-    with ProgressBar():
-        print("Writing float16 data to zarr v3...")
-        ds_rechunked.to_zarr(
-            output_path, 
-            mode='w',
-            zarr_format=3,  # Use zarr v3 with float16 (should work)
-            # No consolidated metadata for zarr v3
-        )
-    
-    zarr_path = output_path
-    
-    print(f"Successfully processed and stored wind data at: {zarr_path}")
+        ds_compressed.to_zarr(output_path, mode='w')
+
+    print(f"Successfully processed and stored wind data at: {output_path}")
     
     # Print some statistics using standard coordinate names
     print("\nDataset Statistics:")
@@ -430,7 +472,7 @@ def process_and_store_wind_data(source_name=DEFAULT_SOURCE, output_path=None, va
     if conventions.WIND_DIRECTION in ds_compressed:
         print(f"  Wind direction range: {ds_compressed[conventions.WIND_DIRECTION].min().values} to {ds_compressed[conventions.WIND_DIRECTION].max().values} (direction bins)")
     
-    return zarr_path
+    return output_path
 
 
 def main():
