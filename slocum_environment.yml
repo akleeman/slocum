@@ -1,8 +1,6 @@
 name: slocum
-channels:
-    - conda-forge
 dependencies:
-- python=3.7
+- python=3.12
 - pip
 - numpy
 - scipy
@@ -10,14 +8,10 @@ dependencies:
 - pyproj >= 1.9.3
 - pandas >= 0.13.1
 - matplotlib >= 1.2.0
+- zarr
 - joblib
 - cartopy
 - requests
 - pytest
 - netCDF4
 - dask
-- geopandas
-- cfgrib
-- pip:
-    - pytest-xdist
-    - pytest-coverage

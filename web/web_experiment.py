@@ -1,27 +1,26 @@
+"""
+Web experiment for processing wind data from zarr sources.
+
+This module uses the slocum conventions module to ensure consistent
+variable naming and coordinate handling across different data sources.
+"""
+
 import os
-import re
-import sys
-import json
-import zlib
 import shutil
-import struct
-import urllib
-import cProfile
-import requests
 import warnings
+import zarr
 
 import numpy as np
 import xarray as xra
 import multiprocessing as mp
 
 from itertools import chain
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from slocum.lib.units import convert_units
 from slocum.compression import tinylib
+from slocum.lib import conventions
 from pathlib import Path
-
-# Can download the grib files from here:
-# https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl
+from dask.diagnostics import ProgressBar
 
 # Wind uses the beaufort scale for compression
 wind_bins = np.array([0., 1., 3., 6., 10., 16., 21., 27.,
@@ -46,10 +45,14 @@ velocity_colors = [
     '#000000',  # black
 ]
 
-GEFS_MEMBERS = 31
-FCST_RELEASE_TIMES = list(range(0, 170, 3))
-#FCST_RELEASE_TIMES = list(range(0, 9, 3))
+# Zarr sources for ensemble forecasts
+ZARR_SOURCES = {
+    'dynamical': 'https://data.dynamical.org/noaa/gefs/forecast-35-day/latest.zarr',
+    # Add more zarr sources as needed
+}
 
+# Default source to use
+DEFAULT_SOURCE = 'dynamical'
 
 def list_of_tuples(xs):
     if isinstance(xs[0], tuple):
@@ -92,63 +95,136 @@ def vector_to_radial(u, v, orientation='to'):
     return magnitude, direction
 
 
-def build_url(member, ref_time, fcst_hour, left_lon=-160, right_lon=-140,
-              top_lat=25, bottom_lat=15):
-    member = str(member)
-    if member.isdigit():
-        if member == '0':
-            member = 'c00'
+def find_latest_zarr_source(source_name=DEFAULT_SOURCE):
+    """
+    Find the most recent zarr dataset from the specified source.
+    For now, we'll use a known working zarr endpoint.
+    """
+    source_url = ZARR_SOURCES.get(source_name)
+    if not source_url:
+        raise ValueError(f"Unknown source: {source_name}")
+    
+    return source_url
+
+
+def fetch_and_convert_wind_data(source_name=DEFAULT_SOURCE, variables=None):
+    """
+    Fetch wind data from zarr source and convert to speed/direction.
+    
+    Parameters:
+    -----------
+    source_name : str
+        Name of the zarr source to use
+    variables : list
+        List of variables to fetch. Defaults to wind components.
+    
+    Returns:
+    --------
+    xarray.Dataset
+        Dataset containing wind speed and direction
+    """
+    if variables is None:
+        # Use standard wind component names from conventions
+        variables = [conventions.U_WIND, conventions.V_WIND]
+    
+    zarr_url = find_latest_zarr_source(source_name)
+    print(f"Fetching from zarr source: {zarr_url}")
+    
+    # Open the zarr dataset with chunking to keep it lazy
+    ds = xra.open_zarr(zarr_url, decode_timedelta=True, chunks='auto')
+
+    # get latest
+    ds = ds.isel(init_time=-1)
+    
+    # Select only the variables we need
+    available_vars = [var for var in variables if var in ds]
+    if not available_vars:
+        print(f"Available variables: {list(ds.variables.keys())}")
+        print(f"Requested variables {variables} not found.")
+        
+        # Try to find wind components using conventions
+        if conventions.has_wind_components(ds):
+            u_name, v_name = conventions.get_wind_component_names(ds)
+            available_vars = [u_name, v_name]
+            print(f"Found wind components using conventions: {available_vars}")
         else:
-            member = 'p%.2d' % int(member)
+            raise ValueError("No wind components found in dataset")
+    
+    print(f"Available variables: {list(ds.variables.keys())}")
+    print(f"Fetching variables: {available_vars}")
+    
+    # Select the variables
+    ds_subset = ds[available_vars]
+    
+    # Rename variables to standard slocum names
+    ds_subset = conventions.rename_variables_to_standard(ds_subset)
+    
+    print(f"Dataset shape: {ds_subset.dims}")
+    print(f"Dataset variables: {list(ds_subset.data_vars.keys())}")
+    
+    # Convert to wind speed and direction
+    u_wind_name, v_wind_name = conventions.get_wind_component_names(ds_subset)
+    speed, direction = vector_to_radial(ds_subset[u_wind_name], ds_subset[v_wind_name], orientation='from')
+    
+    # Convert speed to knots (lazy version)
+    speed.attrs['units'] = 'm s**-1'
+    
+    # Manual unit conversion to avoid forcing computation
+    # 1 m/s = 1.9438444924574 knots
+    speed_knots = speed * 1.9438444924574
+    speed_knots.attrs = speed.attrs.copy()
+    speed_knots.attrs['units'] = 'knots'
+    
+    # Create new dataset with speed and direction
+    ds_wind = xra.Dataset({
+        conventions.WIND_SPEED: speed_knots,
+        conventions.WIND_DIRECTION: direction
+    })
 
-    fcst_hour = '%.3d' % fcst_hour
-
-    date = ref_time.strftime('%Y%m%d')
-    hour = ref_time.strftime('%H')
-
-    file_name = 'ge{member}.t{hour}z.pgrb2s.0p25.f{fcst_hour}'.format(
-        member=member,
-        hour=hour,
-        fcst_hour=fcst_hour)
-
-    return (file_name, 'https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?file={file_name}&lev_10_m_above_ground=on&var_UGRD=on&var_VGRD=on&leftlon={left_lon}&rightlon={right_lon}&toplat={top_lat}&bottomlat={bottom_lat}&dir=%2Fgefs.{date}%2F{hour}%2Fatmos%2Fpgrb2sp25'.format(
-        file_name=file_name,
-        hour=hour,
-        fcst_hour=fcst_hour,
-        date=date,
-        left_lon=left_lon,
-        right_lon=right_lon,
-        top_lat=top_lat,
-        bottom_lat=bottom_lat
-    ))
-
-
-def download_one_file(member, ref_time, fcst_hour, directory):
-    file_name, url = build_url(member, ref_time, fcst_hour)
-
-    output_path = os.path.join(directory, file_name)
-    if not os.path.exists(output_path):
-        try:
-            with urllib.request.urlopen(url) as response, open(output_path, 'wb') as out_file:
-                shutil.copyfileobj(response, out_file)
-            print("Downloaded: ", output_path)
-        except:
-            print("Failure Downloading: ", url)
-            raise
-    else:
-        print("Cached: ", output_path)
-    return output_path
+    print("Dataset created - operations remain lazy until .compute() or zarr write")
+    
+    # Copy only coordinates that are also dimensions (avoid metadata coords)
+    dimensional_coords = {}
+    for coord_name in ds_subset.coords:
+        if coord_name in ds_subset.dims:
+            dimensional_coords[coord_name] = ds_subset[coord_name]
+    
+    # Add dimensional coordinates to the dataset
+    for coord_name, coord_data in dimensional_coords.items():
+        ds_wind[coord_name] = coord_data
+    
+    print(f"Kept dimensional coordinates: {list(ds_wind.coords.keys())}")
+    print(f"Dropped {len(ds_subset.coords) - len(dimensional_coords)} non-dimensional coordinates")
+        
+    return ds_wind
 
 
 def to_beaufort(knots):
-    beaufort = np.digitize(knots.values.reshape(-1),
-                           wind_bins).reshape(knots.shape)
-    attrs = knots.attrs
+    """Convert wind speeds to Beaufort scale (lazy version)."""
+    import dask.array as da
+    
+    # Work with dask arrays to maintain laziness
+    if hasattr(knots, 'data') and hasattr(knots.data, 'map_blocks'):
+        # This is a dask-backed xarray
+        def _digitize_block(block):
+            return np.digitize(block, wind_bins).astype('u8')
+        
+        beaufort_data = knots.data.map_blocks(
+            _digitize_block, 
+            dtype='u8', 
+            drop_axis=None
+        )
+    else:
+        # Fallback to immediate computation if not dask-backed
+        beaufort_data = np.digitize(knots.values, wind_bins).astype('u8')
+    
+    attrs = knots.attrs.copy()
     attrs['units'] = 'beaufort'
-    return (knots.dims, beaufort.astype('u8'), attrs)
+    return (knots.dims, beaufort_data, attrs)
 
 
 def from_beaufort(beaufort):
+    """Convert Beaufort scale back to wind speeds."""
     divs = wind_bins
     ndivs = divs.size
     bins = beaufort.values
@@ -173,6 +249,7 @@ def from_beaufort(beaufort):
 
 
 def from_integer_direction(direction):
+    """Convert integer direction bins back to radians."""
     divs = dir_bins
     bins = direction.values
     upper = bins % len(divs)
@@ -189,297 +266,295 @@ def from_integer_direction(direction):
 
 
 def to_integer_direction(direction):
-    ints = np.digitize(direction.values.reshape(-1), dir_bins) % len(dir_bins)
-    ints = ints.reshape(direction.shape)
-    return (direction.dims, ints, direction.attrs)
-
-
-def normalize(x):
-    speed, direction = vector_to_radial(x['u10'], x['v10'], orientation='from')
-    speed.attrs['units'] = 'm s**-1'
-    direction.attrs.clear()
-    x = x.drop_vars(['u10', 'v10'])
-
-    x['speed'] = convert_units(speed, 'knots')
-    x['direction'] = direction
-
-    return x
-
-
-def shrink(ds):
-    ds = ds.sel(latitude=slice(80, -80))
-    ds['speed'] = to_beaufort(ds['speed'])    
-    ds['direction'] = to_integer_direction(ds['direction'])
-    return ds.expand_dims('step')
-
-
-def download_members(ref_time, fcst_hour, output_path):
-
-    if not os.path.exists(output_path):
-        download_directory = os.path.dirname(output_path)
-        paths = [download_one_file(member, ref_time, fcst_hour,
-                                   download_directory)
-                 for member in range(GEFS_MEMBERS)]
-        ds = xra.concat([normalize(xra.open_dataset(p, engine='cfgrib'))
-                         for p in paths],
-                        dim='member')
-        ds = shrink(ds)
-        ds.to_netcdf(output_path, encoding={'speed': {'zlib': True},
-                                              'direction': {'zlib': True}})
+    """Convert wind directions to integer bins (lazy version)."""
+    import dask.array as da
+    
+    # Work with dask arrays to maintain laziness
+    if hasattr(direction, 'data') and hasattr(direction.data, 'map_blocks'):
+        # This is a dask-backed xarray
+        def _digitize_direction_block(block):
+            ints = np.digitize(block, dir_bins) % len(dir_bins)
+            return ints.astype('u8')
         
+        direction_data = direction.data.map_blocks(
+            _digitize_direction_block,
+            dtype='u8',
+            drop_axis=None
+        )
+    else:
+        # Fallback to immediate computation if not dask-backed
+        ints = np.digitize(direction.values, dir_bins) % len(dir_bins)
+        direction_data = ints.astype('u8')
+    
+    attrs = direction.attrs.copy()
+    return (direction.dims, direction_data, attrs)
+
+
+def compress_wind_data(ds):
+    """
+    Apply compression to wind data (Beaufort scale for speed, integer bins for direction).
+    """
+    print("Before compression:")
+    print(f"  Coordinates: {list(ds.coords.keys())}")
+    print(f"  Data variables: {list(ds.data_vars.keys())}")
+    print(f"  Dimensions: {dict(ds.dims)}")
+    
+    ds_compressed = ds.copy()
+    
+    # Reduce latitude domain to exclude poles using standard coordinate name
+    ds_compressed = ds_compressed.sel(**{conventions.LATITUDE: slice(80, -80)})
+    
+    # Apply Beaufort scale compression to wind speeds
+    if conventions.WIND_SPEED in ds_compressed:
+        dims, data, attrs = to_beaufort(ds_compressed[conventions.WIND_SPEED])
+        ds_compressed[conventions.WIND_SPEED] = xra.DataArray(
+            data,  dims=dims, attrs=attrs, name=conventions.WIND_SPEED
+        )
+    
+    # Apply integer direction compression
+    if conventions.WIND_DIRECTION in ds_compressed:
+        dims, data, attrs = to_integer_direction(ds_compressed[conventions.WIND_DIRECTION])
+        ds_compressed[conventions.WIND_DIRECTION] = xra.DataArray(
+            data, dims=dims, attrs=attrs, name=conventions.WIND_DIRECTION
+        )
+    
+    # Final cleanup: remove any non-dimensional coordinates that might cause zarr issues
+    coords_to_keep = []
+    for coord_name in ds_compressed.coords:
+        if coord_name in ds_compressed.dims:
+            coords_to_keep.append(coord_name)
+        else:
+            print(f"Dropping non-dimensional coordinate: {coord_name}")
+    
+    # Keep only coordinates that are also dimensions
+    ds_compressed = ds_compressed.reset_coords(drop=True)
+    
+    print(f"Final coordinates: {list(ds_compressed.coords.keys())}")
+    print(f"Final dimensions: {dict(ds_compressed.dims)}")
+    
+    return ds_compressed
+
+
+def store_as_zarr_v3(ds, output_path):
+    """
+    Store the dataset as a zarr v3 archive using sharding for optimal performance.
+    Optimize for lat/lon access across lead times while keeping all ensemble members.
+    
+    Parameters:
+    -----------
+    ds : xarray.Dataset
+        Dataset to store
+    output_path : str
+        Path where to store the zarr archive
+    """
+    # Remove existing zarr store if it exists
+    if os.path.exists(output_path):
+        shutil.rmtree(output_path)
+    
+    print(f"Storing dataset as zarr v3 with sharding at: {output_path}")
+    
+    # Define sharding strategy optimized for lat/lon access across lead times
+    # Shards are larger containers, chunks are smaller units within shards
+    encoding = {}
+    for var in ds.data_vars:
+        var_dims = ds[var].dims
+        shards = []
+        chunks = []
+        
+        for dim in var_dims:
+            if dim == 'ensemble_member':
+                shards.append(ds.sizes[dim])  # Keep all ensemble members in one shard
+                chunks.append(1)  # Small chunks for individual ensemble access
+            elif dim == 'lead_time':
+                shards.append(min(ds.sizes[dim], 50))  # Moderate shard size for time
+                chunks.append(5)  # Small time chunks for efficient time series access
+            elif dim == conventions.LATITUDE:
+                shards.append(200)  # Larger spatial shards
+                chunks.append(50)   # Smaller spatial chunks for random access
+            elif dim == conventions.LONGITUDE:
+                shards.append(200)  # Larger spatial shards  
+                chunks.append(50)   # Smaller spatial chunks for random access
+            else:
+                shards.append(1)
+                chunks.append(1)
+        
+        encoding[var] = {
+            'shards': tuple(shards),
+            'chunks': tuple(chunks),
+            'dtype': 'uint8'
+        }
+    
+    print(f"Using zarr v3 sharding configuration:")
+    for var, enc in encoding.items():
+        if 'shards' in enc:
+            print(f"  {var}: shards={enc['shards']}, chunks={enc['chunks']}")
+    
+    with ProgressBar():
+        # Store with zarr format v3 and sharding - let zarr handle the rechunking during write
+        # This avoids creating a huge dask task graph in memory
+        print("Writing to zarr - zarr will handle rechunking during write to avoid memory issues")
+        ds.to_zarr(
+            output_path, 
+            mode='w',
+            zarr_format=3,
+            encoding=encoding,
+            safe_chunks=False  # Allow zarr to rechunk during write
+        )
+    
+    print(f"Successfully stored zarr v3 archive at: {output_path}")
     return output_path
 
 
-def open_files(nc_paths):
-    return xra.open_mfdataset(nc_paths,
-                              chunks={'latitude': 10, 'longitude': 10},
-                              concat_dim='step', combine='nested')
-
-
-def nomads_has_complete_forecast(time):
-    _, url = build_url(1, time, max(FCST_RELEASE_TIMES))
-    return requests.get(url).status_code == 200
+def process_and_store_wind_data(source_name=DEFAULT_SOURCE, output_path=None, variables=None):
+    """
+    Main function to fetch wind data, convert to speed/direction, compress, and store.
     
-
-def nearest_fcst_release(time):
-    print("Current Time ", time)
-    six_hours = timedelta(minutes=6*60)
-    one_day = 4 * six_hours
-    ref_time = time + six_hours
-    ref_time = datetime(time.year, time.month, time.day, time.hour - time.hour % 6)
-    while ref_time + one_day > time:
-        print("Trying Time  ", ref_time)
-        if nomads_has_complete_forecast(ref_time):
-            return ref_time
-        ref_time = ref_time - six_hours
-    return None
-
-
-
-def make_compressed(speeds, directions, path):
-    first = True
-    assert(speeds.shape == directions.shape)
+    Parameters:
+    -----------
+    source_name : str
+        Name of the zarr source to use
+    output_path : str
+        Path where to store the processed zarr archive
+    variables : list
+        List of variables to fetch
     
-    bytes = b''
-    lats = speeds.coords['latitude'].values
-    lons = speeds.coords['longitude'].values
-    assert(speeds.dims == ('member', 'latitude', 'longitude'))
-    speeds = speeds.values
-    directions = directions.values
-    for i, lat in enumerate(lats):
-        for j, lon in enumerate(lons):
-            speed_vals = speeds[:, i, j]
-            direction_vals = directions[:, i, j]
-            packed = struct.pack("f", lon)
-            packed += struct.pack("f", lat)
-            packed += speed_vals.astype('uint8').tobytes()
-            packed += direction_vals.astype('uint8').tobytes()
-
-            if first:
-              bytes += struct.pack("I", len(packed))
-              first = False
-            
-            bytes += packed
-
-    with open(path, 'wb') as f:
-        f.write(bytes)
-
-    return
-
-
-def make_spot(speeds, directions, hours, path):
-    with open(path, 'wb') as f:
-        encoded_time = np.concatenate([[hours.size], np.diff(hours)])
-        packed = encoded_time.astype('uint8').tobytes()
-        packed += speeds.astype('uint8').tobytes()
-        packed += directions.astype('uint8').tobytes()        
-        f.write(packed)
-
-
-
-def make_spots(ds, directory):
-    speeds = ds['speed']
-    directions = ds['direction']
-    hours = ds['step'].values.astype('timedelta64[h]')
-    Path(directory).mkdir(parents=True, exist_ok=True)
-        
-    lats = speeds.coords['latitude'].values
-    lons = speeds.coords['longitude'].values
-    assert(speeds.dims == ('step', 'member', 'latitude', 'longitude'))
-    assert(directions.dims == speeds.dims)    
-    speeds = speeds.values
-    directions = directions.values
-    for i, lat in enumerate(lats):
-        for j, lon in enumerate(lons):
-            path = os.path.join(directory, '%.3f_%.3f.bin' % (lon, lat))
-            make_spot(speeds[:, :, i, j],
-                      directions[:, :, i, j],
-                      hours, path)
-
-
-def make_slices(x, k):
-
-    chunks = np.array_split(x, k)
+    Returns:
+    --------
+    str
+        Path to the stored zarr archive
+    """
+    if output_path is None:
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
+        output_path = f"./data/processed_wind_{timestamp}.zarr"
     
-    i = 0
-    for chunk in chunks:
-        yield slice(i, i + chunk.size)
-        i += chunk.size
-
-
-def get_chunk_dir(i, j):
-    return './chunks/{}_{}'.format(i, j)
-
-
-def split_one_dataset(path, lat_slices, lon_slices):
-    print("Splitting : ", path)
-    ds = xra.load_dataset(path)
-    for i, lat_slice in enumerate(lat_slices):
-        for j, lon_slice in enumerate(lon_slices):
-            fcst_hour = ds['step'].values.item()
-            output_path = os.path.join(get_chunk_dir(i, j), '{}.nc'.format(fcst_hour))
-            ds.isel(latitude=lat_slice, longitude=lon_slice).to_netcdf(output_path)
-
-
-def split_into_chunks(paths):
+    # Create output directory
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    peek = xra.open_dataset(paths[0])
-    lat_slices = list(make_slices(peek['latitude'].values, 10))
-    lon_slices = list(make_slices(peek['longitude'].values, 10))    
+    print("Step 1: Fetching and converting wind data...")
+    ds_wind = fetch_and_convert_wind_data(source_name, variables)
 
-    def make_chunk_directories():
-        for i in range(len(lat_slices)):
-            for j in range(len(lon_slices)):
-                directory = get_chunk_dir(i, j)
-                if os.path.exists(directory):
-                    shutil.rmtree(directory)
-                Path(directory).mkdir(parents=True, exist_ok=False)
-                yield directory
-
-    output = list(make_chunk_directories())
-
-    arguments = [(p, lat_slices, lon_slices) for p in paths]
-
-    parallel_apply(split_one_dataset, arguments)
-
-    return output
-
-
-def make_spots_one_chunk(chunk_dir, data_dir):
-    spot_dir = os.path.join(data_dir, 'spot')
-    print("Making spots : ", chunk_dir, spot_dir)
-    ds = xra.open_mfdataset(os.path.join(chunk_dir, '*.nc'),
-                            concat_dim='step')
-    ds.load()
-    make_spots(ds, spot_dir)
-
-
-def make_all_spots(paths, spot_directory):
-    chunk_directories = split_into_chunks(paths)
-    arguments = [(x, spot_directory) for x in chunk_directories]
-    serial_apply(make_spots_one_chunk, arguments)
+    print("Step 2: Compressing wind data...")
+    ds_compressed = compress_wind_data(ds_wind)
     
-
-def make_zoom_level_one_step(ds, directory, zoom, spacing):
-    if 'step' in ds['speed'].dims:
-        ds = ds.squeeze('step')
-        
-    number_of_tiles = 2 ** (zoom - 1)
-
-    ds = ds.isel(latitude=slice(0, ds.dims['latitude'], spacing),
-                 longitude=slice(0, ds.dims['longitude'], spacing))
-
-    max_latitude = 85
-
-    mercator_max_y = np.log(np.tan(np.pi / 4. + np.deg2rad(max_latitude) / 2))    
-    mercator_y_bins = np.linspace(mercator_max_y, -mercator_max_y, number_of_tiles + 1)    
-    lat_bins = np.rad2deg(2 * np.arctan(np.exp(mercator_y_bins)) - np.pi / 2)
-    lon_bins = np.linspace(-180, 180, number_of_tiles + 1)
+    print(f"Compressed dataset shape: {ds_compressed.dims}")
     
-    shifted_lons = np.mod(ds['longitude'].values + 180., 360.) - 180.
+    with ProgressBar():
+        print("Step 3: Storing as zarr archive...")
+        zarr_path = store_as_zarr_v3(ds_compressed, output_path)
     
-    ds['lat_bin'] = ('latitude', np.digitize(ds['latitude'].values, lat_bins, right=True) - 1)
-    ds['lon_bin'] = ('longitude', np.digitize(shifted_lons, lon_bins) - 1)
-
-    assert(ds['lon_bin'].values.min() >= 0)
-    assert(ds['lon_bin'].values.max() < number_of_tiles)
-    assert(ds['lat_bin'].values.min() >= 0)
-    assert(ds['lat_bin'].values.max() < number_of_tiles)
-
-    fcst_hour = ds['step'].values.astype('timedelta64[h]').astype('int')
-    assert(fcst_hour.size == 1)
-    fcst_hour = fcst_hour.item()
-
-    sub_dir = os.path.join(directory, str(zoom), str(fcst_hour))
-    Path(sub_dir).mkdir(parents=True, exist_ok=True)
-
-    for lon_bin, lon_df in ds.groupby('lon_bin'):
-        for lat_bin, tile_df in lon_df.groupby('lat_bin'):
-            filename = '%d_%d.bin' % (lon_bin, lat_bin)
-            path = os.path.join(sub_dir, filename)
-            make_compressed(tile_df["speed"], tile_df["direction"], path)
-
-
-def download_and_make_zoom_levels_one_step(ref_time, fcst_hour, output_directory, combined_path):
-    print("Downloading: ", fcst_hour)
+    print(f"Successfully processed and stored wind data at: {zarr_path}")
     
-    download_members(ref_time, fcst_hour, combined_path)
-
-    zoom_levels = {
-      4: 16,
-      5: 8,
-      6: 4,
-      7: 2,
-      8: 1,
-    }
+    # Print some statistics using standard coordinate names
+    print("\nDataset Statistics:")
+    if 'ensemble_member' in ds_compressed.dims:
+        print(f"  Ensemble members: {ds_compressed.dims['ensemble_member']}")
+    if 'lead_time' in ds_compressed.dims:
+        print(f"  Lead times: {ds_compressed.dims['lead_time']}")
+    print(f"  Latitude range: {ds_compressed[conventions.LATITUDE].min().values:.2f} to {ds_compressed[conventions.LATITUDE].max().values:.2f}")
+    print(f"  Longitude range: {ds_compressed[conventions.LONGITUDE].min().values:.2f} to {ds_compressed[conventions.LONGITUDE].max().values:.2f}")
     
-    ds = xra.load_dataset(combined_path)
-  
-    print("Compressing: ", fcst_hour)
-    [make_zoom_level_one_step(ds, output_directory, zoom, spacing)
-     for zoom, spacing in zoom_levels.items()]
-
-
-def make_zoom_levels(ref_time, output_directory, download_directory=None, parallel=True):
-
-    if download_directory is None:
-        download_directory = ref_time.strftime('./%Y%m%d_%H')
-        Path(download_directory).mkdir(parents=True, exist_ok=True)
-
-    def get_output_path(hour):
-        path = '%s_%.3d.nc' % (ref_time.strftime('%Y%d%m_%H'), hour)
-        return os.path.join(download_directory, path)
-
-    arguments = [(ref_time, fcst_hour, output_directory, get_output_path(fcst_hour))
-                 for fcst_hour in FCST_RELEASE_TIMES]
-
-    apply_func = parallel_apply if parallel else serial_apply
-    apply_func(download_and_make_zoom_levels_one_step, arguments)
+    if conventions.WIND_SPEED in ds_compressed:
+        print(f"  Wind speed range: {ds_compressed[conventions.WIND_SPEED].min().values} to {ds_compressed[conventions.WIND_SPEED].max().values} (Beaufort scale)")
     
-    return [path for _, _, _, path in arguments]
+    return zarr_path
 
 
-def write_forecast_hours(ref_time, directory):
-    Path(directory).mkdir(parents=True, exist_ok=True)    
-    with open(os.path.join(directory, 'time.bin'), 'wb') as f:
-        f.write(struct.pack('I', int(ref_time.timestamp())))
-        f.write(struct.pack('I', len(FCST_RELEASE_TIMES)))
-        for dh in np.diff(FCST_RELEASE_TIMES):
-            f.write(struct.pack('B', dh))
+def process_and_store_wind_data_v3(source_name=DEFAULT_SOURCE, output_path=None, variables=None):
+    """
+    Process wind data using zarr v3 with sharding - keeps all ensemble members and lead times.
+    
+    Parameters:
+    -----------
+    source_name : str
+        Name of the zarr source to use
+    output_path : str
+        Path where to store the processed zarr archive
+    variables : list
+        List of variables to fetch
+    
+    Returns:
+    --------
+    str
+        Path to the stored zarr archive
+    """
+    if output_path is None:
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
+        output_path = f"./data/processed_wind_v3_{timestamp}.zarr"
+    
+    # Create output directory
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    print("Step 1: Fetching and converting wind data...")
+    ds_wind = fetch_and_convert_wind_data(source_name, variables)
+    
+    print("Step 2: Compressing wind data...")
+    ds_compressed = compress_wind_data(ds_wind)
+    
+    print(f"Compressed dataset shape: {ds_compressed.dims}")
+    
+    with ProgressBar():
+        print("Step 3: Storing as zarr v3 archive with sharding...")
+        zarr_path = store_as_zarr_v3(ds_compressed, output_path)
+    
+    print(f"Successfully processed and stored wind data at: {zarr_path}")
+    
+    # Print some statistics using standard coordinate names
+    print("\nDataset Statistics:")
+    if 'ensemble_member' in ds_compressed.dims:
+        print(f"  Ensemble members: {ds_compressed.dims['ensemble_member']}")
+    if 'lead_time' in ds_compressed.dims:
+        print(f"  Lead times: {ds_compressed.dims['lead_time']}")
+    print(f"  Latitude range: {ds_compressed[conventions.LATITUDE].min().values:.2f} to {ds_compressed[conventions.LATITUDE].max().values:.2f}")
+    print(f"  Longitude range: {ds_compressed[conventions.LONGITUDE].min().values:.2f} to {ds_compressed[conventions.LONGITUDE].max().values:.2f}")
+    
+    if conventions.WIND_SPEED in ds_compressed:
+        print(f"  Wind speed range: {ds_compressed[conventions.WIND_SPEED].min().values} to {ds_compressed[conventions.WIND_SPEED].max().values} (Beaufort scale)")
+    
+    return zarr_path
 
 
 def main():
-
-    # https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl?dir=%2Fgefs.20210622%2F18
-    ref_time = nearest_fcst_release(datetime.utcnow())
-    #ref_time = datetime(2021, 8, 7, 12)
-
-    data_directory = './data'
-    write_forecast_hours(ref_time, data_directory)    
-
-    step_paths = make_zoom_levels(ref_time, data_directory)    
-
-    make_all_spots(step_paths, data_directory)
+    """
+    Main function to run the zarr-based wind data processing.
+    """
+    print("Starting zarr-based wind data processing...")
+    
+    # Process command line arguments
+    import argparse
+    parser = argparse.ArgumentParser(description='Process wind data from zarr sources')
+    parser.add_argument('--source', default=DEFAULT_SOURCE, 
+                       choices=list(ZARR_SOURCES.keys()),
+                       help='Zarr source to use')
+    parser.add_argument('--output', default=None,
+                       help='Output path for the zarr archive')
+    parser.add_argument('--variables', nargs='+', default=None,
+                       help='Variables to fetch from the source')
+    parser.add_argument('--zarr-version', choices=['2', '3'], default='2',
+                       help='Zarr format version to use (default: 2)')
+    
+    args = parser.parse_args()
+    
+    # Process and store the wind data using the specified zarr version
+    if args.zarr_version == '3':
+        zarr_path = process_and_store_wind_data_v3(
+            source_name=args.source,
+            output_path=args.output,
+            variables=args.variables
+        )
+    else:
+        zarr_path = process_and_store_wind_data(
+            source_name=args.source,
+            output_path=args.output,
+            variables=args.variables
+        )
+    
+    print(f"\nProcessing complete! Zarr archive stored at: {zarr_path}")
+    
+    # Optionally, verify the stored data
+    print("\nVerifying stored data...")
+    ds_verify = xra.open_zarr(zarr_path)
+    print(f"Stored dataset shape: {ds_verify.dims}")
+    print(f"Stored variables: {list(ds_verify.data_vars.keys())}")
 
 
 if __name__ == "__main__":
