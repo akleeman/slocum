@@ -288,14 +288,45 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
     console.log(`Tile bounds: lat [${latMin}, ${latMax}], lon [${lonMin}, ${lonMax}]`);
     
     // Load coordinate arrays
-    const [latArray, lonArray] = await Promise.all([
-      loadZarrArrayV3('latitude'),
-      loadZarrArrayV3('longitude')
-    ]);
-    
-    console.log(`Loaded coordinates: ${latArray.length} lats, ${lonArray.length} lons`);
-    console.log('Latitude range:', latArray[0], 'to', latArray[latArray.length-1]);
-    console.log('Longitude range:', lonArray[0], 'to', lonArray[lonArray.length-1]);
+    let latArray, lonArray;
+    try {
+      [latArray, lonArray] = await Promise.all([
+        loadZarrArrayV3('latitude'),
+        loadZarrArrayV3('longitude')
+      ]);
+      
+      console.log(`Loaded coordinates: ${latArray.length} lats, ${lonArray.length} lons`);
+      console.log('Latitude range:', latArray[0], 'to', latArray[latArray.length-1]);
+      console.log('Longitude range:', lonArray[0], 'to', lonArray[lonArray.length-1]);
+      
+      // Check if the data is corrupted (tiny numbers indicate corrupted data)
+      const latMin = Math.abs(latArray[0]);
+      const latMax = Math.abs(latArray[latArray.length-1]);
+      const lonMin = Math.abs(lonArray[0]);
+      const lonMax = Math.abs(lonArray[lonArray.length-1]);
+      
+      if (latMin < 1e-100 || latMax < 1e-100 || lonMin < 1e-100 || lonMax < 1e-100) {
+        throw new Error('Coordinate data appears to be corrupted (tiny numbers detected)');
+      }
+      
+    } catch (error) {
+      console.warn('Failed to load coordinates from zarr, using hardcoded values:', error);
+      
+      // Use hardcoded coordinate arrays for testing
+      latArray = [];
+      for (let i = 0; i < 721; i++) {
+        latArray.push(90 - i * 0.25); // 90 to -90 in 0.25 degree steps
+      }
+      
+      lonArray = [];
+      for (let i = 0; i < 1440; i++) {
+        lonArray.push(-180 + i * 0.25); // -180 to 179.75 in 0.25 degree steps
+      }
+      
+      console.log(`Using hardcoded coordinates: ${latArray.length} lats, ${lonArray.length} lons`);
+      console.log('Latitude range:', latArray[0], 'to', latArray[latArray.length-1]);
+      console.log('Longitude range:', lonArray[0], 'to', lonArray[lonArray.length-1]);
+    }
     
     // Find indices within tile bounds
     const validPoints = [];

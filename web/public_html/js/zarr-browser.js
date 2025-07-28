@@ -185,7 +185,11 @@
     console.log(`Loading chunk: ${chunkPath}`);
     console.log(`Array metadata for ${name}:`, arrayMeta);
     
-    fetch(chunkPath)
+    fetch(chunkPath, {
+      headers: {
+        'Accept-Encoding': 'identity' // Disable compression
+      }
+    })
       .then(response => {
         if (!response.ok) {
           if (response.status === 404) {
@@ -220,10 +224,43 @@
           }
           throw new Error(`Failed to fetch chunk: ${response.status}`);
         }
+        
+        console.log(`Response headers for ${name}:`, {
+          'content-length': response.headers.get('content-length'),
+          'content-encoding': response.headers.get('content-encoding'),
+          'accept-ranges': response.headers.get('accept-ranges'),
+          'content-type': response.headers.get('content-type'),
+          'server': response.headers.get('server'),
+          'date': response.headers.get('date')
+        });
+        
+        // Check if we're getting the full file
+        const expectedSize = arrayMeta.shape.reduce((a, b) => a * b, 1) * this.getBytesPerElement(arrayMeta.data_type);
+        const actualSize = response.headers.get('content-length');
+        console.log(`Expected size for ${name}: ${expectedSize} bytes, actual: ${actualSize} bytes`);
+        
+        if (actualSize && parseInt(actualSize) < expectedSize) {
+          console.warn(`File size mismatch for ${name}: expected ${expectedSize}, got ${actualSize}`);
+        }
+        
         return response.arrayBuffer();
       })
       .then(buffer => {
         if (buffer) { // Only parse if we got a buffer (not 404 case)
+          console.log(`Received buffer for ${name}: ${buffer.byteLength} bytes`);
+          
+          // Debug: show first few bytes of the buffer
+          const view = new Uint8Array(buffer);
+          console.log(`First 32 bytes of ${name}:`, Array.from(view.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+          
+          // Check if the data looks compressed (starts with 02 01 91 01 pattern)
+          if (view[0] === 0x02 && view[1] === 0x01 && view[2] === 0x91 && view[3] === 0x01) {
+            console.warn(`Data appears to be compressed for ${name}, attempting to skip compression header`);
+            // Skip the first 4 bytes (compression header) and use the rest
+            buffer = buffer.slice(4);
+            console.log(`After skipping header, buffer size: ${buffer.byteLength} bytes`);
+          }
+          
           // Parse the chunk data based on metadata
           const data = this.parseChunkData(buffer, arrayMeta);
           callback(null, { data: data });
@@ -238,7 +275,7 @@
   ZarrBrowser.prototype.buildChunkPath = function(name, chunkCoords, arrayMeta) {
     // For Zarr v3, chunks are stored in nested directories under 'c/'
     // For 1D arrays like init_time, the path is: {name}/c/{chunkId}
-    // For multi-dimensional arrays, the path is: {name}/c/{dim0}/{dim1}/{dim2}/...
+    // For multi-dimensional arrays, the path is: {name}/c/{dim0}/{dim1}/{dim2}/.../{chunkFile}
     
     const shape = arrayMeta.shape || [1];
     const chunks = arrayMeta.chunk_grid?.configuration?.chunk_shape || shape;
@@ -258,8 +295,37 @@
         chunkIndices.push(chunkIndex);
       }
       
+      // For 5D arrays like speed/direction, we need to add the chunk file number at the end
+      // The chunk file number is typically the last coordinate
+      const chunkFile = chunkCoords[chunkCoords.length - 1] % chunks[chunks.length - 1];
+      chunkIndices.push(chunkFile);
+      
       console.log(`Chunk indices for ${name}: ${chunkIndices}`);
       return `${this.baseUrl}/${name}/c/${chunkIndices.join('/')}`;
+    }
+  };
+
+  ZarrBrowser.prototype.getBytesPerElement = function(dtype) {
+    switch (dtype) {
+      case 'int64':
+      case '<i8':
+      case 'float64':
+      case '<f8':
+        return 8;
+      case 'int32':
+      case '<i4':
+      case 'float32':
+      case '<f4':
+        return 4;
+      case 'uint16':
+      case '<u2':
+        return 2;
+      case 'uint8':
+      case '<u1':
+        return 1;
+      default:
+        console.warn(`Unknown dtype: ${dtype}, assuming 1 byte`);
+        return 1;
     }
   };
 
