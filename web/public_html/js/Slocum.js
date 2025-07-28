@@ -1,4 +1,5 @@
 var HOUR = 0;
+console.log('Initial HOUR value:', HOUR);
 
 SLICE_WIDTH = 0.19634954084936207 // pi/16
 
@@ -120,19 +121,34 @@ async function initializeForecastTimesFromZarr() {
     } else {
       console.log('Found init_time array');
       
-      // Load init_time data using zarr-js v3 API
-      const initTimeArray = await loadZarrArrayV3('init_time');
-      console.log('Raw init_time data:', initTimeArray);
-      
-      // Handle different data formats
-      let refTime;
-      if (Array.isArray(initTimeArray)) {
-        refTime = new Date(initTimeArray[0] * 1000); // Convert seconds to milliseconds
-      } else {
-        refTime = new Date(initTimeArray * 1000);
+      try {
+        // Load init_time data using zarr-js v3 API
+        const initTimeArray = await loadZarrArrayV3('init_time');
+        console.log('Raw init_time data:', initTimeArray);
+        
+        // Handle different data formats
+        let refTime;
+        if (Array.isArray(initTimeArray)) {
+          if (initTimeArray.length > 0 && initTimeArray[0] !== 0) {
+            refTime = new Date(initTimeArray[0] * 1000); // Convert seconds to milliseconds
+          } else {
+            console.warn('init_time array is empty or contains zeros, using current time');
+            refTime = new Date();
+          }
+        } else {
+          if (initTimeArray !== 0) {
+            refTime = new Date(initTimeArray * 1000);
+          } else {
+            console.warn('init_time value is zero, using current time');
+            refTime = new Date();
+          }
+        }
+        REF_TIME = refTime;
+        console.log('Parsed REF_TIME:', REF_TIME);
+      } catch (error) {
+        console.warn('Failed to load init_time data, using current time:', error);
+        REF_TIME = new Date();
       }
-      REF_TIME = refTime;
-      console.log('Parsed REF_TIME:', REF_TIME);
     }
     
     if (!zarrDataset.lead_time) {
@@ -259,6 +275,7 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
       throw new Error('Zarr dataset not initialized');
     }
     
+    console.log('=== WIND DATA LOADING DEBUG ===');
     console.log('Loading zarr wind data for tile:', tileCoords, 'time index:', leadTimeIndex);
     
     // Calculate tile bounds
@@ -268,6 +285,8 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
     const latMax = 90 - tileCoords.y * tileSize;
     const latMin = latMax - tileSize;
     
+    console.log(`Tile bounds: lat [${latMin}, ${latMax}], lon [${lonMin}, ${lonMax}]`);
+    
     // Load coordinate arrays
     const [latArray, lonArray] = await Promise.all([
       loadZarrArrayV3('latitude'),
@@ -275,6 +294,8 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
     ]);
     
     console.log(`Loaded coordinates: ${latArray.length} lats, ${lonArray.length} lons`);
+    console.log('Latitude range:', latArray[0], 'to', latArray[latArray.length-1]);
+    console.log('Longitude range:', lonArray[0], 'to', lonArray[lonArray.length-1]);
     
     // Find indices within tile bounds
     const validPoints = [];
@@ -292,19 +313,27 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
     }
     
     console.log(`Found ${validPoints.length} points in tile bounds`);
+    if (validPoints.length > 0) {
+      console.log('Sample valid points:', validPoints.slice(0, 3));
+    }
     
     if (validPoints.length === 0) {
+      console.log('No valid points found in tile bounds');
       return [];
     }
     
     // Load wind data for each valid point using zarr-js v3
     const windDataPromises = validPoints.map(async (point) => {
       try {
+        console.log(`Loading data for point ${point.lat},${point.lon} (indices: ${point.latIdx},${point.lonIdx})`);
+        
         // Load speed and direction data for this point at the given time
         const [speedData, directionData] = await Promise.all([
           loadZarrArraySliceV3('speed', [0, leadTimeIndex, point.latIdx, point.lonIdx]),
           loadZarrArraySliceV3('direction', [0, leadTimeIndex, point.latIdx, point.lonIdx])
         ]);
+        
+        console.log(`Point ${point.lat},${point.lon}: speed=${speedData}, direction=${directionData}`);
         
         return {
           lat: point.lat,
@@ -321,6 +350,12 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
     const results = await Promise.all(windDataPromises);
     const windData = results.filter(r => r !== null);
     console.log(`Successfully loaded wind data for ${windData.length} points`);
+    
+    if (windData.length > 0) {
+      console.log('Sample wind data:', windData.slice(0, 2));
+    }
+    
+    console.log('=== END WIND DATA LOADING DEBUG ===');
     return windData;
     
   } catch (error) {
@@ -810,6 +845,12 @@ function Draw(m, data) {
   
   var radius = GetRadius(zoom);
 
+  console.log('=== DRAW DEBUG ===');
+  console.log('Input data length:', data.length);
+  console.log('Grid size:', grid_size);
+  console.log('Map bounds:', bounds);
+  console.log('Sample input data:', data.slice(0, 2));
+
   var only_visible = [];
   for (i in data) {
     var pt = data[i];
@@ -818,6 +859,13 @@ function Draw(m, data) {
       only_visible.push(pt);
     }
   }
+  
+  console.log('Visible points on grid:', only_visible.length);
+  if (only_visible.length > 0) {
+    console.log('Sample visible points:', only_visible.slice(0, 2));
+  }
+  console.log('=== END DRAW DEBUG ===');
+  
   return DrawAll(only_visible, radius);
 }
 
@@ -887,20 +935,30 @@ L.GridLayer.WindCircles = L.GridLayer.extend({
         const id = this.tileId(coords);
         tile.id = id
         
+        console.log('=== TILE CREATION DEBUG ===');
+        console.log('Creating tile for coords:', coords);
+        console.log('Current HOUR:', HOUR);
+        
         const layer = L.layerGroup().addTo(map);
         this.m_tileLayers[id] = layer;
     
         // Use zarr data instead of binary files
         const leadTimeIndex = Math.floor(HOUR / 6); // Convert hour to lead time index
+        console.log('Calculated leadTimeIndex:', leadTimeIndex);
         
         loadZarrWindData(coords, leadTimeIndex).then(function(data) {
+          console.log('Tile data loaded, length:', data.length);
           var bounds = map.getBounds();
           data = fitToBounds(data, bounds);
+          console.log('After fitToBounds, data length:', data.length);
           circles = DrawAll(data, GetRadius(coords.z));
+          console.log('Created circles:', circles.length);
           L.layerGroup(circles).addTo(layer);
+          console.log('=== END TILE CREATION DEBUG ===');
           done(error, tile);
         }).catch(function(err) {
           console.error('Failed to load tile data:', err);
+          console.log('=== END TILE CREATION DEBUG (ERROR) ===');
           done(err, tile);
         });
                         

@@ -446,14 +446,40 @@ def process_and_store_wind_data(source_name=DEFAULT_SOURCE, output_path=None, va
         wind_ds = fetch_wind_data(source_name, variables)
 
         with ProgressBar():
-            wind_ds.to_zarr(intermediate_path, mode='w')
+            # Create encoding that explicitly disables all compression and filters
+            encoding = {}
+            for var in wind_ds.data_vars:
+                encoding[var] = {
+                    'compressor': None,
+                    'filters': None
+                }
+            # Also encode coordinates to disable compression
+            for coord in wind_ds.coords:
+                encoding[coord] = {
+                    'compressor': None,
+                    'filters': None
+                }
+            wind_ds.to_zarr(intermediate_path, mode='w', encoding=encoding)
 
     print("Step 2: Compressing wind data...")
     ds_compressed = compress_wind_data(wind_ds)
 
-    print(f"Step 3: Storing as zarr {output_path}")
+    print(f"Step 3: Storing as zarr {output_path} (completely uncompressed)")
     with ProgressBar():
-        ds_compressed.to_zarr(output_path, mode='w')
+        # Create encoding that explicitly disables all compression and filters
+        encoding = {}
+        for var in ds_compressed.data_vars:
+            encoding[var] = {
+                'compressor': None,
+                'filters': None
+            }
+        # Also encode coordinates to disable compression
+        for coord in ds_compressed.coords:
+            encoding[coord] = {
+                'compressor': None,
+                'filters': None
+            }
+        ds_compressed.to_zarr(output_path, mode='w', encoding=encoding)
 
     print(f"Successfully processed and stored wind data at: {output_path}")
     
@@ -465,13 +491,7 @@ def process_and_store_wind_data(source_name=DEFAULT_SOURCE, output_path=None, va
         print(f"  Lead times: {ds_compressed.dims['lead_time']}")
     print(f"  Latitude range: {ds_compressed[conventions.LATITUDE].min().values:.2f} to {ds_compressed[conventions.LATITUDE].max().values:.2f}")
     print(f"  Longitude range: {ds_compressed[conventions.LONGITUDE].min().values:.2f} to {ds_compressed[conventions.LONGITUDE].max().values:.2f}")
-    
-    if conventions.WIND_SPEED in ds_compressed:
-        print(f"  Wind speed range: {ds_compressed[conventions.WIND_SPEED].min().values} to {ds_compressed[conventions.WIND_SPEED].max().values} (Beaufort scale)")
-    
-    if conventions.WIND_DIRECTION in ds_compressed:
-        print(f"  Wind direction range: {ds_compressed[conventions.WIND_DIRECTION].min().values} to {ds_compressed[conventions.WIND_DIRECTION].max().values} (direction bins)")
-    
+        
     return output_path
 
 

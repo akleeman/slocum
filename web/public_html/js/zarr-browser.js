@@ -116,9 +116,18 @@
     
     console.log(`Loading entire array: ${name}`, arrayMeta);
     
-    // For now, load the first chunk (0,0,0,0)
-    // In a full implementation, you'd load and merge all chunks
-    this.loadArrayChunk(name, [0, 0, 0, 0], callback);
+    // For 1D arrays, load the first chunk
+    // For multi-dimensional arrays, we need to load all chunks and merge them
+    const shape = arrayMeta.shape || [1];
+    if (shape.length === 1) {
+      // 1D array - load the first chunk
+      this.loadArrayChunk(name, [0], callback);
+    } else {
+      // Multi-dimensional array - for now, load the first chunk of each dimension
+      // This is a simplified approach - in a full implementation you'd load all chunks
+      const chunkCoords = new Array(shape.length).fill(0);
+      this.loadArrayChunk(name, chunkCoords, callback);
+    }
   };
 
   ZarrBrowser.prototype.loadArraySlice = function(name, slice, callback) {
@@ -167,6 +176,9 @@
       return;
     }
     
+    // Add chunk coordinates to metadata for test data generation
+    arrayMeta.requestedChunkCoords = chunkCoords;
+    
     // Build the correct chunk path for Zarr v3
     const chunkPath = this.buildChunkPath(name, chunkCoords, arrayMeta);
     
@@ -176,14 +188,46 @@
     fetch(chunkPath)
       .then(response => {
         if (!response.ok) {
+          if (response.status === 404) {
+            // Chunk file doesn't exist - this might be normal for some arrays
+            console.warn(`Chunk file not found: ${chunkPath}`);
+            // Return empty data based on the array shape
+            const shape = arrayMeta.shape || [1];
+            const size = shape.reduce((a, b) => a * b, 1);
+            const dtype = arrayMeta.data_type || 'int64';
+            
+            // Create empty data of the right type and size
+            let emptyData;
+            if (dtype === 'int64' || dtype === '<i8') {
+              emptyData = new BigInt64Array(size);
+            } else if (dtype === 'int32' || dtype === '<i4') {
+              emptyData = new Int32Array(size);
+            } else if (dtype === 'uint8' || dtype === '<u1') {
+              emptyData = new Uint8Array(size);
+            } else if (dtype === 'uint16' || dtype === '<u2') {
+              emptyData = new Uint16Array(size);
+            } else if (dtype === 'float64' || dtype === '<f8') {
+              emptyData = new Float64Array(size);
+            } else if (dtype === 'float32' || dtype === '<f4') {
+              emptyData = new Float32Array(size);
+            } else {
+              emptyData = new Uint8Array(size);
+            }
+            
+            console.log(`Created empty data for ${name}: ${emptyData.length} elements`);
+            callback(null, { data: emptyData });
+            return;
+          }
           throw new Error(`Failed to fetch chunk: ${response.status}`);
         }
         return response.arrayBuffer();
       })
       .then(buffer => {
-        // Parse the chunk data based on metadata
-        const data = this.parseChunkData(buffer, arrayMeta);
-        callback(null, { data: data });
+        if (buffer) { // Only parse if we got a buffer (not 404 case)
+          // Parse the chunk data based on metadata
+          const data = this.parseChunkData(buffer, arrayMeta);
+          callback(null, { data: data });
+        }
       })
       .catch(error => {
         console.error(`Failed to load chunk for ${name}:`, error);
@@ -205,122 +249,156 @@
       // 1D array - simple case
       return `${this.baseUrl}/${name}/c/0`;
     } else {
-      // Multi-dimensional array - build nested path
-      const chunkPath = chunkCoords.join('/');
-      return `${this.baseUrl}/${name}/c/${chunkPath}`;
+      // Multi-dimensional array - calculate chunk indices
+      const chunkIndices = [];
+      for (let i = 0; i < chunkCoords.length; i++) {
+        const coord = chunkCoords[i];
+        const chunkSize = chunks[i];
+        const chunkIndex = Math.floor(coord / chunkSize);
+        chunkIndices.push(chunkIndex);
+      }
+      
+      console.log(`Chunk indices for ${name}: ${chunkIndices}`);
+      return `${this.baseUrl}/${name}/c/${chunkIndices.join('/')}`;
     }
   };
 
   ZarrBrowser.prototype.parseChunkData = function(buffer, metadata) {
-    // Parse the actual binary chunk data
+    // Parse the actual binary chunk data (no compression)
     const shape = metadata.shape || [1];
     const size = shape.reduce((a, b) => a * b, 1);
     const dtype = metadata.data_type || 'int64';
     
-    console.log(`Parsing chunk data: shape=${shape}, size=${size}, dtype=${dtype}`);
+    console.log(`Parsing chunk data: shape=${shape}, size=${size}, dtype=${dtype}, buffer size=${buffer.byteLength}`);
     
-    // Check if the data is compressed
-    const codecs = metadata.codecs || [];
-    let dataBuffer = buffer;
-    
-    // Handle compression if present
-    let isCompressed = false;
-    for (const codec of codecs) {
-      if (codec.name === 'blosc' || codec.name === 'sharding_indexed') {
-        isCompressed = true;
-        console.log(`Data is compressed with ${codec.name}`);
-        break;
-      }
-    }
-    
-    // If data is compressed, we can't easily decompress it in the browser
-    // For now, generate realistic test data based on the expected values
-    if (isCompressed) {
-      console.log('Generating test data for compressed array');
-      return this.generateTestData(shape, dtype, metadata);
-    }
-    
-    // Parse the binary data based on dtype
+    // Parse the binary data based on dtype (no decompression needed)
     let data;
     try {
       if (dtype === 'int64' || dtype === '<i8') {
-        data = new BigInt64Array(dataBuffer);
+        // Handle partial buffers for int64
+        const bytesPerElement = 8;
+        const maxElements = Math.floor(buffer.byteLength / bytesPerElement);
+        const actualElements = Math.min(size, maxElements);
+        
+        if (actualElements === 0) {
+          console.warn(`Buffer too small for int64 data, creating empty array`);
+          data = new BigInt64Array(size);
+        } else {
+          // Create a view of the buffer with the available data
+          const view = new DataView(buffer, 0, actualElements * bytesPerElement);
+          data = new BigInt64Array(actualElements);
+          for (let i = 0; i < actualElements; i++) {
+            data[i] = view.getBigInt64(i * bytesPerElement, true); // true for little-endian
+          }
+          
+          // If we got fewer elements than expected, pad with zeros
+          if (actualElements < size) {
+            const fullData = new BigInt64Array(size);
+            fullData.set(data);
+            data = fullData;
+          }
+        }
       } else if (dtype === 'int32' || dtype === '<i4') {
-        data = new Int32Array(dataBuffer);
+        const bytesPerElement = 4;
+        const maxElements = Math.floor(buffer.byteLength / bytesPerElement);
+        const actualElements = Math.min(size, maxElements);
+        
+        if (actualElements === 0) {
+          data = new Int32Array(size);
+        } else {
+          const view = new DataView(buffer, 0, actualElements * bytesPerElement);
+          data = new Int32Array(actualElements);
+          for (let i = 0; i < actualElements; i++) {
+            data[i] = view.getInt32(i * bytesPerElement, true);
+          }
+          
+          if (actualElements < size) {
+            const fullData = new Int32Array(size);
+            fullData.set(data);
+            data = fullData;
+          }
+        }
       } else if (dtype === 'uint8' || dtype === '<u1') {
-        data = new Uint8Array(dataBuffer);
+        data = new Uint8Array(buffer);
+      } else if (dtype === 'uint16' || dtype === '<u2') {
+        const bytesPerElement = 2;
+        const maxElements = Math.floor(buffer.byteLength / bytesPerElement);
+        const actualElements = Math.min(size, maxElements);
+        
+        if (actualElements === 0) {
+          data = new Uint16Array(size);
+        } else {
+          const view = new DataView(buffer, 0, actualElements * bytesPerElement);
+          data = new Uint16Array(actualElements);
+          for (let i = 0; i < actualElements; i++) {
+            data[i] = view.getUint16(i * bytesPerElement, true);
+          }
+          
+          if (actualElements < size) {
+            const fullData = new Uint16Array(size);
+            fullData.set(data);
+            data = fullData;
+          }
+        }
       } else if (dtype === 'float64' || dtype === '<f8') {
-        data = new Float64Array(dataBuffer);
+        const bytesPerElement = 8;
+        const maxElements = Math.floor(buffer.byteLength / bytesPerElement);
+        const actualElements = Math.min(size, maxElements);
+        
+        if (actualElements === 0) {
+          data = new Float64Array(size);
+        } else {
+          const view = new DataView(buffer, 0, actualElements * bytesPerElement);
+          data = new Float64Array(actualElements);
+          for (let i = 0; i < actualElements; i++) {
+            data[i] = view.getFloat64(i * bytesPerElement, true);
+          }
+          
+          if (actualElements < size) {
+            const fullData = new Float64Array(size);
+            fullData.set(data);
+            data = fullData;
+          }
+        }
       } else if (dtype === 'float32' || dtype === '<f4') {
-        data = new Float32Array(dataBuffer);
+        const bytesPerElement = 4;
+        const maxElements = Math.floor(buffer.byteLength / bytesPerElement);
+        const actualElements = Math.min(size, maxElements);
+        
+        if (actualElements === 0) {
+          data = new Float32Array(size);
+        } else {
+          const view = new DataView(buffer, 0, actualElements * bytesPerElement);
+          data = new Float32Array(actualElements);
+          for (let i = 0; i < actualElements; i++) {
+            data[i] = view.getFloat32(i * bytesPerElement, true);
+          }
+          
+          if (actualElements < size) {
+            const fullData = new Float32Array(size);
+            fullData.set(data);
+            data = fullData;
+          }
+        }
       } else {
         console.warn(`Unknown dtype: ${dtype}, using Uint8Array`);
-        data = new Uint8Array(dataBuffer);
+        data = new Uint8Array(buffer);
       }
       
       console.log(`Successfully parsed chunk data: ${data.length} elements`);
       return data;
     } catch (error) {
       console.error(`Failed to parse chunk data:`, error);
-      // Fallback to test data
-      return this.generateTestData(shape, dtype, metadata);
+      throw new Error(`Failed to parse chunk data: ${error.message}`);
     }
   };
 
-  ZarrBrowser.prototype.generateTestData = function(shape, dtype, metadata) {
-    const size = shape.reduce((a, b) => a * b, 1);
-    
-    // Generate realistic test data based on the array name and type
-    const arrayName = metadata.name || 'unknown';
-    
-    if (arrayName === 'latitude') {
-      // Generate latitude values from 90 to -90
-      const data = new Float64Array(size);
-      for (let i = 0; i < size; i++) {
-        data[i] = 90 - (i * 180 / (size - 1));
-      }
-      return data;
-    } else if (arrayName === 'longitude') {
-      // Generate longitude values from -180 to 180
-      const data = new Float64Array(size);
-      for (let i = 0; i < size; i++) {
-        data[i] = -180 + (i * 360 / (size - 1));
-      }
-      return data;
-    } else if (arrayName === 'init_time') {
-      // Generate a timestamp (2020-10-01)
-      const data = new BigInt64Array(size);
-      data[0] = BigInt(1601510400); // Unix timestamp for 2020-10-01
-      return data;
-    } else if (arrayName === 'lead_time') {
-      // Generate lead times in hours (0 to 840 hours = 35 days)
-      const data = new Float64Array(size);
-      for (let i = 0; i < size; i++) {
-        data[i] = i * 3; // 3-hour intervals
-      }
-      return data;
-    } else if (arrayName === 'speed' || arrayName === 'direction') {
-      // Generate wind data (speed: 0-50 knots, direction: 0-15 bins)
-      const data = new Uint8Array(size);
-      for (let i = 0; i < size; i++) {
-        if (arrayName === 'speed') {
-          data[i] = Math.floor(Math.random() * 10); // 0-9 Beaufort scale
-        } else {
-          data[i] = Math.floor(Math.random() * 16); // 0-15 direction bins
-        }
-      }
-      return data;
-    } else {
-      // Generic fallback
-      if (dtype === 'float64' || dtype === '<f8') {
-        return new Float64Array(size).fill(Math.random());
-      } else if (dtype === 'int64' || dtype === '<i8') {
-        return new BigInt64Array(size).fill(BigInt(0));
-      } else {
-        return new Uint8Array(size).fill(0);
-      }
-    }
-  };
+
+
+ZarrBrowser.prototype.generateTestData = function(shape, dtype, metadata) {
+  // This method is kept for compatibility but should not be used for real data loading
+  throw new Error('Test data generation disabled - use real data loading');
+};
 
   // Create the main zarr function
   function createZarr(request, version, config) {
