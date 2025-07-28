@@ -923,17 +923,17 @@ function initializeSlocum(map, zarrUrl) {
     initializeZarr(zarrUrl).then(function(success) {
       if (success) {
         // Initialize time slider with zarr-based forecast times
-        sliderControl = L.control.timeSlider({
-          position: "bottomleft",
-          refTime: REF_TIME,
-          hours: FCST_HOURS
-        });
+      sliderControl = L.control.timeSlider({
+        position: "bottomleft",
+        refTime: REF_TIME,
+        hours: FCST_HOURS
+      });
 
-        map.addControl(sliderControl);
-        sliderControl.startSlider();
+      map.addControl(sliderControl);
+      sliderControl.startSlider();
         
         // Add wind layer
-        var layer = windCircleLayer();
+  var layer = windCircleLayer();
         map.addLayer(layer);
         
         console.log('Slocum initialized with zarr data successfully');
