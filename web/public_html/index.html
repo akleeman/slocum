@@ -22,6 +22,7 @@
    <script src="http://code.jquery.com/jquery-1.9.1.min.js"></script>
    <script src="http://code.jquery.com/ui/1.9.2/jquery-ui.js"></script>
    <script src="http://cdnjs.cloudflare.com/ajax/libs/jqueryui-touch-punch/0.2.2/jquery.ui.touch-punch.min.js"></script>
+       <script src="./js/zarr-browser.js"></script>
 
    <script type="text/javascript" src="./js/Slocum.js"></script>
    <script src="./js/TimeSlider.js"></script>
@@ -50,6 +51,11 @@
 
 var preloaded_data = []
 
+// Configuration for zarr data source
+var ZARR_DATA_URL = './data/latest_forecast.zarr';  // Default to local data
+// You can override this by setting a different URL:
+// var ZARR_DATA_URL = 'http://example.com/data.zarr';
+
 var map = L.map('map', {
     minZoom: 2,
     maxZoom: 12,
@@ -66,9 +72,8 @@ L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_toke
       accessToken: 'pk.eyJ1IjoiYWtsZWVtYW4iLCJhIjoiY2txNGVkaHhwMGc2eDJwb3plNTh0aWJnZyJ9.l78GPBIaV7WwxqKtgEG76A'
   }).addTo(map);
 
-
-initializeSlocum(map);
-
+// Initialize Slocum with zarr data source
+initializeSlocum(map, ZARR_DATA_URL);
 
 if (window.navigator.geolocation) {
   set_view = function(e) {

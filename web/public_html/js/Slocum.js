@@ -24,64 +24,388 @@ VELOCITY_COLORS = [
 var REF_TIME = undefined;
 var FCST_HOURS = undefined;
 
+// Zarr configuration
+var ZARR_BASE_URL = 'http://example.com/data.zarr';  // This will be configurable
+var zarrStore = null;
+var zarrDataset = null;
+
 Date.prototype.addHours = function(h) {
   this.setTime(this.getTime() + (h*60*60*1000));
   return this;
 }
 
-function DecodeFloat32(x) {
-  var buf = new ArrayBuffer(4);
-  var view = new DataView(buf);
-
-  for (let i = 0; i < 4; i++) {
-    view.setUint8(i, x[i]);
-  };
-  return view.getFloat32(0, true);
+// Load zarr library with Zarr v3 support
+function loadZarrLibrary(callback) {
+  if (typeof window.zarr === 'undefined') {
+    throw new Error('zarr-js library not loaded. Check console for import errors.');
+  }
+  
+  // Initialize zarr-js with fetch and v3 support
+  window.zarrInstance = window.zarr(window.fetch, 'v3');
+  console.log('zarr-js v3 library ready');
+  callback();
 }
 
-function DecodeUint32(x) {
-  var buf = new ArrayBuffer(4);
-  var view = new DataView(buf);
-
-  for (let i = 0; i < 4; i++) {
-    view.setUint8(i, x[i]);
-  };
-  return view.getUint32(0, true);
-}
-
-function LoadFile(path, parser) {
-  var result = null;
-  var request = new XMLHttpRequest();
-  request.open("GET", path, true);
-  request.responseType = "arraybuffer";
-  request.onload = function () {
-    if (request.readyState==4 &&
-        request.status==200 &&
-        request.response) {
-      var byteArray = new Uint8Array(request.response);
-      parser(byteArray);
-    } else {
-      console.log("failure loading:", path)
-      console.log(request)
+// Initialize zarr dataset using zarr-js v3 API
+async function initializeZarr(baseUrl) {
+  try {
+    if (!window.zarrInstance) {
+      throw new Error('zarr-js v3 library not loaded');
     }
-  };
-
-  request.send();
+    
+    // Convert relative URL to absolute URL
+    let absoluteUrl = baseUrl || ZARR_BASE_URL;
+    if (absoluteUrl.startsWith('./') || absoluteUrl.startsWith('../')) {
+      // Convert relative path to absolute URL
+      const baseUrl = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '/');
+      absoluteUrl = baseUrl + absoluteUrl.replace(/^\.\//, '');
+    }
+    
+    ZARR_BASE_URL = absoluteUrl;
+    console.log('Original URL:', baseUrl || ZARR_BASE_URL);
+    console.log('Absolute URL:', ZARR_BASE_URL);
+    console.log('Initializing zarr v3 dataset from:', ZARR_BASE_URL);
+    
+    // Use zarr-js v3 open method to get array accessors
+    return new Promise((resolve, reject) => {
+      window.zarrInstance.open(ZARR_BASE_URL, (err, arrays) => {
+        if (err) {
+          console.error('Failed to open zarr v3 dataset:', err);
+          reject(new Error(`Failed to open zarr dataset at ${ZARR_BASE_URL}: ${err.message}`));
+          return;
+        }
+        
+        console.log('Successfully opened zarr v3 dataset');
+        console.log('Available arrays:', Object.keys(arrays));
+        
+        // Store the arrays for later use
+        zarrDataset = arrays;
+        
+        // Log detailed information about the dataset
+        console.log('=== ZARR DATASET DETAILS ===');
+        for (const [key, array] of Object.entries(arrays)) {
+          console.log(`Array: ${key}`);
+          console.log(`  Type: Array accessor`);
+        }
+        console.log('=== END DATASET DETAILS ===');
+        
+        // Extract forecast times from zarr metadata
+        initializeForecastTimesFromZarr()
+          .then(() => {
+            console.log('Zarr dataset initialized successfully');
+            resolve(true);
+          })
+          .catch(reject);
+      });
+    });
+    
+  } catch (error) {
+    console.error('Failed to initialize zarr dataset:', error);
+    console.error('URL attempted:', ZARR_BASE_URL);
+    console.error('Full error details:', error);
+    throw new Error(`Failed to open zarr dataset at ${ZARR_BASE_URL}: ${error.message}`);
+  }
 }
 
-function LoadSpot(path, parser) {
-  var result = null;
-  var request = new XMLHttpRequest();
-  request.open("GET", path, true);
-  request.responseType = "arraybuffer";
-  request.onload = function () {
-    if (request.response) {
-      var byteArray = new Uint8Array(request.response);
-      parser(byteArray);
-    }    
-  };
+// Extract forecast times from zarr v3 using zarr-js API
+async function initializeForecastTimesFromZarr() {
+  try {
+    console.log('Extracting forecast times from zarr v3...');
+    console.log('Available arrays:', Object.keys(zarrDataset));
+    
+    // Check if init_time and lead_time exist
+    if (!zarrDataset.init_time) {
+      console.warn('init_time not found in zarr dataset, using current time');
+      REF_TIME = new Date();
+    } else {
+      console.log('Found init_time array');
+      
+      // Load init_time data using zarr-js v3 API
+      const initTimeArray = await loadZarrArrayV3('init_time');
+      console.log('Raw init_time data:', initTimeArray);
+      
+      // Handle different data formats
+      let refTime;
+      if (Array.isArray(initTimeArray)) {
+        refTime = new Date(initTimeArray[0] * 1000); // Convert seconds to milliseconds
+      } else {
+        refTime = new Date(initTimeArray * 1000);
+      }
+      REF_TIME = refTime;
+      console.log('Parsed REF_TIME:', REF_TIME);
+    }
+    
+    if (!zarrDataset.lead_time) {
+      throw new Error('lead_time not found in zarr dataset');
+    }
+    
+    console.log('Found lead_time array');
+    const leadTimeArray = await loadZarrArrayV3('lead_time');
+    console.log('Raw lead_time data:', leadTimeArray);
+    
+    // Handle different data formats
+    let fcstHours;
+    if (Array.isArray(leadTimeArray)) {
+      fcstHours = Array.from(leadTimeArray);
+    } else {
+      fcstHours = [leadTimeArray];
+    }
+    
+    FCST_HOURS = fcstHours;
+    console.log('Parsed FCST_HOURS:', FCST_HOURS);
+    console.log('Successfully set REF_TIME to:', REF_TIME);
+    console.log('Successfully set FCST_HOURS to:', FCST_HOURS);
+    
+  } catch (error) {
+    console.error('Failed to extract forecast times:', error);
+    throw new Error(`Failed to extract forecast times: ${error.message}`);
+  }
+}
 
-  request.send();
+// Convert Beaufort scale back to wind speeds
+function fromBeaufort(beaufortValue) {
+  const divs = WIND_BINS;
+  const ndivs = divs.length;
+  const bins = beaufortValue;
+  const upperBins = Math.min(bins, ndivs - 1);
+  const lowerBins = Math.max(upperBins - 1, 0);
+  const average = 0.5 * (divs[lowerBins] + divs[upperBins]);
+  
+  // Handle edge cases
+  const epsilon = Math.max(0.5 * Math.min(...divs.slice(1).map((v, i) => v - divs[i])), 1e-6);
+  if (bins === 0) return Math.min(...divs) - epsilon;
+  if (bins === ndivs) return Math.max(...divs) + epsilon;
+  
+  return average;
+}
+
+// Helper function to load Zarr v3 arrays using zarr-js v3 API
+async function loadZarrArrayV3(arrayName) {
+  try {
+    console.log(`Loading zarr v3 array: ${arrayName}`);
+    
+    if (!zarrDataset[arrayName]) {
+      throw new Error(`Array ${arrayName} not found in dataset`);
+    }
+    
+    // Use zarr-js v3 API to get all data from the array
+    return new Promise((resolve, reject) => {
+      zarrDataset[arrayName].get(null, (err, data) => {
+        if (err) {
+          console.error(`Failed to get data from array ${arrayName}:`, err);
+          reject(err);
+          return;
+        }
+        
+        console.log(`Successfully loaded array ${arrayName}:`, data);
+        resolve(data.data);
+      });
+    });
+    
+  } catch (error) {
+    console.error(`Failed to load zarr array ${arrayName}:`, error);
+    throw error;
+  }
+}
+
+// Helper function to load a slice of a Zarr v3 array using zarr-js v3 API
+async function loadZarrArraySliceV3(arrayName, slice) {
+  try {
+    console.log(`Loading zarr v3 array slice: ${arrayName} at ${slice}`);
+    
+    if (!zarrDataset[arrayName]) {
+      throw new Error(`Array ${arrayName} not found in dataset`);
+    }
+    
+    // Use zarr-js v3 API to get the specific slice
+    return new Promise((resolve, reject) => {
+      zarrDataset[arrayName].get(slice, (err, data) => {
+        if (err) {
+          console.error(`Failed to get slice from array ${arrayName}:`, err);
+          reject(err);
+          return;
+        }
+        
+        console.log(`Successfully loaded array slice ${arrayName}:`, data);
+        resolve(data.data);
+      });
+    });
+    
+  } catch (error) {
+    console.error(`Failed to load zarr array slice ${arrayName}:`, error);
+    throw error;
+  }
+}
+
+// Convert integer direction bins back to radians
+function fromIntegerDirection(directionBin) {
+  const dirBins = Array.from({length: 16}, (_, i) => -15 * Math.PI/16 + i * Math.PI/8);
+  const bins = directionBin;
+  const upper = bins % dirBins.length;
+  const wrapVal = -Math.PI;
+  const lower = (bins - 1) % dirBins.length;
+  
+  if (bins > 0) {
+    return 0.5 * (dirBins[lower] + dirBins[upper]);
+  } else {
+    return wrapVal;
+  }
+}
+
+// Load wind data from zarr v3 for a specific tile and time
+async function loadZarrWindData(tileCoords, leadTimeIndex) {
+  try {
+    if (!zarrDataset) {
+      throw new Error('Zarr dataset not initialized');
+    }
+    
+    console.log('Loading zarr wind data for tile:', tileCoords, 'time index:', leadTimeIndex);
+    
+    // Calculate tile bounds
+    const tileSize = 360 / Math.pow(2, tileCoords.z);
+    const lonMin = tileCoords.x * tileSize - 180;
+    const lonMax = lonMin + tileSize;
+    const latMax = 90 - tileCoords.y * tileSize;
+    const latMin = latMax - tileSize;
+    
+    // Load coordinate arrays
+    const [latArray, lonArray] = await Promise.all([
+      loadZarrArrayV3('latitude'),
+      loadZarrArrayV3('longitude')
+    ]);
+    
+    console.log(`Loaded coordinates: ${latArray.length} lats, ${lonArray.length} lons`);
+    
+    // Find indices within tile bounds
+    const validPoints = [];
+    for (let latIdx = 0; latIdx < latArray.length; latIdx++) {
+      const lat = latArray[latIdx];
+      if (lat >= latMin && lat <= latMax) {
+        for (let lonIdx = 0; lonIdx < lonArray.length; lonIdx++) {
+          const lon = lonArray[lonIdx];
+          const normalizedLon = lon > 180 ? lon - 360 : lon;
+          if (normalizedLon >= lonMin && normalizedLon <= lonMax) {
+            validPoints.push({ lat, lon, latIdx, lonIdx });
+          }
+        }
+      }
+    }
+    
+    console.log(`Found ${validPoints.length} points in tile bounds`);
+    
+    if (validPoints.length === 0) {
+      return [];
+    }
+    
+    // Load wind data for each valid point using zarr-js v3
+    const windDataPromises = validPoints.map(async (point) => {
+      try {
+        // Load speed and direction data for this point at the given time
+        const [speedData, directionData] = await Promise.all([
+          loadZarrArraySliceV3('speed', [0, leadTimeIndex, point.latIdx, point.lonIdx]),
+          loadZarrArraySliceV3('direction', [0, leadTimeIndex, point.latIdx, point.lonIdx])
+        ]);
+        
+        return {
+          lat: point.lat,
+          lon: point.lon,
+          speeds: Array.isArray(speedData) ? speedData : [speedData],
+          directions: Array.isArray(directionData) ? directionData : [directionData]
+        };
+      } catch (error) {
+        console.warn(`Failed to load wind data for point ${point.lat},${point.lon}:`, error);
+        return null;
+      }
+    });
+    
+    const results = await Promise.all(windDataPromises);
+    const windData = results.filter(r => r !== null);
+    console.log(`Successfully loaded wind data for ${windData.length} points`);
+    return windData;
+    
+  } catch (error) {
+    console.error('Failed to load zarr wind data:', error);
+    throw error;
+  }
+}
+
+// Load spot forecast data from zarr v3
+async function loadZarrSpotData(lat, lon) {
+  try {
+    if (!zarrDataset) {
+      throw new Error('Zarr dataset not initialized');
+    }
+    
+    console.log('Loading zarr spot forecast data for:', lat, lon);
+    
+    // Load coordinate arrays to find nearest grid point
+    const [latArray, lonArray] = await Promise.all([
+      loadZarrArrayV3('latitude'),
+      loadZarrArrayV3('longitude')
+    ]);
+    
+    // Find nearest grid point
+    let nearestLatIdx = 0;
+    let nearestLonIdx = 0;
+    let minLatDist = Infinity;
+    let minLonDist = Infinity;
+    
+    for (let i = 0; i < latArray.length; i++) {
+      const dist = Math.abs(latArray[i] - lat);
+      if (dist < minLatDist) {
+        minLatDist = dist;
+        nearestLatIdx = i;
+      }
+    }
+    
+    for (let i = 0; i < lonArray.length; i++) {
+      const dist = Math.abs(lonArray[i] - lon);
+      if (dist < minLonDist) {
+        minLonDist = dist;
+        nearestLonIdx = i;
+      }
+    }
+    
+    console.log(`Found nearest grid point: lat=${latArray[nearestLatIdx]}, lon=${lonArray[nearestLonIdx]}`);
+    
+    const spotData = {
+      hours: [...FCST_HOURS],
+      speeds: [],
+      directions: []
+    };
+    
+    // Load data for all forecast times
+    const timePromises = FCST_HOURS.map(async (hour, timeIdx) => {
+      try {
+        // Load speed and direction data for this time
+        const [speedData, directionData] = await Promise.all([
+          loadZarrArraySliceV3('speed', [0, timeIdx, nearestLatIdx, nearestLonIdx]),
+          loadZarrArraySliceV3('direction', [0, timeIdx, nearestLatIdx, nearestLonIdx])
+        ]);
+        
+        return {
+          speeds: Array.isArray(speedData) ? speedData : [speedData],
+          directions: Array.isArray(directionData) ? directionData : [directionData]
+        };
+      } catch (error) {
+        console.warn(`Failed to load data for time ${hour}:`, error);
+        return { speeds: [], directions: [] };
+      }
+    });
+    
+    const timeResults = await Promise.all(timePromises);
+    timeResults.forEach(result => {
+      spotData.speeds.push(result.speeds);
+      spotData.directions.push(result.directions);
+    });
+    
+    console.log(`Successfully loaded spot forecast data for ${FCST_HOURS.length} time steps`);
+    return spotData;
+    
+  } catch (error) {
+    console.error('Failed to load zarr spot data:', error);
+    throw error;
+  }
 }
 
 
@@ -116,36 +440,6 @@ function DrawSlices(lat, lon, speeds, directions, radius) {
 }
 
 
-function DecodePackedPoint(x) {
-  lon = DecodeFloat32(x.subarray(0, 4))
-  lat = DecodeFloat32(x.subarray(4, 8))
-  var n_members = (x.length - 8) / 2
-  speeds = x.subarray(8, 8 + n_members);
-  directions = x.subarray(8 + n_members, 8 + 2 * n_members);
-  return {'lat': lat, 'lon': lon, 'speeds': speeds, 'directions': directions}
-}
-
-
-function DecodePackedSpot(x) {
-  n_times = x[0]
-  diffs = x.subarray(1, n_times);
-  hours = [0];
-  for (let i = 0; i < n_times - 1; i++) {
-    hours.push(hours[i] + diffs[i])
-  };
-
-  x = x.subarray(n_times);
-  var n_members = (x.length / (2 * n_times))
-
-  speeds = []; 
-  directions = [];
-  for (let i = 0; i < n_times; i++) {
-      speeds.push(x.subarray(n_members * i, n_members * (i + 1)));
-      directions.push(x.subarray(n_members * (i + n_times), n_members * (i + 1 + n_times)));
-  }
-  return {'hours': hours, 'speeds': speeds, 'directions': directions}
-}
-
 function validLongitude(lon) {
   lon = lon % 360.
   if (lon < 0) {
@@ -162,20 +456,19 @@ function SpotPath(lat, lon) {
   return path
 }
 
-function binnedData(bytes) {
+function binnedData(spotData) {
 
-    var parsed = DecodePackedSpot(bytes);
     var data = []
     for (let bin = 0; bin < WIND_BINS.length; bin++) {
-      for (let i = 0; i < parsed['hours'].length; i++) {
-        var n = parsed['speeds'][i].length;
+      for (let i = 0; i < spotData.hours.length; i++) {
+        var n = spotData.speeds[i].length;
         var directions = []
         for (let j = 0; j < n; j++) {        
-          if (parsed['speeds'][i][j] == bin) {
-            directions.push(parsed['directions'][i][j])
+          if (spotData.speeds[i][j] == bin) {
+            directions.push(spotData.directions[i][j])
           }
         }
-        data.push({'speed': WIND_BINS[bin], 'hour': parsed['hours'][i], 'directions': directions});
+        data.push({'speed': WIND_BINS[bin], 'hour': spotData.hours[i], 'directions': directions});
       }
     }
     return data;
@@ -230,8 +523,8 @@ function windCircleData(x, y, directions, radius) {
   return slices;
 }
 
-function PopulateHeatMap(bytes, div) {
-  var data = binnedData(bytes)
+function PopulateHeatMap(spotData, div) {
+  var data = binnedData(spotData)
 
   // set the dimensions and margins of the graph
   var margin = {top: 30, right: 30, bottom: 30, left: 30}
@@ -418,9 +711,12 @@ function SpotPlot(x) {
 
   var div = d3.create("div");
 
-  LoadSpot(SpotPath(x._latlng.lat, x._latlng.lng), function (x) {
-    PopulateHeatMap(x, div);
-  })
+  loadZarrSpotData(x._latlng.lat, x._latlng.lng).then(function(spotData) {
+    PopulateHeatMap(spotData, div);
+  }).catch(function(error) {
+    console.error('Failed to load spot data:', error);
+    div.append("p").text("Failed to load forecast data");
+  });
 
   return div.node();
 }
@@ -463,22 +759,6 @@ function BuildWindCircle(lat, lon, speeds, directions, radius) {
 
   components.push(outline)
   return components;
-}
-
-function ParseSlocum(data) {
-  var packet_size = DecodeUint32(data.subarray(0, 4));
-  data = data.subarray(4);  
-  decoded_data = []
-  
-  var count = 0;
-  while (data.length > 0) {
-    count += 1;
-    one_point = data.subarray(0, packet_size);
-    var output = DecodePackedPoint(one_point)
-    decoded_data.push(output);
-    data = data.subarray(packet_size);
-  }
-  return decoded_data;
 }
 
 function InView(bounds, pt) {
@@ -535,7 +815,7 @@ function Draw(m, data) {
     var pt = data[i];
     var on_grid = (pt['lat'] % grid_size == 0 && pt['lon'] % grid_size == 0);
     if (on_grid && InView(bounds, pt)) {
-      only_visible.append(pt);
+      only_visible.push(pt);
     }
   }
   return DrawAll(only_visible, radius);
@@ -610,15 +890,18 @@ L.GridLayer.WindCircles = L.GridLayer.extend({
         const layer = L.layerGroup().addTo(map);
         this.m_tileLayers[id] = layer;
     
-        path = `./data/${coords.z}/${HOUR}/${coords.x}_${coords.y}.bin`;
+        // Use zarr data instead of binary files
+        const leadTimeIndex = Math.floor(HOUR / 6); // Convert hour to lead time index
         
-        var bounds = this._map.getBounds();
-        LoadFile(path,  function (bytes) {
-          var data = ParseSlocum(bytes);
+        loadZarrWindData(coords, leadTimeIndex).then(function(data) {
+          var bounds = map.getBounds();
           data = fitToBounds(data, bounds);
           circles = DrawAll(data, GetRadius(coords.z));
           L.layerGroup(circles).addTo(layer);
           done(error, tile);
+        }).catch(function(err) {
+          console.error('Failed to load tile data:', err);
+          done(err, tile);
         });
                         
         return tile;
@@ -635,60 +918,53 @@ windCircleLayer = function(opts) {
 };
 
 
-function parseForecastTimes(bytes) {
-  var timestamp = DecodeUint32(bytes.subarray(0, 4))
-  bytes = bytes.subarray(4);
-  // Create a new JavaScript Date object based on the timestamp
-  // multiplied by 1000 so that the argument is in milliseconds, not seconds.
-  REF_TIME = new Date(timestamp * 1000);
-  ms_per_minute = 60*1000
-  offset = REF_TIME.getTimezoneOffset() * ms_per_minute;
-  REF_TIME = new Date(REF_TIME - offset);
-  
-  var n_times = DecodeUint32(bytes.subarray(0, 4));
-  var bytes = bytes.subarray(4);
-  var diffs = bytes.subarray(0, n_times);
-  FCST_HOURS = [0];
-  for (let i = 0; i < n_times - 1; i++) {
-    FCST_HOURS.push(FCST_HOURS[i] + diffs[i])
-  };
-}
+function initializeSlocum(map, zarrUrl) {
+  loadZarrLibrary(function() {
+    initializeZarr(zarrUrl).then(function(success) {
+      if (success) {
+        // Initialize time slider with zarr-based forecast times
+        sliderControl = L.control.timeSlider({
+          position: "bottomleft",
+          refTime: REF_TIME,
+          hours: FCST_HOURS
+        });
 
-function LoadForecastTimes(map) {
-    path = `./data/time.bin`;
-    
-    parseAndLoad = function(bytes) {
-      parseForecastTimes(bytes);
-      
-      sliderControl = L.control.timeSlider({
-        position: "bottomleft",
-        refTime: REF_TIME,
-        hours: FCST_HOURS
-      });
-
-      map.addControl(sliderControl);
-      //And initialize the slider
-      sliderControl.startSlider();
-    }
-    
-    LoadFile(path, parseAndLoad)
-}
-
-function initializeSlocum(map) {
-
-  LoadForecastTimes(map)
-
-  var layer = windCircleLayer();
-  map.addLayer( layer );
-  
+        map.addControl(sliderControl);
+        sliderControl.startSlider();
+        
+        // Add wind layer
+        var layer = windCircleLayer();
+        map.addLayer(layer);
+        
+        console.log('Slocum initialized with zarr data successfully');
+      } else {
+        console.error('Failed to initialize zarr dataset');
+      }
+    }).catch(function(error) {
+      console.error('Failed to initialize Slocum:', error);
+    });
+  });
 }
 
 function updateValidTime() {
-  map.removeLayer(L.GridLayer.WindCircles);
-  map.addLayer(windCircleLayer());
+  // Remove existing wind layer
+  map.eachLayer(function(layer) {
+    if (layer instanceof L.GridLayer.WindCircles) {
+      map.removeLayer(layer);
+    }
+  });
+  
+  // Add new wind layer with updated time
+  var layer = windCircleLayer();
+  map.addLayer(layer);
 }
 
 function incrementValidTime() {
-  HOUR += 6;
-  updateValidTime()
+  const currentIndex = FCST_HOURS.indexOf(HOUR);
+  if (currentIndex < FCST_HOURS.length - 1) {
+    HOUR = FCST_HOURS[currentIndex + 1];
+  } else {
+    HOUR = FCST_HOURS[0]; // Wrap around
+  }
+  updateValidTime();
 }
