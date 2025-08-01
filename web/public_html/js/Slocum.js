@@ -358,13 +358,16 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
       return [];
     }
     
-    // Sub-sample to ~20 points spread evenly across the tile so that
-    // we always include locations near the map centre (rather than just
-    // the first few indices which are often at one edge of the tile).
-    const MAX_POINTS_PER_TILE = 20;
-    const step = Math.max(1, Math.floor(validPoints.length / MAX_POINTS_PER_TILE));
-    const limitedPoints = validPoints.filter((_, idx) => idx % step === 0);
-    console.log(`Sub-sampled ${validPoints.length} valid points down to ${limitedPoints.length}`);
+    // Determine desired spatial thinning based on zoom-level grid spacing so
+    // we keep a regular pattern (handled later in Draw).  Here we keep *all*
+    // grid-aligned points to ensure a proper lattice, even if that is more
+    // than 20.
+    const datasetSpacing = 0.1; // degrees between original grid points
+    const zoomGridSize = GetGridSize(tileCoords.z);
+    const stride = Math.max(1, Math.round(zoomGridSize / datasetSpacing));
+
+    const limitedPoints = validPoints.filter(pt => (pt.latIdx % stride === 0) && (pt.lonIdx % stride === 0));
+    console.log(`Filtered ${validPoints.length} valid points down to ${limitedPoints.length} using stride ${stride}`);
     
     // Load wind data for each valid point using zarr-js v3
     const windDataPromises = limitedPoints.map(async (point) => {
