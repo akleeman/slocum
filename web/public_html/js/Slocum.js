@@ -162,10 +162,10 @@ async function initializeForecastTimesFromZarr() {
     
     // Handle different data formats
     let fcstHours;
-    if (Array.isArray(leadTimeArray)) {
-      fcstHours = Array.from(leadTimeArray);
+    if (Array.isArray(leadTimeArray) || (leadTimeArray && leadTimeArray.length !== undefined)) {
+      fcstHours = Array.from(leadTimeArray, v => Number(v));
     } else {
-      fcstHours = [leadTimeArray];
+      fcstHours = [Number(leadTimeArray)];
     }
     
     FCST_HOURS = fcstHours;
@@ -194,6 +194,23 @@ function fromBeaufort(beaufortValue) {
   if (bins === ndivs) return Math.max(...divs) + epsilon;
   
   return average;
+}
+
+// Utility: convert zarr-js return (scalar or length-1 typed array) to plain Number
+function toScalar(v) {
+  if (v && typeof v === 'object' && v.length !== undefined) {
+    return Number(v[0]);
+  }
+  return Number(v);
+}
+
+// Convert zarr data (scalar, length-1 array, or 1-D typed array) to a JS array of
+// plain numbers.  Ensures downstream code can iterate over ensemble members.
+function toNumArray(v) {
+  if (v && typeof v === 'object' && v.length !== undefined) {
+    return Array.from(v, Number);
+  }
+  return [Number(v)];
 }
 
 // Helper function to load Zarr v3 arrays using zarr-js v3 API
@@ -374,10 +391,12 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
       try {
         console.log(`Loading data for point ${point.lat},${point.lon} (indices: ${point.latIdx},${point.lonIdx})`);
         
-        // Load speed and direction data for this point at the given time
+        // Fetch ALL ensemble members (dimension 0) for this point & time by
+        // passing null for that dimension in the slice specification.
+        const sliceSpec = [null, leadTimeIndex, point.latIdx, point.lonIdx];
         const [speedData, directionData] = await Promise.all([
-          loadZarrArraySliceV3('speed', [0, leadTimeIndex, point.latIdx, point.lonIdx]),
-          loadZarrArraySliceV3('direction', [0, leadTimeIndex, point.latIdx, point.lonIdx])
+          loadZarrArraySliceV3('speed', sliceSpec),
+          loadZarrArraySliceV3('direction', sliceSpec)
         ]);
         
         console.log(`Point ${point.lat},${point.lon}: speed=${speedData}, direction=${directionData}`);
@@ -385,8 +404,10 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
         return {
           lat: point.lat,
           lon: point.lon,
-          speeds: Array.isArray(speedData) ? speedData : [speedData],
-          directions: Array.isArray(directionData) ? directionData : [directionData]
+          latIdx: point.latIdx,
+          lonIdx: point.lonIdx,
+          speeds: toNumArray(speedData),
+          directions: toNumArray(directionData)
         };
       } catch (error) {
         console.warn(`Failed to load wind data for point ${point.lat},${point.lon}:`, error);
@@ -459,15 +480,15 @@ async function loadZarrSpotData(lat, lon) {
     // Load data for all forecast times
     const timePromises = FCST_HOURS.map(async (hour, timeIdx) => {
       try {
-        // Load speed and direction data for this time
+        const sliceSpec = [null, timeIdx, nearestLatIdx, nearestLonIdx];
         const [speedData, directionData] = await Promise.all([
-          loadZarrArraySliceV3('speed', [0, timeIdx, nearestLatIdx, nearestLonIdx]),
-          loadZarrArraySliceV3('direction', [0, timeIdx, nearestLatIdx, nearestLonIdx])
+          loadZarrArraySliceV3('speed', sliceSpec),
+          loadZarrArraySliceV3('direction', sliceSpec)
         ]);
         
         return {
-          speeds: Array.isArray(speedData) ? speedData : [speedData],
-          directions: Array.isArray(directionData) ? directionData : [directionData]
+          speeds: toNumArray(speedData),
+          directions: toNumArray(directionData)
         };
       } catch (error) {
         console.warn(`Failed to load data for time ${hour}:`, error);
@@ -981,11 +1002,20 @@ L.GridLayer.WindCircles = L.GridLayer.extend({
     },
 
     cleanup : function(zoom) {
+      // Build a set of tile IDs that *should* be present after pan/zoom
+      var validIds = {};
       for (var key in this._tiles) {
-        var tile = this._tiles[key]        
-        if (tile.coords.z != zoom && tile.el.id in this.m_tileLayers) {
-          map.removeLayer(this.m_tileLayers[tile.el.id]);
-          delete this.m_tileLayers[tile.el.id];
+        var t = this._tiles[key];
+        if (t.coords.z === zoom) {
+          validIds[this.tileId(t.coords)] = true;
+        }
+      }
+
+      // Remove any layer groups that are no longer represented by an active tile at this zoom
+      for (var layerId in this.m_tileLayers) {
+        if (!(layerId in validIds)) {
+          map.removeLayer(this.m_tileLayers[layerId]);
+          delete this.m_tileLayers[layerId];
         }
       }
     },
@@ -1034,8 +1064,12 @@ L.GridLayer.WindCircles = L.GridLayer.extend({
         });
                         
         return tile;
-    }
-    
+    },
+
+    _onMapMove: function() {
+      this.cleanup(map.getZoom());
+    },
+
 });
 
 windCircleLayer = function(opts) {
