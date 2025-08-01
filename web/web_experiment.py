@@ -450,13 +450,13 @@ def process_and_store_wind_data(source_name=DEFAULT_SOURCE, output_path=None, va
             encoding = {}
             for var in wind_ds.data_vars:
                 encoding[var] = {
-                    'compressor': None,
+                    'compressors': None,
                     'filters': None
                 }
             # Also encode coordinates to disable compression
             for coord in wind_ds.coords:
                 encoding[coord] = {
-                    'compressor': None,
+                    'compressors': None,
                     'filters': None
                 }
             wind_ds.to_zarr(intermediate_path, mode='w', encoding=encoding)
@@ -464,21 +464,43 @@ def process_and_store_wind_data(source_name=DEFAULT_SOURCE, output_path=None, va
     print("Step 2: Compressing wind data...")
     ds_compressed = compress_wind_data(wind_ds)
 
+    # Ensure init_time coordinate is stored as int64 seconds since epoch
+    if 'init_time' in ds_compressed.coords:
+        # Convert to numpy datetime64[ns] if necessary, then to seconds
+        init_vals = ds_compressed['init_time'].values
+        if np.issubdtype(init_vals.dtype, np.datetime64):
+            seconds = (init_vals.astype('datetime64[s]').astype('int64'))
+        else:
+            # Already numeric, assume seconds
+            seconds = init_vals.astype('int64')
+        ds_compressed = ds_compressed.assign_coords(init_time=('init_time', seconds.astype('int64')))
+        ds_compressed['init_time'].attrs.clear()
+        ds_compressed['init_time'].attrs.update({
+            'units': 'seconds since 1970-01-01T00:00:00Z',
+            'calendar': 'proleptic_gregorian'
+        })
+
     print(f"Step 3: Storing as zarr {output_path} (completely uncompressed)")
     with ProgressBar():
-        # Create encoding that explicitly disables all compression and filters
+        # after wind_ds (or ds_compressed) exists and BEFORE to_zarr()
+        for coord in ('init_time', 'lead_time', 'latitude', 'longitude', 'ensemble_member'):
+            if coord in ds_compressed:
+                # store each coordinate as a single plain chunk
+                ds_compressed[coord] = ds_compressed[coord].chunk({coord: -1})
+
         encoding = {}
         for var in ds_compressed.data_vars:
             encoding[var] = {
-                'compressor': None,
-                'filters': None
+                'compressors': None,      # leave spatial vars uncompressed too
+                'filters'   : None
             }
-        # Also encode coordinates to disable compression
         for coord in ds_compressed.coords:
             encoding[coord] = {
-                'compressor': None,
-                'filters': None
+                'compressors': None,
+                'filters'   : None,
+                'chunks'    : ds_compressed[coord].shape      # <-- important
             }
+
         ds_compressed.to_zarr(output_path, mode='w', encoding=encoding)
 
     print(f"Successfully processed and stored wind data at: {output_path}")

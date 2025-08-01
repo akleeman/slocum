@@ -23,43 +23,48 @@
         return response.json();
       })
       .then(metadata => {
+        // console.log('Raw zarr.json metadata:', metadata);
         this.metadata = metadata;
-        console.log('Loaded zarr v3 metadata:', metadata);
-        console.log('Metadata keys:', Object.keys(metadata));
+        
+        // Debug the actual metadata for init_time and lead_time
+        if (metadata.consolidated_metadata?.metadata) {
+          // No action needed, metadata is fine
+        } else {
+          console.warn('No consolidated_metadata.metadata found');
+        }
         
         // Check for different metadata structures
-        let arrays = {};
+        this.arrays = {};
         if (metadata.meta) {
-          console.log('Found metadata.meta:', metadata.meta);
           for (const [name, arrayMeta] of Object.entries(metadata.meta)) {
-            arrays[name] = this.createArrayAccessor(name, arrayMeta);
+            this.arrays[name] = this.createArrayAccessor(name, arrayMeta);
           }
         } else if (metadata.consolidated_metadata) {
-          console.log('Found metadata.consolidated_metadata:', metadata.consolidated_metadata);
-          
                   // Check if consolidated_metadata has a nested metadata structure
         if (metadata.consolidated_metadata.metadata) {
-          console.log('Found nested metadata.consolidated_metadata.metadata:', metadata.consolidated_metadata.metadata);
           for (const [name, arrayMeta] of Object.entries(metadata.consolidated_metadata.metadata)) {
-            arrayMeta.name = name; // Add the array name to metadata
-            arrays[name] = this.createArrayAccessor(name, arrayMeta);
+            // Create a deep copy of the metadata to avoid sharing references
+            const metadataCopy = structuredClone ? structuredClone(arrayMeta) : JSON.parse(JSON.stringify(arrayMeta));
+            metadataCopy.name = name; // Add the array name to metadata
+            
+            this.arrays[name] = this.createArrayAccessor(name, metadataCopy);
           }
         } else {
           // Direct consolidated_metadata structure
           for (const [name, arrayMeta] of Object.entries(metadata.consolidated_metadata)) {
-            arrayMeta.name = name; // Add the array name to metadata
-            arrays[name] = this.createArrayAccessor(name, arrayMeta);
+            // Create a deep copy of the metadata to avoid sharing references
+            const metadataCopy = structuredClone ? structuredClone(arrayMeta) : JSON.parse(JSON.stringify(arrayMeta));
+            metadataCopy.name = name; // Add the array name to metadata
+            this.arrays[name] = this.createArrayAccessor(name, metadataCopy);
           }
         }
         } else {
           console.error('No recognizable metadata structure found');
-          console.log('Available keys:', Object.keys(metadata));
           callback(new Error('No recognizable metadata structure found'));
           return;
         }
         
-        console.log('Created arrays:', Object.keys(arrays));
-        callback(null, arrays);
+        callback(null, this.arrays);
       })
       .catch(error => {
         console.error('Failed to open zarr dataset:', error);
@@ -93,28 +98,15 @@
   };
 
   ZarrBrowser.prototype.loadEntireArray = function(name, callback) {
-    // Check all possible metadata structures
-    let arrayMeta = this.metadata.meta ? this.metadata.meta[name] : null;
-    if (!arrayMeta && this.metadata.consolidated_metadata) {
-      if (this.metadata.consolidated_metadata.metadata) {
-        arrayMeta = this.metadata.consolidated_metadata.metadata[name];
-      } else {
-        arrayMeta = this.metadata.consolidated_metadata[name];
-      }
-    }
-    
-    if (!arrayMeta) {
-      console.error(`Array ${name} not found in metadata`);
-      console.log('Available in meta:', this.metadata.meta ? Object.keys(this.metadata.meta) : 'none');
-      console.log('Available in consolidated_metadata:', this.metadata.consolidated_metadata ? Object.keys(this.metadata.consolidated_metadata) : 'none');
-      if (this.metadata.consolidated_metadata && this.metadata.consolidated_metadata.metadata) {
-        console.log('Available in consolidated_metadata.metadata:', Object.keys(this.metadata.consolidated_metadata.metadata));
-      }
+    // Get the array accessor to get the correct metadata
+    const arrayAccessor = this.arrays[name];
+    if (!arrayAccessor) {
+      console.error(`Array ${name} not found in arrays`);
       callback(new Error(`Array ${name} not found`));
       return;
     }
     
-    console.log(`Loading entire array: ${name}`, arrayMeta);
+    const arrayMeta = arrayAccessor.metadata;
     
     // For 1D arrays, load the first chunk
     // For multi-dimensional arrays, we need to load all chunks and merge them
@@ -131,27 +123,51 @@
   };
 
   ZarrBrowser.prototype.loadArraySlice = function(name, slice, callback) {
-    // Check all possible metadata structures
-    let arrayMeta = this.metadata.meta ? this.metadata.meta[name] : null;
-    if (!arrayMeta && this.metadata.consolidated_metadata) {
-      if (this.metadata.consolidated_metadata.metadata) {
-        arrayMeta = this.metadata.consolidated_metadata.metadata[name];
-      } else {
-        arrayMeta = this.metadata.consolidated_metadata[name];
-      }
-    }
-    
-    if (!arrayMeta) {
-      console.error(`Array ${name} not found in metadata`);
+    // Get the array accessor to get the correct metadata
+    const arrayAccessor = this.arrays[name];
+    if (!arrayAccessor) {
+      console.error(`Array ${name} not found in arrays`);
       callback(new Error(`Array ${name} not found`));
       return;
     }
     
-    console.log(`Loading array slice: ${name} at ${slice}`, arrayMeta);
+    const arrayMeta = arrayAccessor.metadata;
     
     // Convert slice to chunk coordinates
     const chunkCoords = this.sliceToChunkCoords(slice, arrayMeta);
-    this.loadArrayChunk(name, chunkCoords, callback);
+    
+    // Load the chunk and extract the specific value
+    this.loadArrayChunk(name, chunkCoords, (error, result) => {
+      if (error) {
+        callback(error);
+        return;
+      }
+      
+      // Extract the specific value from the chunk
+      const chunkData = result.data;      
+      const chunks = arrayMeta.chunk_grid?.configuration?.chunk_shape || [1];
+      
+      // Calculate the offset within the chunk
+      let offset = 0;
+      for (let i = 0; i < slice.length; i++) {
+        const coord = slice[i];
+        const chunkSize = chunks[i];
+        const localCoord = coord % chunkSize;
+        
+        // Calculate offset for this dimension
+        let dimOffset = localCoord;
+        for (let j = i + 1; j < slice.length; j++) {
+          const nextChunkSize = chunks[j];
+          dimOffset *= nextChunkSize;
+        }
+        offset += dimOffset;
+      }
+            
+      // Get the single value at the calculated offset
+      const value = chunkData[offset];
+      
+      callback(null, { data: [value] });
+    });
   };
 
   ZarrBrowser.prototype.sliceToChunkCoords = function(slice, metadata) {
@@ -161,29 +177,21 @@
   };
 
   ZarrBrowser.prototype.loadArrayChunk = function(name, chunkCoords, callback) {
-    // Check all possible metadata structures
-    let arrayMeta = this.metadata.meta ? this.metadata.meta[name] : null;
-    if (!arrayMeta && this.metadata.consolidated_metadata) {
-      if (this.metadata.consolidated_metadata.metadata) {
-        arrayMeta = this.metadata.consolidated_metadata.metadata[name];
-      } else {
-        arrayMeta = this.metadata.consolidated_metadata[name];
-      }
-    }
-    
-    if (!arrayMeta) {
-      callback(new Error(`Array ${name} not found in metadata`));
+    // Get the array accessor to get the correct metadata
+    const arrayAccessor = this.arrays[name];
+    if (!arrayAccessor) {
+      console.error(`Array ${name} not found in arrays`);
+      callback(new Error(`Array ${name} not found`));
       return;
     }
+    
+    const arrayMeta = arrayAccessor.metadata;
     
     // Add chunk coordinates to metadata for test data generation
     arrayMeta.requestedChunkCoords = chunkCoords;
     
     // Build the correct chunk path for Zarr v3
     const chunkPath = this.buildChunkPath(name, chunkCoords, arrayMeta);
-    
-    console.log(`Loading chunk: ${chunkPath}`);
-    console.log(`Array metadata for ${name}:`, arrayMeta);
     
     fetch(chunkPath, {
       headers: {
@@ -199,6 +207,8 @@
             const shape = arrayMeta.shape || [1];
             const size = shape.reduce((a, b) => a * b, 1);
             const dtype = arrayMeta.data_type || 'int64';
+            
+            console.log(`Creating empty data for ${name}: shape=${shape}, size=${size}, dtype=${dtype}, arrayMeta keys:`, Object.keys(arrayMeta));
             
             // Create empty data of the right type and size
             let emptyData;
@@ -218,47 +228,39 @@
               emptyData = new Uint8Array(size);
             }
             
-            console.log(`Created empty data for ${name}: ${emptyData.length} elements`);
+            console.log(`Created empty data for ${name}: length=${emptyData.length}`);
             callback(null, { data: emptyData });
             return;
           }
           throw new Error(`Failed to fetch chunk: ${response.status}`);
         }
         
-        console.log(`Response headers for ${name}:`, {
-          'content-length': response.headers.get('content-length'),
-          'content-encoding': response.headers.get('content-encoding'),
-          'accept-ranges': response.headers.get('accept-ranges'),
-          'content-type': response.headers.get('content-type'),
-          'server': response.headers.get('server'),
-          'date': response.headers.get('date')
-        });
-        
-        // Check if we're getting the full file
-        const expectedSize = arrayMeta.shape.reduce((a, b) => a * b, 1) * this.getBytesPerElement(arrayMeta.data_type);
+        // Check if we're getting the expected chunk size
+        const chunks = arrayMeta.chunk_grid?.configuration?.chunk_shape || arrayMeta.shape;
+        const chunkSize = chunks.reduce((a, b) => a * b, 1) * this.getBytesPerElement(arrayMeta.data_type);
         const actualSize = response.headers.get('content-length');
-        console.log(`Expected size for ${name}: ${expectedSize} bytes, actual: ${actualSize} bytes`);
         
-        if (actualSize && parseInt(actualSize) < expectedSize) {
-          console.warn(`File size mismatch for ${name}: expected ${expectedSize}, got ${actualSize}`);
+        if (actualSize && parseInt(actualSize) < chunkSize) {
+          console.warn(`File size mismatch for ${name}: expected chunk size ${chunkSize}, got ${actualSize} bytes`);
         }
         
         return response.arrayBuffer();
       })
       .then(buffer => {
         if (buffer) { // Only parse if we got a buffer (not 404 case)
-          console.log(`Received buffer for ${name}: ${buffer.byteLength} bytes`);
-          
-          // Debug: show first few bytes of the buffer
           const view = new Uint8Array(buffer);
-          console.log(`First 32 bytes of ${name}:`, Array.from(view.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' '));
           
-          // Check if the data looks compressed (starts with 02 01 91 01 pattern)
-          if (view[0] === 0x02 && view[1] === 0x01 && view[2] === 0x91 && view[3] === 0x01) {
-            console.warn(`Data appears to be compressed for ${name}, attempting to skip compression header`);
+          // Check if the metadata indicates compression
+          const codecs = arrayMeta.codecs || [];
+          const hasCompression = codecs.some(codec => codec.name !== 'bytes');
+          
+          // Check if the data looks compressed (starts with compression header patterns)
+          if ((view[0] === 0x02 && view[1] === 0x01 && view[2] === 0x91 && view[3] === 0x01) ||
+              (view[0] === 0x18 && view[1] === 0xab && view[2] === 0x00 && view[3] === 0x00) ||
+              (view[0] === 0xa8 && view[1] === 0x05 && view[2] === 0x00 && view[3] === 0x00)) {
+            console.warn(`Data for ${name} appears to be compressed, attempting to skip header`);
             // Skip the first 4 bytes (compression header) and use the rest
             buffer = buffer.slice(4);
-            console.log(`After skipping header, buffer size: ${buffer.byteLength} bytes`);
           }
           
           // Parse the chunk data based on metadata
@@ -280,8 +282,6 @@
     const shape = arrayMeta.shape || [1];
     const chunks = arrayMeta.chunk_grid?.configuration?.chunk_shape || shape;
     
-    console.log(`Building chunk path for ${name}: shape=${shape}, chunks=${chunks}, coords=${chunkCoords}`);
-    
     if (shape.length === 1) {
       // 1D array - simple case
       return `${this.baseUrl}/${name}/c/0`;
@@ -300,7 +300,6 @@
       const chunkFile = chunkCoords[chunkCoords.length - 1] % chunks[chunks.length - 1];
       chunkIndices.push(chunkFile);
       
-      console.log(`Chunk indices for ${name}: ${chunkIndices}`);
       return `${this.baseUrl}/${name}/c/${chunkIndices.join('/')}`;
     }
   };
@@ -331,11 +330,10 @@
 
   ZarrBrowser.prototype.parseChunkData = function(buffer, metadata) {
     // Parse the actual binary chunk data (no compression)
-    const shape = metadata.shape || [1];
-    const size = shape.reduce((a, b) => a * b, 1);
+    // Use chunk shape if available, otherwise fall back to full shape
+    const chunks = metadata.chunk_grid?.configuration?.chunk_shape || metadata.shape || [1];
+    const size = chunks.reduce((a, b) => a * b, 1);
     const dtype = metadata.data_type || 'int64';
-    
-    console.log(`Parsing chunk data: shape=${shape}, size=${size}, dtype=${dtype}, buffer size=${buffer.byteLength}`);
     
     // Parse the binary data based on dtype (no decompression needed)
     let data;
@@ -353,6 +351,7 @@
           // Create a view of the buffer with the available data
           const view = new DataView(buffer, 0, actualElements * bytesPerElement);
           data = new BigInt64Array(actualElements);
+          
           for (let i = 0; i < actualElements; i++) {
             data[i] = view.getBigInt64(i * bytesPerElement, true); // true for little-endian
           }
@@ -451,7 +450,6 @@
         data = new Uint8Array(buffer);
       }
       
-      console.log(`Successfully parsed chunk data: ${data.length} elements`);
       return data;
     } catch (error) {
       console.error(`Failed to parse chunk data:`, error);

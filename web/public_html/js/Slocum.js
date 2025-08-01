@@ -79,6 +79,7 @@ async function initializeZarr(baseUrl) {
         console.log('Successfully opened zarr v3 dataset');
         console.log('Available arrays:', Object.keys(arrays));
         
+        
         // Store the arrays for later use
         zarrDataset = arrays;
         
@@ -201,6 +202,7 @@ async function loadZarrArrayV3(arrayName) {
     console.log(`Loading zarr v3 array: ${arrayName}`);
     
     if (!zarrDataset[arrayName]) {
+
       throw new Error(`Array ${arrayName} not found in dataset`);
     }
     
@@ -213,7 +215,6 @@ async function loadZarrArrayV3(arrayName) {
           return;
         }
         
-        console.log(`Successfully loaded array ${arrayName}:`, data);
         resolve(data.data);
       });
     });
@@ -278,12 +279,16 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
     console.log('=== WIND DATA LOADING DEBUG ===');
     console.log('Loading zarr wind data for tile:', tileCoords, 'time index:', leadTimeIndex);
     
-    // Calculate tile bounds
-    const tileSize = 360 / Math.pow(2, tileCoords.z);
-    const lonMin = tileCoords.x * tileSize - 180;
-    const lonMax = lonMin + tileSize;
-    const latMax = 90 - tileCoords.y * tileSize;
-    const latMin = latMax - tileSize;
+    // Calculate tile bounds using Leaflet's map.unproject, ensuring we match
+    // the grid that Leaflet actually displays for this tile.
+    const TILE_PX = 512; // Must match windCircleLayer's tileSize
+    const nw = map.unproject([tileCoords.x * TILE_PX, tileCoords.y * TILE_PX], tileCoords.z);
+    const se = map.unproject([(tileCoords.x + 1) * TILE_PX, (tileCoords.y + 1) * TILE_PX], tileCoords.z);
+
+    const lonMin = nw.lng;
+    const lonMax = se.lng;
+    const latMax = nw.lat;
+    const latMin = se.lat;
     
     console.log(`Tile bounds: lat [${latMin}, ${latMax}], lon [${lonMin}, ${lonMax}]`);
     
@@ -353,8 +358,16 @@ async function loadZarrWindData(tileCoords, leadTimeIndex) {
       return [];
     }
     
+    // Sub-sample to ~20 points spread evenly across the tile so that
+    // we always include locations near the map centre (rather than just
+    // the first few indices which are often at one edge of the tile).
+    const MAX_POINTS_PER_TILE = 20;
+    const step = Math.max(1, Math.floor(validPoints.length / MAX_POINTS_PER_TILE));
+    const limitedPoints = validPoints.filter((_, idx) => idx % step === 0);
+    console.log(`Sub-sampled ${validPoints.length} valid points down to ${limitedPoints.length}`);
+    
     // Load wind data for each valid point using zarr-js v3
-    const windDataPromises = validPoints.map(async (point) => {
+    const windDataPromises = limitedPoints.map(async (point) => {
       try {
         console.log(`Loading data for point ${point.lat},${point.lon} (indices: ${point.latIdx},${point.lonIdx})`);
         
@@ -475,13 +488,18 @@ async function loadZarrSpotData(lat, lon) {
 }
 
 
-function RadialPoint(x, y, angle, radius) {
-  return [x + Math.cos(3.1415 * x / 180) * radius * Math.cos(angle),
-          y + radius * Math.sin(angle)]
+function RadialPoint(lat, lon, angle, radiusKm) {
+  // Convert a polar offset (radiusKm, angle) into a new [lat, lon] in degrees.
+  // We use a simple equirectangular approximation which is sufficient for small
+  // radii: 1 degree latitude ≈ 111 km and longitude scaling with cos(latitude).
+  const DEG_PER_KM = 1.0 / 111.0;
+  const dLat = radiusKm * DEG_PER_KM * Math.sin(angle);
+  const dLon = radiusKm * DEG_PER_KM * Math.cos(angle) / Math.cos(lat * Math.PI / 180.0);
+  return [lat + dLat, lon + dLon];
 }
 
 
-function DrawSlices(lat, lon, speeds, directions, radius) {
+function DrawSlices(lat, lon, speeds, directions, radiusKm) {
   slices = [];
   for (let dir = 0; dir < 16; dir++) {
     max_speed = null;
@@ -495,9 +513,9 @@ function DrawSlices(lat, lon, speeds, directions, radius) {
       var theta = -3.14159 + 0.39269908 * dir;
       var polygon = L.polygon([
           [lat, lon],
-          RadialPoint(lat, lon, theta - SLICE_WIDTH, radius),
-          RadialPoint(lat, lon, theta, radius),
-          RadialPoint(lat, lon, theta + SLICE_WIDTH, radius)
+          RadialPoint(lat, lon, theta - SLICE_WIDTH, radiusKm),
+          RadialPoint(lat, lon, theta, radiusKm),
+          RadialPoint(lat, lon, theta + SLICE_WIDTH, radiusKm)
       ], {color: color, fillOpacity:1., stroke:false});
       slices.push(polygon);
     }
@@ -787,8 +805,10 @@ function SpotPlot(x) {
   return div.node();
 }
 
-function BuildWindCircle(lat, lon, speeds, directions, radius) {
-  var radiusMeters = L.latLng(lat, lon).distanceTo(L.latLng(lat, lon + radius))
+function BuildWindCircle(lat, lon, speeds, directions, radiusKm) {
+  const radiusMeters = radiusKm * 1000; // Leaflet circles expect metres
+  
+  console.log(`BuildWindCircle: lat=${lat}, lon=${lon}, speeds=${speeds}, directions=${directions}, radiusKm=${radiusKm}, radiusMeters=${radiusMeters}`);
 
   // White Background Circle
   var circle = L.circle([lat, lon], radiusMeters, {
@@ -799,7 +819,8 @@ function BuildWindCircle(lat, lon, speeds, directions, radius) {
 
   var components = [circle];
 
-  var slices = DrawSlices(lat, lon, speeds, directions, radius)
+  // Draw directional slices using radius in km (geographic degrees handled inside)
+  var slices = DrawSlices(lat, lon, speeds, directions, radiusKm)
   components = components.concat(slices)
 
   // Black Outline
@@ -842,6 +863,9 @@ function DrawAll(data, radius) {
     next_circle = BuildWindCircle(pt['lat'], pt['lon'], pt['speeds'], pt['directions'], radius)
     circles = circles.concat(next_circle);
   }
+  
+  console.log(`Total circles created: ${circles.length}`);
+  console.log('=== END DRAWALL DEBUG ===');
   return circles
 }
 
@@ -864,7 +888,8 @@ function GetGridSize(zoom) {
 }
 
 function GetRadius(zoom) {
-  return GetGridSize(zoom) / 3.;
+  // Make circles much larger for visibility
+  return GetGridSize(zoom) * 50; // 50km radius instead of tiny circles
 }
 
 
@@ -885,13 +910,16 @@ function Draw(m, data) {
   var only_visible = [];
   for (i in data) {
     var pt = data[i];
-    var on_grid = (pt['lat'] % grid_size == 0 && pt['lon'] % grid_size == 0);
-    if (on_grid && InView(bounds, pt)) {
+    // Previously we required the point to fall exactly on the grid, which
+    // eliminated most (or all) locations due to floating-point rounding.
+    // That condition has been removed so any point inside the current map
+    // bounds will be rendered.
+    if (InView(bounds, pt)) {
       only_visible.push(pt);
     }
   }
   
-  console.log('Visible points on grid:', only_visible.length);
+  console.log('Visible points:', only_visible.length);
   if (only_visible.length > 0) {
     console.log('Sample visible points:', only_visible.slice(0, 2));
   }
@@ -976,15 +1004,24 @@ L.GridLayer.WindCircles = L.GridLayer.extend({
         // Use zarr data instead of binary files
         const leadTimeIndex = Math.floor(HOUR / 6); // Convert hour to lead time index
         console.log('Calculated leadTimeIndex:', leadTimeIndex);
-        
+
         loadZarrWindData(coords, leadTimeIndex).then(function(data) {
           console.log('Tile data loaded, length:', data.length);
           var bounds = map.getBounds();
           data = fitToBounds(data, bounds);
           console.log('After fitToBounds, data length:', data.length);
-          circles = DrawAll(data, GetRadius(coords.z));
+          circles = Draw(map, data);
           console.log('Created circles:', circles.length);
+          if (circles.length > 0) {
+            console.log('Sample circle:', circles[0]);
+            console.log('Circle properties:', {
+              latlng: circles[0].getLatLng(),
+              radius: circles[0].getRadius(),
+              options: circles[0].options
+            });
+          }
           L.layerGroup(circles).addTo(layer);
+      
           console.log('=== END TILE CREATION DEBUG ===');
           done(error, tile);
         }).catch(function(err) {
