@@ -1,5 +1,5 @@
 import copy
-import xarray as xray
+import xarray as xr
 import warnings
 import itertools
 import numpy as np
@@ -226,7 +226,7 @@ def subset_gridded_dataset(remote_dataset, query, additional_slicers=None):
 
         data_chunks = [get_one_slice(modify_slice(lon_slice))
                        for lon_slice in slicers['longitude']]
-        return xray.concat(data_chunks, dim='longitude')
+        return xr.concat(data_chunks, dim='longitude')
     else:
         return get_one_slice(slicers)
 

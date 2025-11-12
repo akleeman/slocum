@@ -11,10 +11,10 @@ file will be about 1 kB and once plotted will look like this:
     :width: 600
     :align: center
 
-    import xray
+    import xr
     import matplotlib.pyplot as plt
     from slocum import visualize
-    fcsts = xray.open_dataset('./sf_example_forecast.nc')
+    fcsts = xr.open_dataset('./sf_example_forecast.nc')
     one_loc = fcsts.isel(latitude=5, longitude=5)
     plt.figure(figsize=(12, 7))
     visualize.plot_forecast(one_loc)
@@ -30,10 +30,10 @@ forecast.
     :width: 600
     :align: center
 
-    import xray
+    import xr
     import matplotlib.pyplot as plt
     from slocum import visualize
-    fcsts = xray.open_dataset('./sf_example_forecast.nc')
+    fcsts = xr.open_dataset('./sf_example_forecast.nc')
     one_loc = fcsts.isel(latitude=5, longitude=5, realization=[0])
     plt.figure(figsize=(12, 7))
     visualize.plot_forecast(one_loc)

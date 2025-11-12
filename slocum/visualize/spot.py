@@ -1,4 +1,4 @@
-import xarray as xray
+import xarray as xr
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -52,7 +52,7 @@ def bin_probs(variable, bins):
                                          bins=(np.arange(n_other + 1),
                                                bins))
     probs = counts.T / np.sum(counts, axis=1)
-    out = xray.DataArray(probs.T,
+    out = xr.DataArray(probs.T,
                          coords={
                              other_dim: variable[other_dim],
                              'bin': np.arange(bins.size - 1)
@@ -72,7 +72,7 @@ def binned_probability_plot(variable, bin_divs, ax=None, **kwdargs):
     if variable.dims == ('time', ):
         # Add ensemble dimension for single forecast
         ensemble_dim = 'realization'  # Default to 'realization' for single forecast
-        variable = (xray.concat([variable], ensemble_dim)
+        variable = (xr.concat([variable], ensemble_dim)
                     .transpose('time', ensemble_dim))
     assert variable.dims == ('time', ensemble_dim), f"Expected ('time', '{ensemble_dim}'), got {variable.dims}"
     n_times, n_ensemble = variable.shape
@@ -182,7 +182,7 @@ class SpotVelocityPlot(object):
         self.ax.set_ylabel("Speed (%s)" % speed_units)
 
         # convert the bins to knots
-        bins = xray.Variable('bins',
+        bins = xr.Variable('bins',
                              velocity_variable.speed_bins.copy(),
                              {'units': velocity_variable.units})
         _, self.bins, _ = units.convert_units(bins, speed_units)
@@ -211,7 +211,7 @@ class SpotVelocityPlot(object):
         if not ensemble_dim:
             ensemble_dim = 'realization'  # Default to 'realization' for single forecast
             def add_ensemble(vn):
-                fcsts[vn] = (xray.concat([fcsts[vn]], ensemble_dim)
+                fcsts[vn] = (xr.concat([fcsts[vn]], ensemble_dim)
                              .transpose('time', ensemble_dim))
             add_ensemble(self.variable.speed_name)
             add_ensemble(self.variable.direction_name)
@@ -306,7 +306,7 @@ def spot_velocity(fcst, variable, speed_units='knot',
 def example_spot_single_velocity():
     import slocum.query.utils as query_utils
     n = 8
-    fcst = xray.Dataset()
+    fcst = xr.Dataset()
     times = pd.date_range('2015-01-03 06:00:00Z', periods=n, freq='6h').values
     fcst['time'] = ('time', times)
     fcst['latitude'] = ('latitude', [-8])
@@ -326,7 +326,7 @@ def example_spot_ensemble_velocity():
     import slocum.query.utils as query_utils
     n = 17
     k = 3
-    fcst = xray.Dataset()
+    fcst = xr.Dataset()
     times = pd.date_range('2015-01-03 06:00:00Z', periods=n, freq='6h').values
     fcst['time'] = ('time', times)
     fcst['latitude'] = ('latitude', [-8])

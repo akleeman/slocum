@@ -1,4 +1,4 @@
-import xray
+import xr
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -10,7 +10,7 @@ from slocum.compression import compress, schemes
 
 
 def test_data():
-    ds = xray.Dataset()
+    ds = xr.Dataset()
     ds['time'] = ('time', np.arange(4),
                   {'units': 'hours since 2013-12-12 12:00:00'})
     ds['longitude'] = (('longitude'),
@@ -55,7 +55,7 @@ def test_data():
                     ucurr, {'units': 'm/s'})
     ds['sea_water_y_velocity'] = (('time', 'longitude', 'latitude'),
                     vcurr, {'units': 'm/s'})
-    return xray.decode_cf(ds)
+    return xr.decode_cf(ds)
 
 
 def main():

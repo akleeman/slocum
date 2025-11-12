@@ -14,7 +14,7 @@ will be similar regardless of which operating system you're using.  You'll want 
     # this makes sure your conda installation is the latest greatest
     conda update conda
     # install some of the more difficult dependencies using conda
-    conda install python=2.7 pip nose mock numpy scipy xray basemap
+    conda install python=2.7 pip nose mock numpy scipy xr basemap
     # any other dependencies are installed here during setup.
     pip install slocum
   
@@ -63,7 +63,7 @@ source code directly.  You can do this by running:
   # same process as above, but this time we create a new python
   # environment (named slocum).
   conda update conda
-  conda create -n slocum python=2.7 pip nose mock numpy scipy xray basemap
+  conda create -n slocum python=2.7 pip nose mock numpy scipy xr basemap
   # the syntax here is different on windows ("activate slocum")
   source activate slocum
   # this installs slocum, but does so leaving the files in place so

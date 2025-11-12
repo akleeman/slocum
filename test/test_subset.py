@@ -1,4 +1,4 @@
-import xray
+import xr
 import unittest
 
 import numpy as np
@@ -85,10 +85,10 @@ class SubsetTest(unittest.TestCase):
         queries = [(np.array([0., 24, 48]))
                    ]
 
-        time = xray.Dataset()
+        time = xr.Dataset()
         time['time'] = (('time', [0, 6, 12, 18, 24, 36, 48, 72, 96],
                         {'units': 'hours since 2011-01-01'}))
-        time = xray.conventions.decode_cf_variable(time['time'].variable)
+        time = xr.conventions.decode_cf_variable(time['time'].variable)
 
         for hours in queries:
             query = {'hours': hours}
@@ -147,7 +147,7 @@ class SubsetTest(unittest.TestCase):
     def test_subset_spot_dataset(self):
 
         fcst = utils.create_data()
-        times, units, cal = xray.conventions.encode_cf_datetime(fcst['time'])
+        times, units, cal = xr.conventions.encode_cf_datetime(fcst['time'])
         assert 'hours' in units
 
         def test_one_query(lon_slice, lat_slice, hour_slice):

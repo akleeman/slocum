@@ -14,10 +14,10 @@ for more details.
 .. plot::
     :align: center
 
-    import xray
+    import xr
     import matplotlib.pyplot as plt
     from slocum import visualize
-    fcsts = xray.open_dataset('./sf_example_forecast.nc')
+    fcsts = xr.open_dataset('./sf_example_forecast.nc')
     fig, axis = plt.subplots(1, 1, figsize=(8, 8))
 
     fcst = fcsts.isel(time=[1])

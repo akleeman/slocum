@@ -20,10 +20,10 @@ Take this forecast for a location off the coast of San Francisco as an example. 
     :width: 600
     :align: center
 
-    import xray
+    import xr
     import matplotlib.pyplot as plt
     from slocum import visualize
-    fcsts = xray.open_dataset('./sf_example_forecast.nc')
+    fcsts = xr.open_dataset('./sf_example_forecast.nc')
     one_loc = fcsts.isel(latitude=5, longitude=5)
     plt.figure(figsize=(12, 7))
     visualize.plot_forecast(one_loc)
@@ -110,10 +110,10 @@ for 120 hours into the forecast period.
 .. plot::
     :align: center
 
-    import xray
+    import xr
     import matplotlib.pyplot as plt
     from slocum import visualize
-    fcsts = xray.open_dataset('./sf_example_forecast.nc')
+    fcsts = xr.open_dataset('./sf_example_forecast.nc')
     fig, axes = plt.subplots(1, 2, figsize=(13, 6))
 
     first = fcsts.isel(time=[1])

@@ -1,4 +1,4 @@
-import xray
+import xr
 import unittest
 import numpy as np
 
@@ -6,7 +6,7 @@ from slocum.visualize import utils
 
 
 def create_domain():
-    ds = xray.Dataset()
+    ds = xr.Dataset()
     ds['longitude'] = ('longitude', np.linspace(115., 145, 31),
                        {'units': 'degrees_east'})
     ds['latitude'] = ('latitude', np.linspace(-8, 8, 17),
