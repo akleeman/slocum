@@ -1,0 +1,47 @@
+[workspace]
+name = "slocum"
+version = "0.1.3"
+description = "Slocum -- A tool for getting smaller better forecasts to sailors"
+authors = ["Alex Kleeman <akleeman@gmail.com>", "Markus Schweitzer"]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64"]
+
+[dependencies]
+python = ">=3.9,<3.13"
+numpy = ">=1.20"
+scipy = ">=1.7"
+xarray = ">=2022.3"
+pyproj = ">=3.0"
+pandas = ">=1.3"
+matplotlib = ">=3.5"
+joblib = ">=1.0"
+requests = ">=2.25"
+netcdf4 = ">=1.5"
+cartopy = ">=0.20"
+basemap = "*"
+retrying = ">=1.3"
+cftime = ">=1.5"
+zarr = ">=2.10"
+gcsfs = ">=2025.10.0,<2026"
+arraylake = "*"
+ipdb = "*"
+dask = "*"
+
+[tasks]
+install-dev = "pip install -e ."
+spot-forecast = { cmd = "python generate_spot_forecast.py", depends-on = ["install-dev"] }
+map-forecast = { cmd = "python generate_map_forecast.py", depends-on = ["install-dev"] }
+subset-forecasts = { cmd = "python subset_ensemble_forecasts.py", depends-on = ["install-dev"] }
+spot-from-ensemble = { cmd = "python spot_forecast_from_ensemble.py", depends-on = ["install-dev"] }
+test = { cmd = "pytest test/ -v", depends-on = ["install-dev"] }
+test-coverage = { cmd = "pytest test/ -v --cov=slocum --cov-report=term-missing", depends-on = ["install-dev"] }
+
+[feature.dev.dependencies]
+pytest = ">=7.0"
+pytest-xdist = ">=2.5"
+pytest-cov = ">=3.0"
+pip = "*"
+
+[environments]
+default = { features = ["dev"], solve-group = "default" }
+
