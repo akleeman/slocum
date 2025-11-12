@@ -149,7 +149,7 @@ class GrADS(object):
         Nudges the dataset towards CF conventions.
 s        """
         # determine which variables need to be renamed
-        renames = {k: v for k, v in self.grads_names.iteritems()
+        renames = {k: v for k, v in self.grads_names.items()
                    if k in ds}
         ds = ds.rename(renames)
         # GrADS uses 1 indexing for ensemble realizations, we prefer 0.
@@ -159,7 +159,7 @@ s        """
                                  )
         # grads doesn't follow cf conventions for units, so we
         # need to have them hard coded.
-        for k, v in ds.variables.iteritems():
+        for k, v in ds.variables.items():
             if k in self.grads_units:
                 v.attrs['units'] = self.grads_units[k]
         # grads uses time units of days, with float values, this

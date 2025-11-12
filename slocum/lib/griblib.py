@@ -1,8 +1,7 @@
 import os
 import numpy as np
 import logging
-
-import slocum.lib.conventions as conv
+import cftime
 
 from slocum.lib import units
 
@@ -150,7 +149,7 @@ codes = {
 126: ("Wind mixing energy", "J"),
 }
 
-reverse_codes = dict((v[0], k) for k, v in codes.iteritems())
+reverse_codes = dict((v[0], k) for k, v in codes.items())
 
 #http://www.nco.ncep.noaa.gov/pmb/docs/on388/table3.html
 indicator_of_level = {"u-component of wind": 105,
@@ -175,7 +174,7 @@ def set_time(source, grib):
     # reference time is assumed to be the origin of the source
     # time variable.  This is the case with GFS but perhaps
     # not with other forecasts.
-    rt = conv.decode_cf_datetime([0], unit)[0]
+    rt = cftime.num2date(0, unit, only_use_cftime_datetimes=False)
     gribapi.grib_set_long(grib, "dataDate", "%04d%02d%02d" % (rt.year,
                                                               rt.month,
                                                               rt.day))
@@ -188,7 +187,7 @@ def set_time(source, grib):
              'year': 4,
              'second': 254}
     grib_time_code = None
-    for k, v in unit_codes.iteritems():
+    for k, v in unit_codes.items():
         if unit.lower().startswith(k):
             grib_time_code = v
     if grib_time_code is None:
@@ -362,7 +361,7 @@ def save(source, target, append=False, sample_file=_sample_file):
     # auxiliary variables (ie, variables used by slocum
     # but not in grib files).
     auxilary_variables = ['wind_speed', 'wind_from_direction']
-    for single_var in (v for k, v in source.noncoordinates.iteritems()
+    for single_var in (v for k, v in source.noncoordinates.items()
                        if not k in auxilary_variables):
         # then iterate over time slices
         iter_time = (single_var.indexed(**{'time': [i]})

@@ -5,7 +5,7 @@ import numpy as np
 import warnings
 import itertools
 
-import utils
+from . import utils
 
 logger = logging.getLogger(os.path.basename(__file__))
 logger.setLevel(logging.DEBUG)
@@ -143,7 +143,7 @@ def iterate_query_strings(query_text):
     """
     lines = query_text.lower().split('\n')
     for command in _supported_commands:
-        matches = [re.match('\s*(%s\s.+)\s*' % command, x) for x in lines]
+        matches = [re.match(r'\s*(%s\s.+)\s*' % command, x) for x in lines]
         for query in filter(None, matches):
             yield query.groups()[0]
 
@@ -152,7 +152,7 @@ def split_fields(request, k):
     """
     Saildoc fields can be separated by '|', '/' or '\u015a'
     """
-    fields = re.split(u'\s*[\|\/\u015a]\s*', unicode(request.strip()))
+    fields = re.split(r'\s*[\|\/\u015a]\s*', str(request.strip()))
     return list(itertools.chain(fields, [None] * k))[:k]
 
 
@@ -202,7 +202,7 @@ def parse_spot_request(request):
     # First try parsing the format `days,period`
     try:
       hours = utils.parse_times(time_str)
-    except ValueError, e:
+    except ValueError as e:
       # if that fails try the gridded format `hour0,hour1,...,hourn`
       hours = utils.parse_hours(time_str)
 
@@ -229,6 +229,8 @@ def parse_send_request(body):
     """
     # the model and domain are colon separated.
     model_domain, = split_fields(body, 1)
+    if ':' not in model_domain:
+        raise utils.BadQuery("Invalid query format: expected 'model:domain'")
     model, _ = model_domain.split(':', 1)
     # make sure the model exists
     model = utils.validate_model(model)
@@ -262,15 +264,15 @@ def parse_saildocs_query(query_str):
     command, body = command_split
     # saildocs subscription requests can have additional options
     # such as time= and days=.  These are parsed here.
-    opts_args = filter(len, body.split(' '))
+    opts_args = list(filter(len, body.split(' ')))
     options_start = np.nonzero(['=' in x for x in opts_args])[0]
     if len(options_start):
-        args = opts_args[:options_start[0]]
+        args = ' '.join(opts_args[:options_start[0]])
         opts = opts_args[options_start[0]:]
         warnings.warn("Additional options %s were ignored"
                       % ' '.join(opts))
     else:
-        args = ''.join(opts_args)
+        args = ' '.join(opts_args)
         opts = None
     # Check if the command is supported
     if not command.lower() in _supported_commands:

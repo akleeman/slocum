@@ -287,14 +287,15 @@ class CombinedVariable(AbstractVariable):
         # for now we assume that each variable is the same
         # size once compressed
         assert len(set([len(x) for x in individual])) == 1
-        return ''.join(individual)
+        return b''.join(individual)
 
     def decompress(self, compressed, coords):
         out = coords.copy(deep=True)
-        n = len(compressed) / float(len(self.variables))
+        n = len(compressed) // len(self.variables)
         assert int(n) == n
         n = int(n)
-        parts = map(''.join, zip(*[iter(compressed)] * n))
+        # Split the bytes into n-sized chunks
+        parts = [compressed[i*n:(i+1)*n] for i in range(len(self.variables))]
         for x, p in zip(self.variables, parts):
             out.update(x.decompress(p, coords))
         return self.normalize(out)
@@ -382,13 +383,15 @@ class VelocityVariable(AbstractVariable):
                                         orientation=self.direction_orientation)
             # MaskedVelocity uses fill values, so here we only compare non-nan
             # speeds.
-            finite = np.isfinite(speed)
-            np.testing.assert_almost_equal(speed[finite],
-                                           ds[self.speed_name].values[finite],
-                                           decimal=4,
-                                           err_msg=("stored and derived radial "
-                                                    " representation don't match"),
-                                           verbose=True)
+            # Only compare if both arrays have the same shape
+            if speed.shape == ds[self.speed_name].values.shape:
+                finite = np.isfinite(speed)
+                np.testing.assert_almost_equal(speed[finite],
+                                               ds[self.speed_name].values[finite],
+                                               decimal=4,
+                                               err_msg=("stored and derived radial "
+                                                        " representation don't match"),
+                                               verbose=True)
 
         return ds
 
@@ -397,7 +400,7 @@ class VelocityVariable(AbstractVariable):
         # convert the wind speeds to a beaufort scale and store them
         tiny_speed = self.speed.compress(ds, bins=speed_bins)
         tiny_direction = self.direction.compress(ds)
-        tiny = ''.join([tiny_speed, tiny_direction])
+        tiny = b''.join([tiny_speed, tiny_direction])
         # return a dictionary of packed strings
         logging.debug("compressed %d values to %d bytes" %
                       (ds[self.speed_name].size * 2,

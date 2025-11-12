@@ -1,5 +1,6 @@
 import pyproj
 import numpy as np
+from functools import cmp_to_key
 
 
 def angle_normalize(a, degrees=True):
@@ -44,7 +45,7 @@ def angle_sort(x, degrees=True):
 
     """
     angle_cmp = lambda x, y: int(np.sign(angle_diff(x, y, degrees=degrees)))
-    return np.array(sorted(x, cmp=angle_cmp))
+    return np.array(sorted(x, key=cmp_to_key(angle_cmp)))
 
 
 def geographic_distance(lon0, lat0, lon1, lat1, ellps="sphere"):

@@ -2,8 +2,9 @@ import os
 import logging
 import smtplib
 
-from email import Parser, mime, encoders
-from email.mime import Multipart
+from email import mime, encoders
+from email.parser import Parser
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 logger = logging.getLogger(os.path.basename(__file__))
@@ -19,7 +20,7 @@ def get_reply_to(email):
     If not reply to is explicitly specified the senders
     address is used.
     """
-    parse = Parser.Parser()
+    parse = Parser()
     msg = parse.parsestr(email)
     if msg['Reply-To']:
         return msg['Reply-To']
@@ -32,7 +33,7 @@ def create_email(to, fr, body, subject=None, attachments=None):
     Creates a multipart MIME email to 'to' and from 'fr'.  Both
     of which must be valid email addresses
     """
-    msg = Multipart.MIMEMultipart()
+    msg = MIMEMultipart()
     if 'winlink' in to:
         subject = '//WL2K R/%s' % subject
     msg['Subject'] = subject or '(no subject)'
@@ -43,7 +44,7 @@ def create_email(to, fr, body, subject=None, attachments=None):
     body = MIMEText(body, 'plain')
     msg.attach(body)
     if attachments is not None:
-        for attach_name, attach in attachments.iteritems():
+        for attach_name, attach in attachments.items():
             part = mime.base.MIMEBase('application', "octet-stream")
             part.set_payload(attach.read())
             encoders.encode_base64(part)
@@ -72,7 +73,7 @@ def get_body(email):
     """
     Takes a MIME email and extract the (potentially multi part) body
     """
-    parse = Parser.Parser()
+    parse = Parser()
     msg = parse.parsestr(email)
 
     def get_body(x):

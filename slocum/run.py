@@ -96,7 +96,7 @@ def handle_email(args):
                               url=args.forecast,
                               fail_hard=args.fail_hard,
                               log_input=True)
-    except Exception, e:
+    except Exception as e:
         logging.exception(e)
         raise
 

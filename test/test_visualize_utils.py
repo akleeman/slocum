@@ -1,4 +1,4 @@
-import xr
+import xarray as xr
 import unittest
 import numpy as np
 

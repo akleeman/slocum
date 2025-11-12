@@ -6,6 +6,8 @@ import datetime
 import warnings
 import numpy as np
 import pandas as pd
+import cftime
+from functools import reduce
 
 logger = logging.getLogger(os.path.basename(__file__))
 
@@ -72,7 +74,7 @@ def pack_ints(arr, req_bits=None):
         if np.mod(i, vals_per_int):
             output[ind] = output[ind] << req_bits
         output[ind] += x
-    packed_array = {'packed_array': output.tostring(),
+    packed_array = {'packed_array': output.tobytes(),
                     'bits': req_bits,
                     'shape': arr.shape,
                     'dtype': str(arr.dtype)}
@@ -103,13 +105,13 @@ def unpack_ints(packed_array, bits, shape, dtype=None):
     """
     # the dtype here is different than the final one.  At this point
     # all the data is stored in packed bytes.
-    packed_array = np.fromstring(packed_array, dtype=np.uint8)
+    packed_array = np.frombuffer(packed_array, dtype=np.uint8)
     info = np.iinfo(packed_array.dtype)
     enc_bits = info.bits
     if np.mod(enc_bits, bits):
         raise ValueError("the bit encoding doesn't line up")
     # how many values are in each int?
-    vals_per_int = enc_bits / bits
+    vals_per_int = enc_bits // bits
     size = reduce(lambda x, y: x * y, shape)
     # the masks are used for logical AND comparisons to retrieve the values
     masks = [(2 ** bits - 1) << i * bits for i in range(vals_per_int)]
@@ -184,7 +186,7 @@ def tiny_unmasked(arr, bits=None, divs=None, wrap=False):
         # n is the number of 'levels' that can be represented'
         divs = np.linspace(lower - epsilon,
                            upper + epsilon,
-                           n).astype(np.float)
+                           int(n)).astype(np.float64)
     else:
         bits = bits or np.ceil(np.log2(divs.size))
     if int(np.log2(bits)) != np.log2(bits):
@@ -323,7 +325,9 @@ def expand_unmasked(packed_array, bits, shape, divs, dtype=None,
     else:
         upper_bins = bins
         lower_bins = np.maximum(upper_bins - 1, 0)
+        # Ensure bins are within valid range before indexing
         upper_bins = np.minimum(upper_bins, ndivs - 1)
+        lower_bins = np.minimum(lower_bins, ndivs - 1)
         averages = 0.5 * (divs[lower_bins] + divs[upper_bins])
         # if any values fell outside the divs we set them to be
         # slightly larger than div boundaries. Ideally to avoid
@@ -364,7 +368,7 @@ def small_array(arr, least_significant_digit):
     assert np.all(np.isfinite(arr))
     data = np.round(arr * np.power(10, least_significant_digit))
     data = data.astype(arr.dtype)
-    return {'packed_array': zlib.compress(data.tostring(), 9),
+    return {'packed_array': zlib.compress(data.tobytes(), 9),
             'dtype': arr.dtype,
             'least_significant_digit': least_significant_digit}
 
@@ -374,8 +378,8 @@ def expand_small_array(packed_array, dtype, least_significant_digit):
     Takes a the output from small_array and reconstructs a the original
     (rounded) array
     """
-    arr = np.fromstring(zlib.decompress(packed_array), dtype=dtype)
-    arr = arr / np.power(10, least_significant_digit)
+    arr = np.frombuffer(zlib.decompress(packed_array), dtype=dtype)
+    arr = arr / np.power(10.0, least_significant_digit)
     return arr
 
 
@@ -387,7 +391,10 @@ def small_time(time_var):
     using small_array().
     """
     if np.issubdtype(time_var.dtype, np.datetime64):
-        time_var = xr.conventions.encode_cf_variable(time_var)
+        # In modern xarray, encode_cf_variable expects a Variable, not DataArray
+        # We convert to Variable, encode, then back to DataArray
+        encoded_var = xr.conventions.encode_cf_variable(time_var.variable, name=time_var.name)
+        time_var = xr.DataArray(encoded_var, dims=time_var.dims, attrs=encoded_var.attrs)
     else:
         # if the time_var does not have datetime values we want
         # to make sure it is an encoded datetime.
@@ -395,8 +402,7 @@ def small_time(time_var):
         assert 'since' in time_var.attrs.get('units', '')
 
     assert time_var.attrs['units'].lower().startswith('hour')
-    origin = xr.conventions.decode_cf_datetime([0],
-                                                 time_var.attrs['units'])[0]
+    origin = cftime.num2date(0, time_var.attrs['units'], only_use_cftime_datetimes=False)
     origin = pd.to_datetime(origin)
     # diffs should be integer valued
     diffs = np.diff(np.concatenate([[0], time_var.values[:]]))
@@ -419,7 +425,7 @@ def expand_small_time(packed_array):
     """
     augmented = expand_small_array(packed_array, dtype=np.int32,
                                    least_significant_digit=0)
-    origin = datetime.datetime.fromordinal(augmented[0])
+    origin = datetime.datetime.fromordinal(int(augmented[0]))
     # there is a very strange bug that happens here if
     # we don't convert augmented to an int, timedelta must
     # make some assumptions on the dtype.
@@ -438,12 +444,12 @@ def small_trival_variable(var):
     assert var.size == np.array(var.size, np.int16)
     assert np.all(var.values == np.arange(var.size))
     # return a string encoded byte
-    return np.array(var.size, np.int16).tostring()
+    return np.array(var.size, np.int16).tobytes()
 
 def expand_trival_variable(packed_array, ):
     """
     Expands a trival variable.
     """
     # determine the size of the array
-    n = np.asscalar(np.fromstring(packed_array, dtype=np.int16))
+    n = np.frombuffer(packed_array, dtype=np.int16)[0]
     return np.arange(n)

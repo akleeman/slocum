@@ -31,9 +31,9 @@ import re
 import warnings
 import numpy as np
 
-import utils
+from . import utils
 
-_regex_divider = re.compile('\s*[:=;]\s*')
+_regex_divider = re.compile(r'\s*[:=;]\s*')
 
 aliases = {'area': 'domain',
            'resol': 'resolution',
@@ -66,7 +66,8 @@ def parse_query(query_str):
     # assemble all the lines without :=; in them into a single
     # string of variables
     variables = ' '.join([kv[0] for kv in lines if len(kv) == 1])
-    variables = re.split('\W*', variables)
+    variables = re.split(r'\W+', variables)
+    variables = [v for v in variables if v]  # Filter out empty strings
     query['variables'] = variables
     return normalize(query)
 

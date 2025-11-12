@@ -106,7 +106,7 @@ class QueryUtilsTest(unittest.TestCase):
                     actual = utils.validate_variables(unsup_vars)
                     self.assertSetEqual(set(sup_vars), set(actual))
                     self.assertEqual(len(w), 1)
-                    self.assertIn(unsup_vars[0], w[0].message.message)
+                    self.assertIn(unsup_vars[0], str(w[0].message))
 
         actual = utils.validate_variables([' wind'])
         self.assertEqual(['wind'], actual)
@@ -116,7 +116,7 @@ class QueryUtilsTest(unittest.TestCase):
 
         with warnings.catch_warnings(record=True) as w:
             default = utils.validate_variables([])
-            self.assertEquals(default, ['wind'])
+            self.assertEqual(default, ['wind'])
         self.assertTrue(len(w) == 1)
 
     def test_validate_model(self):
@@ -130,5 +130,5 @@ class QueryUtilsTest(unittest.TestCase):
 
         with warnings.catch_warnings(record=True) as w:
             default = utils.validate_model(None)
-            self.assertEquals(default, 'gfs')
+            self.assertEqual(default, 'gfs')
         self.assertTrue(len(w) == 1)

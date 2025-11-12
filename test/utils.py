@@ -1,6 +1,7 @@
 
-import xr
+import xarray as xr
 import numpy as np
+from functools import reduce
 
 from slocum.query import variables
 from slocum.compression import schemes

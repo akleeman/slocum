@@ -109,7 +109,7 @@ def normalize_variables(dataset):
     """
     Iterates over all variables in a dataset and normalizes their units.
     """
-    for vn, v in dataset.iteritems():
+    for vn, v in dataset.items():
         dataset[vn] = normalize_units(v)
     return dataset
 

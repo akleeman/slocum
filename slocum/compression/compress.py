@@ -13,7 +13,7 @@ _VERSION = np.array(1, dtype=np.uint8)
 
 # this creates an ordered list of all the variables available
 # for compression
-_variable_order = utils._variables.keys()
+_variable_order = list(utils._variables.keys())
 
 
 def _stringify(vname, packed):
@@ -34,8 +34,11 @@ def _stringify(vname, packed):
     l0 = (l >> 16) & 0xff
     l1 = (l >> 8) & 0xff
     l2 = l & 0xff
-    header = np.array([vid, l0, l1, l2], dtype=np.uint8).tostring()
-    return ''.join([header, packed])
+    header = np.array([vid, l0, l1, l2], dtype=np.uint8).tobytes()
+    # Ensure packed is bytes
+    if isinstance(packed, str):
+        packed = packed.encode('latin1')
+    return header + packed
 
 
 def compress_dataset(ds, vars=None):
@@ -60,14 +63,14 @@ def compress_dataset(ds, vars=None):
     encoded_variables = OrderedDict()
 
     vars = vars or utils._variables
-    for k, v in vars.iteritems():
+    for k, v in vars.items():
         # only encode if have the required input.
         if all(y in ds for y in v.required_variables()):
             logging.debug("Encoding %s" % k)
             encoded_variables[k] = v.compress(ds)
-    payload = ''.join(_stringify(k, v)
-                      for k, v in encoded_variables.iteritems())
-    payload = ''.join([_VERSION.tostring(), payload])
+    payload = b''.join(_stringify(k, v)
+                       for k, v in encoded_variables.items())
+    payload = _VERSION.tobytes() + payload
     return zlib.compress(payload, 9)
 
 
@@ -92,7 +95,7 @@ def _split_single_variable(payload):
     # the first bit is the variable id,
     # the second and third bits store the length of the array
     offset = 4
-    vid, l0, l1, l2 = np.fromstring(payload[:offset], dtype=np.uint8)
+    vid, l0, l1, l2 = np.frombuffer(payload[:offset], dtype=np.uint8)
     # convert the two single bit lengths to the full length
     vlen = (l0 << 16) + (l1 << 8) + l2
     # the packed array resides in the rest of the payload
@@ -108,7 +111,7 @@ def decompress_dataset(payload):
     Unpacks a dataset that has been packed using compress_dataset()
     """
     payload = zlib.decompress(payload)
-    version = np.fromstring(payload[0], dtype=np.uint8)[0]
+    version = np.frombuffer(payload[0:1], dtype=np.uint8)[0]
     payload = payload[1:]
     if version > _VERSION:
         raise ValueError("The forecast was compressed using a"
@@ -125,6 +128,6 @@ def decompress_dataset(payload):
     while len(payload):
         var_name, packed, payload = _split_single_variable(payload)
         variable = utils.get_variable(var_name)
-        output.update(variable.decompress(packed, output), inplace=True)
+        output.update(variable.decompress(packed, output))
         logging.debug("Decoded %s" % var_name)
     return xr.decode_cf(output)

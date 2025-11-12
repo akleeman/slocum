@@ -1,5 +1,5 @@
 import sys
-import xr
+import xarray as xr
 import numpy as np
 import unittest
 import warnings
@@ -139,7 +139,7 @@ class TinylibTest(unittest.TestCase):
         actual = actual.reshape(expected.shape)
         np.testing.assert_allclose(actual, expected,
                                    rtol=1.,
-                                   atol=np.power(10, -least_significant_digit))
+                                   atol=np.power(10.0, -least_significant_digit))
 
     def test_small_time(self):
         ds = create_data()

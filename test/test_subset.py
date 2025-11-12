@@ -1,4 +1,4 @@
-import xr
+import xarray as xr
 import unittest
 
 import numpy as np
@@ -88,7 +88,9 @@ class SubsetTest(unittest.TestCase):
         time = xr.Dataset()
         time['time'] = (('time', [0, 6, 12, 18, 24, 36, 48, 72, 96],
                         {'units': 'hours since 2011-01-01'}))
-        time = xr.conventions.decode_cf_variable(time['time'].variable)
+        # Use decode_cf to decode the entire dataset, then extract time
+        time_decoded = xr.decode_cf(time)
+        time = time_decoded['time']
 
         for hours in queries:
             query = {'hours': hours}
@@ -147,7 +149,11 @@ class SubsetTest(unittest.TestCase):
     def test_subset_spot_dataset(self):
 
         fcst = utils.create_data()
-        times, units, cal = xr.conventions.encode_cf_datetime(fcst['time'])
+        # Use encode_cf_variable for modern xarray
+        encoded_var = xr.conventions.encode_cf_variable(fcst['time'].variable, name='time')
+        times = encoded_var.values
+        units = encoded_var.attrs['units']
+        cal = encoded_var.attrs.get('calendar', 'standard')
         assert 'hours' in units
 
         def test_one_query(lon_slice, lat_slice, hour_slice):

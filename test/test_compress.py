@@ -19,7 +19,7 @@ class CompressTest(unittest.TestCase):
                           lambda: compress.decompress_dataset(beaufort))
 
     def test_stringify(self):
-        expected = 'THISISATEST'
+        expected = b'THISISATEST'
         payload = compress._stringify('wind', expected)
         actual_name, actual_info, _ = compress._split_single_variable(payload)
 

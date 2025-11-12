@@ -59,7 +59,7 @@ def available_variables(fcst):
     """
     Returns a list of all the variables in a forecast.
     """
-    return [k for k, v in _variables.iteritems()
+    return [k for k, v in _variables.items()
             if contains_variable(fcst, v)]
 
 
@@ -213,12 +213,12 @@ def parse_domain(domain_str):
                        "defining the corners of the domain.")
 
     is_lat = lambda x: x[-1].lower() in ['n', 's']
-    lats = filter(is_lat, corners)
+    lats = list(filter(is_lat, corners))
     if not len(lats) == 2:
         raise BadQuery("Expected two latitudes (determined by " +
                        "values ending in 'N' or 'S'")
     is_lon = lambda x: x[-1].lower() in ['e', 'w']
-    lons = filter(is_lon, corners)
+    lons = list(filter(is_lon, corners))
     if not len(lons) == 2:
         raise BadQuery("Expected two longitudes (determined by " +
                        "values ending in 'E' or 'W'")
@@ -265,12 +265,12 @@ def parse_location(location_str):
                        "defining a single point.")
 
     is_lat = lambda x: x[-1].lower() in ['n', 's']
-    lat = filter(is_lat, points)
+    lat = list(filter(is_lat, points))
     if not len(lat) == 1:
         raise BadQuery("Expected two latitudes (determined by " +
                        "values ending in 'N' or 'S'")
     is_lon = lambda x: x[-1].lower() in ['e', 'w']
-    lon = filter(is_lon, points)
+    lon = list(filter(is_lon, points))
     if not len(lon) == 1:
         raise BadQuery("Expected two longitudes (determined by " +
                        "values ending in 'E' or 'W'")
@@ -338,7 +338,7 @@ def parse_hours(hours_str):
                     raise BadQuery("Unsure how to parse the sequence %s" % hr)
                 else:
                     hours = np.linspace(low, high,
-                                        num=((high - low) / diff) + 1,
+                                        num=int(((high - low) / diff) + 1),
                                         endpoint=True)
             else:
                 hours = map(float, [hr])

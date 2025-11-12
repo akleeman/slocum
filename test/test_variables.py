@@ -1,5 +1,5 @@
 import sys
-import xr
+import xarray as xr
 import numpy as np
 import unittest
 
