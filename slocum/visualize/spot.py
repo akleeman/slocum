@@ -1,12 +1,24 @@
-import xray
+import xarray as xray
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import utils
-import velocity
+from slocum.visualize import utils
+from slocum.visualize import velocity
 
 from slocum.lib import units
+
+
+def get_ensemble_dim(dataset):
+    """
+    Returns the ensemble dimension name ('member' or 'realization').
+    Returns None if no ensemble dimension is found.
+    """
+    if 'member' in dataset.dims:
+        return 'member'
+    elif 'realization' in dataset.dims:
+        return 'realization'
+    return None
 
 
 def bin_matrix(y, bins):
@@ -23,26 +35,29 @@ def bin_matrix(y, bins):
 
 def bin_probs(variable, bins):
     """
-    Takes a variable that is assumed to have a realization dimension,
-    then returns a new DataArray named probability in which realization
+    Takes a variable that is assumed to have an ensemble dimension (member or realization),
+    then returns a new DataArray named probability in which the ensemble dimension
     has been converted into binned probability.
     """
-    assert 'realization' in variable.dims
+    ensemble_dim = get_ensemble_dim(variable)
+    assert ensemble_dim in variable.dims, f"Expected ensemble dimension (member or realization), got {variable.dims}"
     assert variable.ndim == 2
-    other_dim = set(variable.dims).symmetric_difference(['realization']).pop()
+    other_dim = set(variable.dims).symmetric_difference([ensemble_dim]).pop()
 
-    variable = variable.transpose(other_dim, 'realization')
-    n_other, n_realization = variable.shape
+    variable = variable.transpose(other_dim, ensemble_dim)
+    n_other, n_ensemble = variable.shape
 
-    xs = np.arange(n_other).repeat(n_realization)
+    xs = np.arange(n_other).repeat(n_ensemble)
     counts, xbins, bins = np.histogram2d(xs, variable.values.reshape(-1),
                                          bins=(np.arange(n_other + 1),
                                                bins))
     probs = counts.T / np.sum(counts, axis=1)
     out = xray.DataArray(probs.T,
-                         coords=[variable[other_dim],
-                                 xray.Coordinate('bin',
-                                                 np.arange(bins.size - 1))],
+                         coords={
+                             other_dim: variable[other_dim],
+                             'bin': np.arange(bins.size - 1)
+                         },
+                         dims=[other_dim, 'bin'],
                          name='probability')
     return out
 
@@ -53,11 +68,14 @@ def binned_probability_plot(variable, bin_divs, ax=None, **kwdargs):
     in variable.
     """
     ax, _ = utils.axis_figure(axis=ax)
+    ensemble_dim = get_ensemble_dim(variable)
     if variable.dims == ('time', ):
-        variable = (xray.concat([variable], 'realization')
-                    .transpose('time', 'realization'))
-    assert variable.dims == ('time', 'realization')
-    n_times, n_real = variable.shape
+        # Add ensemble dimension for single forecast
+        ensemble_dim = 'realization'  # Default to 'realization' for single forecast
+        variable = (xray.concat([variable], ensemble_dim)
+                    .transpose('time', ensemble_dim))
+    assert variable.dims == ('time', ensemble_dim), f"Expected ('time', '{ensemble_dim}'), got {variable.dims}"
+    n_times, n_ensemble = variable.shape
     # compute the binned probabilities
     probs = bin_probs(variable, bin_divs)
     # default to a blue colormap placed in the background
@@ -78,11 +96,12 @@ def binned_line_plot(variable, bin_divs, ax=None, **kwdargs):
     in variable.
     """
     ax, _ = utils.axis_figure(axis=ax)
-    assert variable.dims == ('time', 'realization')
-    n_times, n_real = variable.shape
+    ensemble_dim = get_ensemble_dim(variable)
+    assert variable.dims == ('time', ensemble_dim), f"Expected ('time', '{ensemble_dim}'), got {variable.dims}"
+    n_times, n_ensemble = variable.shape
 
     bins = bin_matrix(variable.values, bin_divs)
-    xs = np.arange(n_times).repeat(n_real).reshape(bins.shape)
+    xs = np.arange(n_times).repeat(n_ensemble).reshape(bins.shape)
     lines = plt.plot(xs + 0.5, bins - 0.5, **kwdargs)
     return lines
 
@@ -92,6 +111,7 @@ def binned_plot(variable, bin_divs, ax=None, **kwdargs):
     Creates a plot showing the binned probability of the data
     in variable.
     """
+    # This function just combines probability and line plots
     pm = binned_probability_plot(variable, bin_divs, ax)
     lines = binned_line_plot(variable, bin_divs, ax, alpha=0.3)
 
@@ -171,23 +191,28 @@ class SpotVelocityPlot(object):
 
         # determine the upper bound on speed so we can place
         # the direction circles.
-        all_speeds =fcsts[self.variable.speed_name].values
-        max_speed = max_speed or np.max(all_speeds)
-        max_bin = np.sum(self.bins <= max_speed) + 2
-        self.max_bin = np.minimum(max_bin, self.bins.size)
+        if max_speed is not None:
+            # User specified a max speed, use that
+            max_bin = np.sum(self.bins <= max_speed) + 2
+            self.max_bin = np.minimum(max_bin, self.bins.size)
+        else:
+            # No max specified, show full range of bins
+            self.max_bin = self.bins.size
         self.plot(fcsts)
 
     def normalize(self, fcsts):
         fcsts = ensure_single_location(fcsts)
         fcsts = self.variable.normalize(fcsts)
 
-        # add a realization dimension if it doesn't exist.  This
+        # add an ensemble dimension if it doesn't exist.  This
         # allows us to support both ensemble and non-ensemble
         # forecasts with the same code.
-        if not 'realization' in fcsts:
+        ensemble_dim = get_ensemble_dim(fcsts)
+        if not ensemble_dim:
+            ensemble_dim = 'realization'  # Default to 'realization' for single forecast
             def add_ensemble(vn):
-                fcsts[vn] = (xray.concat([fcsts[vn]], 'realization')
-                             .transpose('time', 'realization'))
+                fcsts[vn] = (xray.concat([fcsts[vn]], ensemble_dim)
+                             .transpose('time', ensemble_dim))
             add_ensemble(self.variable.speed_name)
             add_ensemble(self.variable.direction_name)
 
@@ -216,11 +241,12 @@ class SpotVelocityPlot(object):
         self.set_title(fcsts)
 
     def set_title(self, fcsts):
+        ensemble_dim = get_ensemble_dim(fcsts)
         title = ("Forecast for %.1fN %.1fE %s" %
                  (fcsts['latitude'].values,
                   fcsts['longitude'].values,
-                  ('using %d forecasts' % fcsts.dims['realization']
-                   if 'realization' in fcsts
+                  ('using %d forecasts' % fcsts.sizes[ensemble_dim]
+                   if ensemble_dim and ensemble_dim in fcsts.dims
                    else '')
                   )
                  )

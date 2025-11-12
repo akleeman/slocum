@@ -1,5 +1,5 @@
 import logging
-import interactive
+from slocum.visualize import interactive
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -118,7 +118,7 @@ def get_basemap(fcst, pad=0.1, lat_pad=None, lon_pad=None, **kwdargs):
     m.drawcoastlines()
     m.drawcountries()
     m.fillcontinents()
-    m.ax.set_axis_bgcolor('#389090')
+    m.ax.set_facecolor('#389090')
     m.drawparallels(fcst['latitude'].values, labels=[1, 0, 0, 0])
     m.drawmeridians(fcst['longitude'].values, labels=[0, 0, 0, 1], rotation=90)
 

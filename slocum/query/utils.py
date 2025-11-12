@@ -5,9 +5,8 @@ import numpy as np
 from collections import OrderedDict
 
 from slocum.lib import angles
-
-import grads
-import variables
+from slocum.query import grads
+from slocum.query import variables
 
 warnings.simplefilter("always")
 
@@ -90,7 +89,7 @@ def lookup(k, lut, aliases=None):
     if k in lut:
         return k, lut[k]
     # finally try removing white space and search again.
-    k = dealias(re.sub('[_\W]', '', k), aliases)
+    k = dealias(re.sub(r'[_\W]', '', k), aliases)
     if k in lut:
         return k, lut[k]
     return None
@@ -124,7 +123,7 @@ def get_variable_names(variable_names):
         try:
             get_variable(x)
             return True
-        except BadQuery, e:
+        except BadQuery as e:
             warnings.warn("Unsupported variable %s" % x)
             return False
     return [v for v in variable_names if is_valid_variable(v)]
@@ -325,7 +324,7 @@ def parse_hours(hours_str):
     # involves interpreting the '..' as slices
     # any . neighboring and , should be converted to a .
     # for example 0,3,...12 -> 0,3...12
-    hours_str = re.sub('\.,|,\.', '.', hours_str)
+    hours_str = re.sub(r'\.,|,\.', '.', hours_str)
 
     # yields valid hours
     def iter_hours():
@@ -333,7 +332,7 @@ def parse_hours(hours_str):
         for hr in hours_str.split(','):
             if '..' in hr:
                 # split on any set of at least two '.'s
-                low, high = map(float, re.split('\.{2,}', hr))
+                low, high = map(float, re.split(r'\.{2,}', hr))
                 diff = low - prev
                 if np.mod((high - low), diff):
                     raise BadQuery("Unsure how to parse the sequence %s" % hr)

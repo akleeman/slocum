@@ -1,4 +1,4 @@
-import xray
+import xarray as xray
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -6,9 +6,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 
 from slocum.lib import units, angles
-
-import spot
-import velocity
+from slocum.visualize import spot
+from slocum.visualize import velocity
 
 
 class InteractiveMap(object):

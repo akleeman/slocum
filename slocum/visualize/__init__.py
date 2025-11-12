@@ -1,1 +1,1 @@
-from visualize import *
+from slocum.visualize.visualize import *

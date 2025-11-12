@@ -1,5 +1,5 @@
 import copy
-import xray
+import xarray as xray
 import warnings
 import itertools
 import numpy as np

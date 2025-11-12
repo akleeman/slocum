@@ -10,8 +10,8 @@ import multiprocessing
 
 from setuptools import setup, find_packages
 
-if sys.version_info[:2] < (2, 6):
-    raise RuntimeError("Python version 2.6, 2.7 required.")
+if sys.version_info[:2] < (3, 9):
+    raise RuntimeError("Python version 3.9 or higher required.")
 
 MAJOR = 0
 MINOR = 1
@@ -23,15 +23,15 @@ if not ISRELEASED:
     VERSION = '%sa0' % VERSION
 
 # https://software.ecmwf.int/wiki/display/GRIB/Python+package+gribapi#_details
-requires = ['xray >= 0.3.1',
-            'pyproj >= 1.9.3',
-            'pandas >= 0.13.1',
-            'matplotlib >= 1.2.0',
-            'coards',
-            'joblib',
-            'retrying',
+requires = ['xarray >= 2022.3',
+            'pyproj >= 3.0',
+            'pandas >= 1.3',
+            'matplotlib >= 3.5',
+            'cftime >= 1.5',
+            'joblib >= 1.0',
+            'retrying >= 1.3',
             'basemap',
-            'requests']
+            'requests >= 2.25']
 
 setup(name='slocum',
       version=VERSION,
@@ -48,5 +48,8 @@ setup(name='slocum',
       classifiers=[
         'Development Status :: 3 - Alpha',
         'License :: OSI Approved :: MIT License',
-        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
         ])

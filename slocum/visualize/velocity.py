@@ -1,4 +1,4 @@
-import xray
+import xarray as xray
 import logging
 import numpy as np
 import pandas as pd
@@ -8,8 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib import patches
 
 from slocum.lib import units, angles
-
-import utils
+from slocum.visualize import utils
 
 
 velocity_colors = [
@@ -144,10 +143,10 @@ class VelocityField(object):
         self.m = utils.get_basemap(fcst, ax=self.ax,
                                    lon_pad=0.75 * resol,
                                    lat_pad = 0.75 * resol)
-        def create_circle(one_loc):
+        def create_circle(one_lonlat):
             # determine the circle center
-            x, y = self.m(one_loc['longitude'].values,
-                          one_loc['latitude'].values)
+            x, y = self.m(one_lonlat['longitude'].values,
+                          one_lonlat['latitude'].values)
             speeds = one_lonlat[self.variable.speed_name].values
             dirs = one_lonlat[self.variable.direction_name].values
             orientation = self.variable.direction_orientation

@@ -4,13 +4,13 @@ schemes.py
 This module handles the various variable definitions that are used
 to compress and expand variables.
 """
-import xray
+import xarray as xray
 import logging
 import warnings
 import itertools
 import numpy as np
 
-import tinylib
+from slocum.compression import tinylib
 
 from slocum.lib import units, angles
 

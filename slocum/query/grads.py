@@ -1,6 +1,7 @@
-import xray
+import xarray as xray
 import joblib
-import urllib2
+import urllib.request
+import urllib.error
 import logging
 import datetime
 import retrying
@@ -9,7 +10,7 @@ import requests
 import numpy as np
 import pandas as pd
 
-import variables
+from slocum.query import variables
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -38,7 +39,7 @@ def recent_datasets(url_format, freq_hours=None, n=None):
 
 def is_url_error(exception):
     """ Used to catch UrlErrors in retrying logic """
-    return isinstance(exception, urllib2.URLError)
+    return isinstance(exception, urllib.error.URLError)
 
 
 @retrying.retry(retry_on_exception=is_url_error,
@@ -49,7 +50,7 @@ def opendap_exists(url):
     Attempts to open a GrADS opendap url and inspects the response to
     decide if the url was a valid dataset or not.
     """
-    f = urllib2.urlopen(url)
+    f = urllib.request.urlopen(url)
     # unfortunately opendap servers will respond even if the dataset
     # exists, so we need to search the html source to decide if the
     # server failed or not.  When a GrADS server fails it says
