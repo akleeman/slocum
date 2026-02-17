@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      SLOCUM_DATASET_BUCKET: dynamical-ecmwf-ifs-ens
+      SLOCUM_DATASET_PREFIX: ecmwf-ifs-ens-forecast-15-day-0-25-degree/v0.1.0.icechunk/
+      SLOCUM_DATASET_REGION: us-west-2
+      SLOCUM_DATASET_BRANCH: main
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - api

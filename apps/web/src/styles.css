@@ -1,0 +1,88 @@
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid #d4d4d4;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.controls {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.controls label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  height: calc(100% - 52px);
+}
+
+.map-panel {
+  position: relative;
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+}
+
+.detail-panel {
+  border-left: 1px solid #d4d4d4;
+  padding: 0.8rem;
+  overflow: auto;
+}
+
+.error-banner {
+  color: #7a0d0d;
+  background: #ffd9d9;
+  border: 1px solid #ef8f8f;
+  padding: 0.4rem 0.8rem;
+}
+
+.ensemble-popup {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+.ensemble-popup-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.ensemble-popup-subtitle {
+  font-size: 0.78rem;
+  color: #444;
+  margin-bottom: 0.35rem;
+}
+
+.ensemble-popup-footnote {
+  font-size: 0.75rem;
+  color: #555;
+  margin-top: 0.1rem;
+}

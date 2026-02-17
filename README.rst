@@ -32,3 +32,55 @@ using a clock with no minute hand, then modern day sailors should be able
 to get by using weather forecasts without floating point precision.
 
 
+Modern Web Stack MVP (Track A)
+------------------------------
+
+The repository now includes a new weather web workflow:
+
+- **Backend:** Python/FastAPI in ``apps/api`` using ``xarray`` and Icechunk/Zarr.
+- **Frontend:** TypeScript/React in ``apps/web`` using MapLibre + deck.gl.
+
+Local prerequisites
+~~~~~~~~~~~~~~~~~~~
+
+- Pixi (for Python environment management)
+- Node.js 20+
+
+Install and run locally
+~~~~~~~~~~~~~~~~~~~~~~~
+
+::
+
+  pixi install
+  pixi run api-runtime-deps
+  pixi run web-install
+  pixi run dev-local
+
+This starts:
+
+- API at ``http://127.0.0.1:8000``
+- Web app at ``http://127.0.0.1:5173``
+
+Test commands
+~~~~~~~~~~~~~
+
+::
+
+  pixi run api-test
+  pixi run web-test
+  pixi run web-e2e
+
+Current API endpoints (MVP + click details)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~- ``GET /meta/cycles``
+- ``GET /tiles/temperature_2m_member/{cycle}/{lead_hour}/{z}/{x}/{y}``
+- ``GET /point/wind?cycle=&lead=&lat=&lon=``
+- ``GET /timeseries/wind?cycle=&lat=&lon=``
+- ``GET /timeseries/wind/ensembles?cycle=&lat=&lon=``
+
+Production deployment baseline
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Serve ``apps/web`` as static assets from CDN/object storage.
+- Run ``apps/api`` as a containerized FastAPI service.
+- Keep dataset access read-only against Icechunk/S3 source.
+- Tile endpoints emit cache headers for edge caching.

@@ -1,0 +1,12 @@
+{
+  "product": "temperature_2m_member",
+  "cycle": "2026-01-01T00:00:00",
+  "lead_hour": 0,
+  "z": 10,
+  "x": 512,
+  "y": 512,
+  "units": "degC",
+  "latitudes": [0.0],
+  "longitudes": [0.0],
+  "values": [[1.0]]
+}

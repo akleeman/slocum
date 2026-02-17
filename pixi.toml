@@ -7,8 +7,8 @@ channels = ["conda-forge"]
 platforms = ["osx-arm64", "osx-64", "linux-64"]
 
 [dependencies]
-python = ">=3.9,<3.13"
-numpy = ">=1.20"
+python = ">=3.11,<3.13"
+numpy = ">=1.20,<2"
 scipy = ">=1.7"
 xarray = ">=2022.3"
 pyproj = ">=3.0"
@@ -26,6 +26,11 @@ gcsfs = ">=2025.10.0,<2026"
 arraylake = "*"
 ipdb = "*"
 dask = "*"
+fastapi = ">=0.115"
+uvicorn = ">=0.32"
+httpx = ">=0.28"
+pytest-asyncio = ">=0.24"
+nodejs = ">=20,<21"
 
 [tasks]
 install-dev = "pip install -e ."
@@ -35,6 +40,17 @@ subset-forecasts = { cmd = "python subset_ensemble_forecasts.py", depends-on = [
 spot-from-ensemble = { cmd = "python spot_forecast_from_ensemble.py", depends-on = ["install-dev"] }
 test = { cmd = "pytest test/ -v", depends-on = ["install-dev"] }
 test-coverage = { cmd = "pytest test/ -v --cov=slocum --cov-report=term-missing", depends-on = ["install-dev"] }
+api-runtime-deps = "python -m pip install \"icechunk==0.2.18\" \"zarr>=3,<4\""
+api-dev = { cmd = "uvicorn slocum_api.main:app --reload --app-dir apps/api" }
+api-test = { cmd = "pytest apps/api/tests -v" }
+web-install = "npm --prefix apps/web install"
+web-dev = "npm --prefix apps/web run dev"
+web-test = "npm --prefix apps/web run test -- --run"
+web-e2e = "npm --prefix apps/web run test:e2e"
+web-build = "npm --prefix apps/web run build"
+cache-example-forecast = "python scripts/cache_example_forecast.py"
+dev-local = { cmd = "bash scripts/dev_local.sh" }
+api-bench = { cmd = "python apps/api/bench/benchmark_tiles.py" }
 
 [feature.dev.dependencies]
 pytest = ">=7.0"
